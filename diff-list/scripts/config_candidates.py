@@ -5,6 +5,23 @@ import re
 import xml.etree.ElementTree as ET
 
 SUPPORTED_EXTENSIONS = ('.properties', '.yaml', '.yml', '.xml')
+
+
+def _likely_runtime_yaml(path):
+    """Return whether a YAML file is likely application/runtime configuration.
+
+    Generic YAML such as CI workflow files is still visible in the Git diff, but
+    it is not a target of this scalar configuration parser and should not by
+    itself force the whole analysis into review_required.
+    """
+    normalized = path.replace('\\\\', '/').lower()
+    parts = [part for part in normalized.split('/') if part]
+    name = parts[-1] if parts else normalized
+    if name.startswith(('application.', 'application-', 'bootstrap.', 'bootstrap-')):
+        return True
+    if any(part in ('config', 'profile', 'resources') for part in parts[:-1]):
+        return True
+    return False
 SENSITIVE = re.compile(r'(password|secret|token|api.?key|private.?key|credential|cert|sign)', re.I)
 HIGH_RISK = re.compile(r'(pay|refund|trade|amount|money|retry|timeout|lock|switch|enable|callback|idempot|route|transaction|channel)', re.I)
 
@@ -124,7 +141,23 @@ def extract_config_candidates(pairs):
             before = parse(path, pair['before'])
             after = parse(path, pair['after'])
         except ValueError as exc:
-            skipped.append({'path': path, 'reason': str(exc)[:240]})
+            reason = str(exc)[:240]
+            lower = path.lower()
+            review_required = True
+            kind = 'parse_failure'
+            if lower.endswith('.xml') and reason == 'no supported XML key/value mappings':
+                # Mapper/POM/other XML remains part of the ordinary Git diff, but
+                # it is not a key/value config document supported by this parser.
+                review_required = False
+                kind = 'not_config_mapping'
+            elif lower.endswith(('.yaml', '.yml')) and not _likely_runtime_yaml(path):
+                # CI/workflow/other generic YAML can use constructs intentionally
+                # unsupported here. Do not promote this parser limitation to a
+                # global review flag unless the path looks like runtime config.
+                review_required = False
+                kind = 'non_runtime_yaml'
+            skipped.append({'path': path, 'reason': reason, 'kind': kind,
+                            'review_required': review_required})
             continue
         for key in sorted(set(before) | set(after)):
             old, new = before.get(key), after.get(key)
