@@ -321,6 +321,32 @@ class DiffListTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     writer.append(report,[str(evidence)],[])
 
+    def test_range_blob_read_failure_is_skipped_not_empty_source(self):
+        collector=module('collect_git')
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td)
+            def git(*args):
+                return subprocess.check_output(['git','-C',str(root),*args],text=True).strip()
+            git('init','-q');git('config','user.name','Test');git('config','user.email','test@example.com')
+            java=root/'Main.java'
+            java.write_text('class Main { int value=1; }\n',encoding='utf-8')
+            git('add','.');git('commit','-qm','base');base=git('rev-parse','HEAD')
+            java.write_text('class Main { int value=2; }\n',encoding='utf-8')
+            git('add','.');git('commit','-qm','change');head=git('rev-parse','HEAD')
+            real_read=collector.read_blob
+            def flaky(root_arg, rev, filename):
+                if rev == base:
+                    return None, 'simulated blob read failure'
+                return real_read(root_arg, rev, filename)
+            with mock.patch.object(collector,'read_blob',side_effect=flaky):
+                result=collector.collect({'name':'demo','path':str(root),
+                                          'range':{'base':base,'head':head}},
+                                         capture_java=True)
+            self.assertEqual(result['net_effect']['java_sources'],[])
+            self.assertEqual(len(result['net_effect']['java_skipped']),1)
+            self.assertIn('cannot read baseline blob',result['net_effect']['java_skipped'][0]['reason'])
+
+
 
 class LogicAstTest(unittest.TestCase):
     @classmethod
@@ -458,6 +484,31 @@ class AdditionalRegressionTests(unittest.TestCase):
         candidates, skipped = logic.extract_candidates([{'path':'A.java','before':old,'after':new}])
         self.assertEqual(skipped, [])
         self.assertFalse(any(c['category'] == 'DISCARDED_CALL' for c in candidates))
+
+    def test_anonymous_classes_have_distinct_stable_scopes(self):
+        logic = module('logic_candidates')
+        old = '''class A {
+          boolean flag;
+          void ping() {}
+          void run() {
+            Runnable one = new Runnable() { public void run() { if (flag) ping(); } };
+            Runnable two = new Runnable() { public void run() { if (flag) ping(); } };
+          }
+        }'''
+        new = '''class A {
+          boolean flag;
+          void ping() {}
+          void run() {
+            Runnable one = new Runnable() { public void run() { if (flag) ping(); } };
+            Runnable two = new Runnable() { public void run() { if (!flag) ping(); } };
+          }
+        }'''
+        candidates, skipped = logic.extract_candidates([{'path':'A.java','before':old,'after':new}])
+        self.assertEqual(skipped,[])
+        changed=[item for item in candidates if item['category']=='BRANCH']
+        self.assertTrue(changed)
+        self.assertTrue(all('<anonymous:2>#run()' in item['method'] for item in changed))
+        self.assertFalse(any('<anonymous:1>#run()' in item['method'] for item in changed))
 
     def test_class_and_method_rename_not_false_high(self):
         logic = module('logic_candidates')
