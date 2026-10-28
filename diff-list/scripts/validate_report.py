@@ -139,11 +139,11 @@ def validate(text,template,expected):
             errors.append('Mermaid 图必须以 flowchart TD 或 sequenceDiagram 开始')
     export_section=body.get('## 5. 测试用例导出','')
     if export_section != '无':
-        if not re.search(r'\\S+\\.xlsx\\b',export_section,re.I):
+        if not re.search(r'\S+\.xlsx\b',export_section,re.I):
             errors.append('测试用例导出章节缺少 Excel 文件名')
-        if not re.search(r'用例数量\\s*[:：]\\s*[1-9]\\d*',export_section):
+        if not re.search(r'用例数量\s*[:：]\s*[1-9]\d*',export_section):
             errors.append('测试用例导出章节缺少有效用例数量')
-        if re.search(r'(?:\\*\\*)?(?:测试点|测试前提|步骤描述|预期结果)[:：]',export_section):
+        if re.search(r'(?:\*\*)?(?:测试点|测试前提|步骤描述|预期结果)[:：]',export_section):
             errors.append('Excel 测试用例不得重复写入 Markdown 报告')
     special=body.get('## 4. 特殊逻辑与测试关注点','')
     if special and special!='无' and not re.search(r'既有功能影响|历史功能影响',special):
