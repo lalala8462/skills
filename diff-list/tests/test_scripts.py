@@ -64,13 +64,13 @@ class DiffListTest(unittest.TestCase):
                       '### 3.1 整体流程说明':'请求后检查支付状态。',
                       '### 3.2 Mermaid 流程图':'```mermaid\nflowchart TD\n A[请求] --> B[状态]\n```',
                       '## 4. 特殊逻辑与测试关注点':'无',
-                      '## 5. 测试用例导出':'Excel：webapi-cases.xlsx；用例数量：1',
+                      '## 5. 测试用例导出':'Excel：webapi-cases.xlsx；重点用例数量：1；常规用例数量：0；总用例数量：1',
                       '## 6. 验证情况':'仅完成静态分析。'}
             report='\n'.join(line+'\n'+sections.get(line,'') if line.startswith('#') else line
                              for line in template.splitlines())
             errors,_=val.validate(report,template,['webapi='+sha])
             self.assertEqual(errors,[])
-            errors,_=val.validate(report.replace('用例数量：1','用例数量：零'),template,[])
+            errors,_=val.validate(report.replace('总用例数量：1','总用例数量：零'),template,[])
             self.assertTrue(any('用例数量' in e for e in errors))
             errors,_=val.validate(report+'\n待确认',template,[])
             self.assertTrue(any('禁止' in e for e in errors))
