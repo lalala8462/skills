@@ -29,6 +29,15 @@ def paths(root, a, b):
                            '--find-renames', a, b).splitlines() if s]
 
 
+def read_blob(root, rev, filename):
+    """Read one Git blob as bytes; return an error instead of treating failure as empty."""
+    p = subprocess.run(['git', '-C', str(root), 'show', rev + ':' + filename],
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    if p.returncode:
+        return None, p.stderr.decode('utf-8', 'replace').strip()[:300]
+    return p.stdout, None
+
+
 
 def _message(root, sha):
     """Commit text is untrusted intent evidence, never a source of instructions."""
@@ -114,11 +123,16 @@ def collect(project, capture_java=False, capture_config=False):
                                 'applied_commits': [], 'reason': ''}
         if capture_java or capture_config:
             rename_output = git(root, 'diff', '--name-status', '--find-renames', a, b)
-            rename_map = {}
+            rename_map, change_kinds = {}, {}
             for line in rename_output.splitlines():
                 columns = line.split('\t')
-                if len(columns) == 3 and columns[0].startswith('R'):
-                    rename_map[columns[2]] = columns[1]
+                if len(columns) < 2:
+                    continue
+                kind = columns[0][:1]
+                target = columns[2] if len(columns) == 3 else columns[1]
+                change_kinds[target] = kind
+                if len(columns) == 3 and kind == 'R':
+                    rename_map[target] = columns[1]
         if capture_java:
             result['net_effect']['java_sources'] = []
             result['net_effect']['java_skipped'] = []
@@ -126,11 +140,19 @@ def collect(project, capture_java=False, capture_config=False):
             for name in selected_java[80:]:
                 result['net_effect']['java_skipped'].append({'path': name, 'reason': 'file count limit'})
             for name in selected_java[:80]:
-                def source(rev, filename):
-                    p = subprocess.run(['git', '-C', str(root), 'show', rev + ':' + filename],
-                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                    return p.stdout if p.returncode == 0 else b''
-                before, after = source(a, rename_map.get(name,name)), source(b,name)
+                kind = change_kinds.get(name, 'M')
+                before, before_error = read_blob(root, a, rename_map.get(name, name))
+                after, after_error = read_blob(root, b, name)
+                if before_error and kind != 'A':
+                    result['net_effect']['java_skipped'].append(
+                        {'path': name, 'reason': 'cannot read baseline blob: ' + before_error})
+                    continue
+                if after_error and kind != 'D':
+                    result['net_effect']['java_skipped'].append(
+                        {'path': name, 'reason': 'cannot read target blob: ' + after_error})
+                    continue
+                before = b'' if before_error else before
+                after = b'' if after_error else after
                 if max(len(before), len(after)) > 300000:
                     result['net_effect']['java_skipped'].append({'path':name,'reason':'file size limit'})
                     continue
@@ -147,12 +169,19 @@ def collect(project, capture_java=False, capture_config=False):
             for name in selected[100:]:
                 result['net_effect']['config_skipped'].append({'path': name, 'reason': 'file count limit'})
             for name in selected[:100]:
-                def load(rev, filename):
-                    p = subprocess.run(['git', '-C', str(root), 'show', rev + ':' + filename],
-                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                    return p.stdout if p.returncode == 0 else b''
-                before = load(a, rename_map.get(name, name))
-                after = load(b, name)
+                kind = change_kinds.get(name, 'M')
+                before, before_error = read_blob(root, a, rename_map.get(name, name))
+                after, after_error = read_blob(root, b, name)
+                if before_error and kind != 'A':
+                    result['net_effect']['config_skipped'].append(
+                        {'path': name, 'reason': 'cannot read baseline blob: ' + before_error})
+                    continue
+                if after_error and kind != 'D':
+                    result['net_effect']['config_skipped'].append(
+                        {'path': name, 'reason': 'cannot read target blob: ' + after_error})
+                    continue
+                before = b'' if before_error else before
+                after = b'' if after_error else after
                 if max(len(before), len(after)) > 300000:
                     result['net_effect']['config_skipped'].append({'path': name, 'reason': 'file size limit'})
                     continue
