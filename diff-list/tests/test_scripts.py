@@ -768,6 +768,44 @@ class CommitHistoryRegressionTest(unittest.TestCase):
                 self.assertEqual(repeated[0]['reverse_candidates'][0]['later_commit'],two)
                 self.assertEqual(repeated[0]['scope'],'file_only_not_method_binding')
 
+    def test_commit_review_tracks_file_identity_across_rename(self):
+        collector=module('collect_git')
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td)
+            def git(*args):
+                return subprocess.check_output(['git','-C',str(root),*args],
+                                               text=True, encoding='utf-8').strip()
+            git('init','-q')
+            git('config','user.name','Tests')
+            git('config','user.email','example@example.com')
+            old=root/'OldName.java'
+            old.write_text('class A { int value=0; }\n',encoding='utf-8')
+            git('add','.')
+            git('commit','-qm','base')
+            base=git('rev-parse','HEAD')
+            old.write_text('class A { int value=1; }\n',encoding='utf-8')
+            git('add','.')
+            git('commit','-qm','enable value')
+            one=git('rev-parse','HEAD')
+            old.rename(root/'NewName.java')
+            git('add','-A')
+            git('commit','-qm','rename file')
+            two=git('rev-parse','HEAD')
+            new=root/'NewName.java'
+            new.write_text('class A { int value=0; }\n',encoding='utf-8')
+            git('add','.')
+            git('commit','-qm','restore value')
+            three=git('rev-parse','HEAD')
+            result=collector.collect({'name':'sample','path':str(root),
+                                      'range':{'base':base,'head':three}})
+            repeated=result['commit_review']['repeated_files']
+            self.assertEqual(len(repeated),1)
+            self.assertEqual(repeated[0]['path'],'NewName.java')
+            self.assertEqual(repeated[0]['identity_paths'],['NewName.java','OldName.java'])
+            self.assertEqual(repeated[0]['commits'],[one,two,three])
+            self.assertEqual(repeated[0]['touch_count'],3)
+            self.assertEqual(result['commit_review']['textual_reverse_candidate_count'],1)
+
     def test_same_file_repeated_is_not_proof_of_opposite_logic(self):
         collector=module('collect_git')
         with tempfile.TemporaryDirectory() as td:
