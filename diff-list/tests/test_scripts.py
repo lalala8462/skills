@@ -550,8 +550,8 @@ class AdditionalRegressionTests(unittest.TestCase):
         config = module('config_candidates')
         findings, skipped = config.extract_config_candidates([
             {'path':'src/main/resources/application.yml',
-             'before':'urls:\\n - http://localhost\\n',
-             'after':'urls:\\n - http://example.com\\n'},
+             'before':'urls:\n - http://localhost\n',
+             'after':'urls:\n - http://example.com\n'},
             {'path':'src/main/resources/mapper/OrderMapper.xml',
              'before':'<mapper><select id="q">select 1</select></mapper>',
              'after':'<mapper><select id="q">select 2</select></mapper>'}
