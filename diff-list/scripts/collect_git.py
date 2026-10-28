@@ -79,6 +79,7 @@ def _range_commit_review(root, base, head, net_status, max_commits=300,
                         'message': _message(root, sha), 'files': paths(root, parent, sha),
                         'diff': delta, 'merge_commit': len(parents) > 1})
     evidence = review_commit_history(entries, net_status, merge_commits=merges)
+    evidence['scope'] = 'first_parent_range'
     if entries and entries[0]['parent'] != base:
         evidence['review_required'] = True
         evidence['review_reasons'].append(
@@ -231,6 +232,7 @@ def collect(project, capture_java=False, capture_config=False):
     result['commit_review'] = review_commit_history(
         selected_history, result['net_effect']['status'],
         merge_commits=[e['sha'] for e in selected_history if e['merge_commit']])
+    result['commit_review']['scope'] = 'selected_commits_only'
     if result['unselected_overlaps']:
         result['commit_review']['review_required'] = True
         result['commit_review']['review_reasons'].append(
