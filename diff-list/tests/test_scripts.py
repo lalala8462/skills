@@ -492,6 +492,25 @@ class AdditionalRegressionTests(unittest.TestCase):
           'before':'urls:\n - http://localhost\n', 'after':'urls:\n - http://example.com\n'}])
         self.assertEqual(findings,[])
         self.assertEqual(len(skipped),1)
+        self.assertFalse(skipped[0]['review_required'])
+        self.assertEqual(skipped[0]['kind'],'non_runtime_yaml')
+
+    def test_runtime_yaml_and_non_config_xml_review_classification(self):
+        config = module('config_candidates')
+        findings, skipped = config.extract_config_candidates([
+            {'path':'src/main/resources/application.yml',
+             'before':'urls:\\n - http://localhost\\n',
+             'after':'urls:\\n - http://example.com\\n'},
+            {'path':'src/main/resources/mapper/OrderMapper.xml',
+             'before':'<mapper><select id="q">select 1</select></mapper>',
+             'after':'<mapper><select id="q">select 2</select></mapper>'}
+        ])
+        self.assertEqual(findings,[])
+        by_path={item['path']:item for item in skipped}
+        self.assertTrue(by_path['src/main/resources/application.yml']['review_required'])
+        self.assertEqual(by_path['src/main/resources/application.yml']['kind'],'parse_failure')
+        self.assertFalse(by_path['src/main/resources/mapper/OrderMapper.xml']['review_required'])
+        self.assertEqual(by_path['src/main/resources/mapper/OrderMapper.xml']['kind'],'not_config_mapping')
 
     def test_config_capture_range_and_selected(self):
         collector = module('collect_git')
