@@ -78,24 +78,37 @@ def compose(repo, selected, capture_java=False, capture_config=False,
         result['changed_files'] = [line for line in
                                    names.stdout.decode('utf-8', 'replace').splitlines() if line]
         result['status'] = 'composed' if result['changed_files'] else 'no_net_change'
+        rename = git('diff', '--cached', '--name-status', '--find-renames', baseline)
+        rename_map, change_kinds = {}, {}
+        if rename.returncode == 0:
+            for line in rename.stdout.decode('utf-8', 'replace').splitlines():
+                columns = line.split('\t')
+                if len(columns) < 2:
+                    continue
+                kind = columns[0][:1]
+                target_name = columns[2] if len(columns) == 3 else columns[1]
+                change_kinds[target_name] = kind
+                if len(columns) == 3 and kind == 'R':
+                    rename_map[target_name] = columns[1]
         if capture_java:
             result['java_sources'] = []
             result['java_skipped'] = []
             candidates = [name for name in result['changed_files'] if name.endswith('.java')]
             for name in candidates[max_java_files:]:
                 result['java_skipped'].append({'path': name, 'reason': 'file count limit'})
-            rename = git('diff', '--cached', '--name-status', '--find-renames', baseline)
-            rename_map = {}
-            if rename.returncode == 0:
-                for line in rename.stdout.decode('utf-8', 'replace').splitlines():
-                    columns = line.split('\t')
-                    if len(columns) == 3 and columns[0].startswith('R'):
-                        rename_map[columns[2]] = columns[1]
             for name in candidates[:max_java_files]:
+                kind = change_kinds.get(name, 'M')
                 before = git('show', baseline + ':' + rename_map.get(name, name))
                 after = git('show', ':' + name)
-                if before.returncode != 0 and after.returncode != 0:
-                    result['java_skipped'].append({'path': name, 'reason': 'neither version exists'})
+                if before.returncode != 0 and kind != 'A':
+                    result['java_skipped'].append({
+                        'path': name,
+                        'reason': 'cannot read baseline blob: ' + before.stderr.decode('utf-8', 'replace').strip()[:300]})
+                    continue
+                if after.returncode != 0 and kind != 'D':
+                    result['java_skipped'].append({
+                        'path': name,
+                        'reason': 'cannot read target blob: ' + after.stderr.decode('utf-8', 'replace').strip()[:300]})
                     continue
                 before_data = before.stdout if before.returncode == 0 else b''
                 after_data = after.stdout if after.returncode == 0 else b''
@@ -118,16 +131,20 @@ def compose(repo, selected, capture_java=False, capture_config=False,
                      if name.lower().endswith(SUPPORTED_EXTENSIONS)]
             for name in names[max_config_files:]:
                 result['config_skipped'].append({'path': name, 'reason': 'file count limit'})
-            rename = git('diff', '--cached', '--name-status', '--find-renames', baseline)
-            rename_map = {}
-            if rename.returncode == 0:
-                for row in rename.stdout.decode('utf-8', 'replace').splitlines():
-                    fields = row.split('\t')
-                    if len(fields) == 3 and fields[0].startswith('R'):
-                        rename_map[fields[2]] = fields[1]
             for name in names[:max_config_files]:
+                kind = change_kinds.get(name, 'M')
                 previous = git('show', baseline + ':' + rename_map.get(name, name))
                 current = git('show', ':' + name)
+                if previous.returncode != 0 and kind != 'A':
+                    result['config_skipped'].append({
+                        'path': name,
+                        'reason': 'cannot read baseline blob: ' + previous.stderr.decode('utf-8', 'replace').strip()[:300]})
+                    continue
+                if current.returncode != 0 and kind != 'D':
+                    result['config_skipped'].append({
+                        'path': name,
+                        'reason': 'cannot read target blob: ' + current.stderr.decode('utf-8', 'replace').strip()[:300]})
+                    continue
                 before = previous.stdout if previous.returncode == 0 else b''
                 after = current.stdout if current.returncode == 0 else b''
                 if max(len(before), len(after)) > max_config_bytes:
