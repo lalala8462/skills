@@ -127,7 +127,7 @@ def review(entries, net_status, max_commits=300, omitted=0, merge_commits=()):
             'path': latest_path.get(path, path),
             'identity_paths': sorted(identity_paths.get(path, {path})),
             'commits': touched, 'touch_count': len(touched),
-            'scope': 'file_identity_across_renames_not_method_binding',
+            'scope': 'file_only_not_method_binding',
             'reverse_candidates': reversal[:30],
             'reverse_candidates_truncated': candidate_count > 30
         })
