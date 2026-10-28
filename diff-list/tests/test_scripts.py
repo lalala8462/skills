@@ -322,9 +322,6 @@ class DiffListTest(unittest.TestCase):
                     writer.append(report,[str(evidence)],[])
 
 
-if __name__=='__main__':
-    unittest.main()
-
 class LogicAstTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -535,3 +532,6 @@ class AdditionalRegressionTests(unittest.TestCase):
         self.assertEqual(errors,[])
         errors,_=validator.validate(content,template,['webapi='+two])
         self.assertTrue(any('对应关系' in x for x in errors))
+
+if __name__=='__main__':
+    unittest.main()
