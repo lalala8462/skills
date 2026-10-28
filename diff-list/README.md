@@ -1,6 +1,6 @@
 # diff-list（Windows 10）
 
-直接指定 GitHub 或 GitLab URL 和 Git 提交号/范围，Skill 输出一个提测 Markdown；自动缓存仓库。要求 Git for Windows + Python 3.8+（标准库）；启用 Java AST 候选检查还需 **JDK 8 或更新版本**，并让 `javac` 和 `java` 可执行。私有 GitHub 或 GitLab 仓库使用本机 Git 凭据。
+直接指定 GitHub 或 GitLab URL 和 Git 提交号/范围，Skill 输出一个提测 Markdown；每次脚本调用创建独立的无检出仓库副本，不访问本地业务工作区。要求 Git for Windows + Python 3.8+（标准库）；启用 Java AST 候选检查还需 **JDK 8 或更新版本**，并让 `javac` 和 `java` 可执行。私有 GitHub 或 GitLab 仓库使用本机 Git 凭据。
 
 ## 调用示例
 
@@ -29,7 +29,7 @@ py -3 -m unittest discover -s tests -v
 
 | 脚本 | 作用 |
 | --- | --- |
-| `repo_access.py` | 自动仓库克隆/更新隔离缓存（`%LOCALAPPDATA%\diff-list\git-cache`） |
+| `repo_access.py` | 每次在 `%LOCALAPPDATA%\diff-list\runs` 新建独立目录，无检出克隆；目录保留，不复用旧缓存 |
 | `collect_git.py` / `net_effect.py` | 按指定提交提取 diff，在临时索引合成净差异，提示未选中提交交叉 |
 | `logic_candidates.py` / `java/JavaLogicAst.java` | 比较 Java 8 AST 的分支、调用、赋值、计算和返回值变化；对重命名做保守的节点匹配 |
 | `config_candidates.py` | 对比 properties、普通 YAML 标量及 XML 属性映射的键值新增、删除与变更 |
@@ -50,4 +50,4 @@ py -3 -m unittest discover -s tests -v
 
 **字段与历史功能影响**：对外报文、DTO/VO、表结构、Mapper/SQL 或消息契约发生变化时，必须补查旧消费者、历史记录、旧版本读写、旧查询/退款/通知链路。当前 AST 不保证识别纯字段声明或 DDL/Mapper 的所有语义变化，必须回到最终 Git diff 和指定修订源码分析。报告在“特殊逻辑与测试关注点”交代**既有功能影响**，存在高价值回归风险时在“重点测试场景”列具体条件及验收结果；不因缺少自动候选而判定无影响。
 
-净差异 `composed/no_net_change/review_required` 只表示补丁合成结果，不证明最终业务行为；未选中提交可能影响间接调用。报告只能写核实过的业务逻辑及配置，源文件位置和证据 JSON 不应进入提测说明。证据可能含敏感内容，须保存在受控本机，不提交到仓库。已有输出文件不覆盖，默认目录为 `G:\tmp`，无法写入时报告错误。
+净差异 `composed/no_net_change/review_required` 只表示补丁合成结果，不证明最终业务行为；未选中提交可能影响间接调用。报告只能写核实过的业务逻辑及配置，源文件位置和证据 JSON 不应进入提测说明。证据可能含敏感内容，须保存在受控本机，不提交到仓库。已有输出文件不覆盖，默认目录为 `G:\tmp`，无法写入时报告错误。隔离目录不自动删除；旧版 `--cache-dir` 参数不再支持，避免指向业务工作区。

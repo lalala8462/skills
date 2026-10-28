@@ -92,6 +92,23 @@ class DiffListTest(unittest.TestCase):
             self.assertEqual(len(r['unselected_overlaps']),1)
             self.assertIn('app.txt',r['unselected_overlaps'][0]['files'])
             self.assertEqual(r['worktree_status'],[])
+    def test_fresh_no_checkout_repository(self):
+        access = module('repo_access')
+        url = 'https://github.com/owner/project'
+        with mock.patch.object(access.Path, 'mkdir'), \
+             mock.patch.object(access.tempfile, 'mkdtemp', side_effect=['run-one', 'run-two']), \
+             mock.patch.object(access, 'run_git') as git:
+            first, name = access.prepare_repo(url)
+            second, _ = access.prepare_repo(url)
+            self.assertNotEqual(first, second)
+            self.assertEqual(name, 'project')
+            self.assertEqual(git.call_count, 2)
+            for call in git.call_args_list:
+                self.assertIn('--no-checkout', call.args)
+                self.assertIn('core.longpaths=true', call.args)
+            with self.assertRaisesRegex(ValueError, 'no longer supported'):
+                access.prepare_repo(url, 'user-workspace')
+
     def test_github_url_parser(self):
         access=module('repo_access')
         self.assertEqual(access.parse_github_url('https://github.com/lalala8462/webapi'),

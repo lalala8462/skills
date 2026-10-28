@@ -9,7 +9,7 @@ from repo_access import prepare_repo
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--repo',required=True,help='GitHub or GitLab repository URL')
-    p.add_argument('--cache-dir',help='Optional isolated Git cache directory')
+    p.add_argument('--cache-dir',help='Deprecated; custom cache directories are not supported')
     p.add_argument('--rev',required=True,help='Explicit target revision (not implicit HEAD)')
     p.add_argument('--symbol',action='append',required=True,help='Repeat for each symbol')
     p.add_argument('--limit',type=int,default=80)
@@ -18,7 +18,7 @@ def main(argv=None):
         p.error('--limit must be positive')
     try:
         root, _ = prepare_repo(args.repo, args.cache_dir)
-        base = ['git','-C',str(root),'-c','core.quotePath=false',
+        base = ['git','-C',str(root),'-c','core.longpaths=true','-c','core.quotePath=false',
                 '-c','i18n.logOutputEncoding=utf-8']
         check = subprocess.run(base+['rev-parse','--verify',args.rev+'^{commit}'],
             capture_output=True,text=True,encoding='utf-8',errors='replace')

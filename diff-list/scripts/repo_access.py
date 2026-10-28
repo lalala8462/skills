@@ -50,18 +50,13 @@ def run_git(*args):
 
 
 def prepare_repo(url, cache_dir=None):
-    """Clone/fetch only in the dedicated cache; never checkout/edit the user's code."""
-    host, owner, repo, canonical = parse_repo_url(url)
-    base = Path(cache_dir) if cache_dir else Path(os.getenv('LOCALAPPDATA') or tempfile.gettempdir()) / 'diff-list' / 'git-cache'
-    target = base / owner / repo if host == 'github.com' else base / host / Path(owner) / repo
-    if target.exists():
-        if not target.is_dir() or not (target / '.git' / 'HEAD').is_file():
-            raise ValueError('Cache path exists but is not a Git cache: ' + str(target))
-        actual = run_git('-C', target, 'remote', 'get-url', 'origin')
-        if actual != canonical:
-            raise ValueError('Git cache origin mismatch for ' + str(target))
-        run_git('-C', target, 'fetch', '--quiet', '--prune', '--tags', 'origin')
-    else:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        run_git('clone', '--quiet', canonical, target)
+    """Create a fresh isolated clone without checking out repository files."""
+    if cache_dir is not None:
+        raise ValueError('--cache-dir is no longer supported; isolated runs use the dedicated directory')
+    _, _, repo, canonical = parse_repo_url(url)
+    base = Path(os.getenv('LOCALAPPDATA') or tempfile.gettempdir()) / 'diff-list' / 'runs'
+    base.mkdir(parents=True, exist_ok=True)
+    run_dir = Path(tempfile.mkdtemp(prefix='run-', dir=str(base)))
+    target = run_dir / 'repo'
+    run_git('-c', 'core.longpaths=true', 'clone', '--quiet', '--no-checkout', canonical, target)
     return target, repo

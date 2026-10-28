@@ -232,7 +232,7 @@ def main(argv=None):
         if not args.rev and not (args.base and args.head):
             raise ValueError('A range must include --base and --head')
         root, name = prepare_repo(args.repo, args.cache_dir)
-        project = {'name': name, 'path': str(root)}
+        project = {'name': name, 'path': str(root), 'isolated_no_checkout': True}
         if args.rev:
             project['revisions'] = [({'rev': v.rsplit(':', 1)[0], 'parent': int(v.rsplit(':', 1)[1])}
                                      if ':' in v and v.rsplit(':', 1)[1].isdigit() else v)

@@ -10,7 +10,7 @@ from net_effect import compose
 
 
 def git(root, *args):
-    cmd = ['git', '-C', str(root), '-c', 'core.quotePath=false', '-c',
+    cmd = ['git', '-C', str(root), '-c', 'core.longpaths=true', '-c', 'core.quotePath=false', '-c',
            'i18n.logOutputEncoding=utf-8', *args]
     p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                        encoding='utf-8', errors='replace', check=False)
@@ -32,7 +32,7 @@ def collect(project, capture_java=False, capture_config=False):
     if not isinstance(project, dict) or not project.get('path') or not project.get('name'):
         raise ValueError('Each project requires name and path')
     root = Path(git(project['path'], 'rev-parse', '--show-toplevel').strip()).resolve()
-    status = git(root, 'status', '--porcelain=v1', '--untracked-files=normal').splitlines()
+    status = None if project.get('isolated_no_checkout') else git(root, 'status', '--porcelain=v1', '--untracked-files=normal').splitlines()
     result = {'name': project['name'], 'repository': str(root),
               'worktree_status': status, 'selection': [], 'unselected_overlaps': []}
     has_range = 'range' in project
@@ -171,7 +171,7 @@ def main(argv=None):
     p.add_argument('--rev', action='append', help='Commit SHA or SHA:parentIndex; repeat to select multiple commits')
     p.add_argument('--base', help='Base for explicit range, used together with --head')
     p.add_argument('--head', help='Head for explicit range, used together with --base')
-    p.add_argument('--cache-dir', help='Optional isolated Git cache directory')
+    p.add_argument('--cache-dir', help='Deprecated; custom cache directories are not supported')
     p.add_argument('--output', required=True, help='Local JSON evidence path (sensitive)')
     p.add_argument('--max-diff-bytes', type=int, default=20000000,
                    help='Abort if combined diffs exceed this many UTF-8 bytes')
@@ -184,7 +184,7 @@ def main(argv=None):
         if args.max_diff_bytes < 1:
             raise ValueError('--max-diff-bytes must be positive')
         root, name = prepare_repo(args.repo, args.cache_dir)
-        selection = {'name': name, 'path': str(root)}
+        selection = {'name': name, 'path': str(root), 'isolated_no_checkout': True}
         if args.rev:
             selection['revisions'] = [({'rev': v.rsplit(':', 1)[0], 'parent': int(v.rsplit(':', 1)[1])}
                                      if ':' in v and v.rsplit(':', 1)[1].isdigit() else v)
