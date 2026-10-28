@@ -3,23 +3,26 @@
 import argparse
 import subprocess
 import sys
+from repo_access import prepare_repo
 
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--repo',required=True)
+    p.add_argument('--repo',required=True,help='GitHub URL: https://github.com/owner/repo')
+    p.add_argument('--cache-dir',help='Optional isolated Git cache directory')
     p.add_argument('--rev',required=True,help='Explicit target revision (not implicit HEAD)')
     p.add_argument('--symbol',action='append',required=True,help='Repeat for each symbol')
     p.add_argument('--limit',type=int,default=80)
     args = p.parse_args(argv)
     if args.limit < 1:
         p.error('--limit must be positive')
-    base = ['git','-C',args.repo,'-c','core.quotePath=false',
-            '-c','i18n.logOutputEncoding=utf-8']
     try:
+        root, _ = prepare_repo(args.repo, args.cache_dir)
+        base = ['git','-C',str(root),'-c','core.quotePath=false',
+                '-c','i18n.logOutputEncoding=utf-8']
         check = subprocess.run(base+['rev-parse','--verify',args.rev+'^{commit}'],
             capture_output=True,text=True,encoding='utf-8',errors='replace')
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         print('ERROR: Git executable or repository unavailable: '+str(exc),file=sys.stderr)
         return 2
     if check.returncode:

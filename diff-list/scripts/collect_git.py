@@ -5,6 +5,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from repo_access import prepare_repo
 
 
 def git(root, *args):
@@ -109,39 +110,48 @@ def collect(project):
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--manifest', required=True, help='UTF-8 JSON with projects array')
+    p.add_argument('--repo', required=True, help='GitHub URL: https://github.com/owner/repo')
+    p.add_argument('--rev', action='append', help='Commit SHA or SHA:parentIndex; repeat to select multiple commits')
+    p.add_argument('--base', help='Base for explicit range, used together with --head')
+    p.add_argument('--head', help='Head for explicit range, used together with --base')
+    p.add_argument('--cache-dir', help='Optional isolated Git cache directory')
     p.add_argument('--output', required=True, help='Local JSON evidence path (sensitive)')
-    p.add_argument('--max-diff-bytes',type=int,default=20000000,
+    p.add_argument('--max-diff-bytes', type=int, default=20000000,
                    help='Abort if combined diffs exceed this many UTF-8 bytes')
     args = p.parse_args(argv)
     try:
-        manifest = json.loads(Path(args.manifest).read_text(encoding='utf-8-sig'))
-        projects = manifest.get('projects', [])
-        if not isinstance(projects, list) or not projects:
-            raise ValueError('manifest.projects must be a nonempty array')
-        names = [p['name'] for p in projects]
-        if len(set(names)) != len(names):
-            raise ValueError('Project names must be unique')
+        if bool(args.rev) == bool(args.base or args.head):
+            raise ValueError('Use either one or more --rev, or --base and --head')
+        if not args.rev and not (args.base and args.head):
+            raise ValueError('Range requires both --base and --head')
         if args.max_diff_bytes < 1:
             raise ValueError('--max-diff-bytes must be positive')
-        result = {'schema_version':1,'projects':[collect(x) for x in projects],
-                  'notice':'Diff may contain secrets. Internal evidence only; do not copy into test report.'}
+        root, name = prepare_repo(args.repo, args.cache_dir)
+        selection = {'name': name, 'path': str(root)}
+        if args.rev:
+            selection['revisions'] = [({'rev': v.rsplit(':', 1)[0], 'parent': int(v.rsplit(':', 1)[1])}
+                                     if ':' in v and v.rsplit(':', 1)[1].isdigit() else v)
+                                    for v in args.rev]
+        else:
+            selection['range'] = {'base': args.base, 'head': args.head}
+        result = {'schema_version': 2, 'projects': [collect(selection)],
+                  'source_repository': args.repo,
+                  'notice': 'Diff may contain secrets. Internal evidence only; do not copy into test report.'}
         total = sum(len(entry['diff'].encode('utf-8')) for pr in result['projects']
                     for entry in pr['selection'])
         if total > args.max_diff_bytes:
-            raise ValueError('Diff size '+str(total)+' exceeds --max-diff-bytes; narrow selection or raise limit')
+            raise ValueError('Diff size ' + str(total) + ' exceeds --max-diff-bytes; narrow selection or raise limit')
         out = Path(args.output)
-        out.parent.mkdir(parents=True,exist_ok=True)
+        out.parent.mkdir(parents=True, exist_ok=True)
         if out.exists():
             raise ValueError('Refuse to overwrite evidence: ' + str(out))
-        out.write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+        out.write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
         print(str(out.resolve()))
         return 0
-    except (ValueError,KeyError,OSError) as exc:
-        print('ERROR: '+str(exc),file=sys.stderr)
+    except (ValueError, KeyError, OSError) as exc:
+        print('ERROR: ' + str(exc), file=sys.stderr)
         return 2
 
 
 if __name__ == '__main__':
     sys.exit(main())
-
