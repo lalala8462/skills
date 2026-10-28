@@ -1,6 +1,6 @@
 ---
 name: diff-list
-description: "依据一个或多个项目与指定 Git 修订，分析最终生效业务变化及间接影响，输出包含流程图、特殊逻辑、DDL、DML、配置和高风险测试场景的提测 Markdown；Windows 10，固定取证和文档检查由脚本完成。"
+description: "依据一个或多个 GitHub 仓库与指定 Git 修订，分析最终生效业务变化及间接影响，输出包含流程图、特殊逻辑、DDL、DML、配置和高风险测试场景的提测 Markdown；Windows 10，固定取证和文档检查由脚本完成。"
 ---
 
 # diff-list
@@ -11,20 +11,20 @@ description: "依据一个或多个项目与指定 Git 修订，分析最终生�
 
 - 环境：Windows 10、Git for Windows（`git` 在 PATH 中）、Python 3.8+（`py -3` 或 `python`）；脚本仅使用标准库。Windows PowerShell 5.1/7 均可调用。若工具缺失，应说明阻碍，不假装已经取证。
 - 每次写报告前读取 `assets/diff-list-template.md`；模板**只能包含 Markdown 标题和空行**，不得写说明、示例或占位符。保持全部标题及顺序；没有关联变化的章节写“无”。
-- 固定脚本：`scripts/collect_git.py` 只读提取确切提交与 diff；`scripts/impact_candidates.py` 在**指定修订**中检索候选引用；`scripts/init_report.py` 复制模板新建文档；`scripts/validate_report.py` 校验交付文档结构。用法见 `README.md`。
+- 固定脚本：`scripts/repo_access.py` 自动缓存 GitHub 仓库；`scripts/collect_git.py` 只读提取确切提交与 diff；`scripts/impact_candidates.py` 在**指定修订**中检索候选引用；`scripts/init_report.py` 复制模板新建文档；`scripts/validate_report.py` 校验交付文档结构。用法见 `README.md`。
 - `references/analysis-checklist.md` 为按需阅读的详细风险检查清单。脚本的候选和静态检查不是事实结论，调用链和业务预期必须核实源码、配置或已确认需求。
 
 ## 1. 输入、范围与只读边界
 
-1. 必需：**项目名/项目路径及与其一一对应的 Git 修订**。支持单提交、多个选中提交、显式 `base..head` 范围；不以当前 HEAD 替换缺失修订。多项目必须明确项目与修订对应；缺少必要输入且无法确定时先询问。
+1. 必需：**GitHub 仓库 URL（或可从会话明确解析的项目名）及对应 Git 修订号**。用户只需在调用 Skill 时直接输入仓库与修订；**不要求配置 JSON 清单、提前克隆仓库或提供本机项目路径**。支持单提交、多个指定提交和显式 `base..head` 范围。不以当前 HEAD 替代缺失修订。多项目分别指定仓库与修订，名称无法唯一确定仓库时才询问 URL。
 2. 可选：输出绝对路径、背景、重点业务、目标读者。默认目录 `G:\tmp`，缺失则创建，按时间生成不重名的具体 `.md` 文件；如果 G: 不可写，报告错误并请用户给出路径，不悄悄改位置。
-3. 逐项目确定真实 Git 根目录、工作区状态；聚合目录内各服务独立分析。保留未提交改动。通过 `git -C <根目录>` 读取 Git，不 checkout、不 reset、不 cherry-pick、不执行 SQL。
+3. 每个项目通过其 GitHub URL 在隔离缓存中自动 clone/fetch，缓存位置默认为 `%LOCALAPPDATA%\diff-list\git-cache`；读取缓存的真实 Git 根目录与状态。无需修改用户原有本地仓库，禁止 checkout/reset/cherry-pick 或执行 SQL。私有仓库依赖 Git for Windows 已配置的 GitHub 凭据，权限不足或网络失败时明确报告。
 4. 修订不存在、合并提交父提交基线不明、不同分支选中提交不可比较，询问必要信息。合并提交明确选用哪一个父提交；范围须明确两个端点。不要将其他提交和工作树里的后续实现算进本次改动。
 5. 使用 UTF-8，Windows 搜索优先 `rg`（如可用）。Git 结果优先按文件/关键词缩小读取规模。通常无需构建、启动服务、访问真实数据库；“验证情况”只报告**本次真的执行**的核对与未执行的验证。
 
 ## 2. 固定化取证及多提交最终归并
 
-1. 按 `README.md` 制作含项目/修订映射的本地 JSON 清单，运行 `collect_git.py`。它验证修订和父节点、收集每次 diff、文件清单、工作区状态，对选中提交之间**未选中提交修改同一路径**给出提醒；证据 JSON 仅用于内部分析，可能含敏感信息，**不得直接放入提测 Markdown**。
+1. 根据用户在对话中指定的 GitHub 仓库和修订，按项目调用 `collect_git.py --repo <URL> --rev <SHA>`（多个提交重复 `--rev`，合并提交使用 `SHA:父节点序号`）或 `--base <修订> --head <修订>`；脚本自动准备隔离 Git 缓存，无需预先创建输入文件。它验证修订、父节点，收集 diff、文件清单和状态，对选中提交间**未选中提交修改同一路径**给出提醒。多项目分别调用，分析结果汇入**一份**提测 Markdown。证据 JSON 仅供内部分析，可能含敏感信息，**不得直接放入提测 Markdown**。
 2. 单提交与其选定父提交比较；显式范围按 `base` 对 `head` 比较；多个离散提交分别取 diff，按提交祖先关系排列。若同一逻辑在本次多次修改，只保留最后生效结果。完全撤销、无净业务变化的不列。改动前行为取本次选择开始前的真实版本，而非中途版本。
 3. **注意：脚本只检测文件级潜在交叉修改，不能自动证明最终业务归属。** 对涉及同一方法、字段、配置键或间接依赖的未选中提交，继续做人工精确归属；无法独立确认时在对话中询问，不用“最早提交到 HEAD”大范围 diff 代替选中集合。
 4. 提交非当前 HEAD 时，后续阅读代码使用 `git show <完整SHA>:<仓库相对路径>`、`git grep <SHA>` 等指定修订内容；工作树仅辅助定位。不要凭注释、提交摘要或记忆推断可执行行为。合并、重命名、revert、cherry-pick 注意重复和净效果。
