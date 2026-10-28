@@ -265,7 +265,9 @@ def main(argv=None):
                    'java_files_analyzed': len(pairs), 'config_files_analyzed': len(config_pairs),
                    'candidates': findings,
                    'method_groups': group_candidates(findings),
-                   'skipped': skipped, 'review_required': bool(skipped) or effect['status']=='review_required' or
+                   'skipped': skipped, 'review_required': any(
+                       item.get('review_required', True) for item in skipped
+                   ) or effect['status']=='review_required' or
                    evidence.get('commit_review', {}).get('review_required', False),
                    'note': 'AST/configuration change candidates, not verified business behavior or runtime settings.'}
         target = Path(args.output)
