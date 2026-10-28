@@ -193,6 +193,7 @@ def main(argv=None):
             selection['range'] = {'base': args.base, 'head': args.head}
         result = {'schema_version': 2, 'projects': [collect(selection)],
                   'source_repository': args.repo,
+                  'analysis_clone': str(root),
                   'notice': 'Diff may contain secrets. Internal evidence only; do not copy into test report.'}
         total = sum(len(entry['diff'].encode('utf-8')) for pr in result['projects']
                     for entry in pr['selection'])

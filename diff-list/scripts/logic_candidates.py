@@ -256,6 +256,7 @@ def main(argv=None):
             findings.sort(key=lambda x: (-x['priority_score'], x['path'], x['category'], x['description']))
             skipped.extend(config_errors)
         payload = {'schema_version': 1, 'repository': args.repo, 'project': name,
+                   'analysis_clone': str(root),
                    'selection': [{k:v for k,v in entry.items() if k not in ('diff','files')}
                                  for entry in evidence['selection']],
                    'net_status': effect['status'], 'net_reason': effect['reason'],

@@ -42,7 +42,7 @@ def compose(repo, selected, capture_java=False, capture_config=False,
         env = os.environ.copy()
         env['GIT_OPTIONAL_LOCKS'] = '0'
         def git(*args, stdin=None):
-            return subprocess.run(['git', '-c', 'core.longpaths=true', '-C', str(target), *args], input=stdin,
+            return subprocess.run(['git', '-c', 'core.longpaths=true', '-c', 'core.quotePath=false', '-C', str(target), *args], input=stdin,
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                   check=False, env=env)
         read = git('read-tree', baseline)
@@ -51,7 +51,7 @@ def compose(repo, selected, capture_java=False, capture_config=False,
             return result
         for item in selected:
             patch = subprocess.run(
-                ['git', '-c', 'core.longpaths=true', '-C', str(repo), 'diff', '--no-ext-diff',
+                ['git', '-c', 'core.longpaths=true', '-c', 'core.quotePath=false', '-C', str(repo), 'diff', '--no-ext-diff',
                  '--no-color', '--binary', '--full-index', '--find-renames',
                  item['parent'], item['sha']], stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, check=False)

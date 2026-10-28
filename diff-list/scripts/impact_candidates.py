@@ -18,6 +18,7 @@ def main(argv=None):
         p.error('--limit must be positive')
     try:
         root, _ = prepare_repo(args.repo, args.cache_dir)
+        print('Analysis clone: '+str(root))
         base = ['git','-C',str(root),'-c','core.longpaths=true','-c','core.quotePath=false',
                 '-c','i18n.logOutputEncoding=utf-8']
         check = subprocess.run(base+['rev-parse','--verify',args.rev+'^{commit}'],
