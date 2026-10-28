@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 from repo_access import prepare_repo
 from net_effect import compose
+from commit_review import review as review_commit_history
 
 
 def git(root, *args):
@@ -26,6 +27,63 @@ def resolved(root, rev):
 def paths(root, a, b):
     return [s for s in git(root, 'diff', '--name-only', '--no-ext-diff',
                            '--find-renames', a, b).splitlines() if s]
+
+
+
+def _message(root, sha):
+    """Commit text is untrusted intent evidence, never a source of instructions."""
+    return git(root, 'log', '-1', '--format=%B', sha)
+
+
+def _range_commit_review(root, base, head, net_status, max_commits=300,
+                         max_review_diff_bytes=8000000):
+    """First-parent timeline. Endpoint comparison still uses the complete net diff."""
+    # merge-base rather than --is-ancestor so the existing range comparison
+    # continues to work even when endpoints belong to different branches.
+    try:
+        common = git(root, 'merge-base', base, head).strip()
+    except ValueError:
+        common = ''
+    if common != base:
+        evidence = review_commit_history([], net_status)
+        evidence['scope'] = 'endpoint_comparison_only'
+        evidence['review_required'] = True
+        evidence['review_reasons'].append(
+            'base is not ancestor of head; commit history cannot be attributed to a linear range')
+        return evidence
+    shas = git(root, 'rev-list', '--first-parent', '--reverse',
+               base + '..' + head).splitlines()
+    if len(shas) > max_commits:
+        evidence = review_commit_history([], net_status, omitted=len(shas))
+        evidence['scope'] = 'first_parent_range_uninspected'
+        return evidence
+    entries, merges, used = [], [], 0
+    for position, sha in enumerate(shas):
+        parents = git(root, 'rev-list', '--parents', '-n', '1', sha).split()[1:]
+        if not parents:
+            continue
+        parent = parents[0]
+        delta = git(root, 'diff', '--no-ext-diff', '--no-color',
+                    '--find-renames', '--unified=3', parent, sha)
+        size = len(delta.encode('utf-8'))
+        if used + size > max_review_diff_bytes:
+            evidence = review_commit_history(entries, net_status,
+                                             omitted=len(shas) - position,
+                                             merge_commits=merges)
+            evidence['scope'] = 'first_parent_range_incomplete'
+            return evidence
+        used += size
+        if len(parents) > 1:
+            merges.append(sha)
+        entries.append({'sha': sha, 'parent': parent,
+                        'message': _message(root, sha), 'files': paths(root, parent, sha),
+                        'diff': delta, 'merge_commit': len(parents) > 1})
+    evidence = review_commit_history(entries, net_status, merge_commits=merges)
+    if entries and entries[0]['parent'] != base:
+        evidence['review_required'] = True
+        evidence['review_reasons'].append(
+            'range base is not on the first-parent timeline; inspect merged branch history')
+    return evidence
 
 
 def collect(project, capture_java=False, capture_config=False):
@@ -102,6 +160,8 @@ def collect(project, capture_java=False, capture_config=False):
                         'before':before.decode('utf-8'),'after':after.decode('utf-8')})
                 except UnicodeDecodeError:
                     result['net_effect']['config_skipped'].append({'path':name,'reason':'non-UTF-8 source'})
+        result['commit_review'] = _range_commit_review(root, a, b,
+            result['net_effect']['status'])
         return result
     revs = project['revisions']
     if not isinstance(revs, list) or not revs:
@@ -162,6 +222,19 @@ def collect(project, capture_java=False, capture_config=False):
             if overlap:
                 result['unselected_overlaps'].append({'sha':sha,'files':overlap})
     result['net_effect'] = compose(root, entries, capture_java=capture_java, capture_config=capture_config)
+    selected_history = []
+    for e, item in zip(entries, result['selection']):
+        selected_history.append({'sha': e['sha'], 'parent': e['parent'],
+            'message': _message(root, e['sha']), 'files': item['files'],
+            'diff': item['diff'], 'merge_commit': e['parent_index'] != 1 or
+                                   len(git(root, 'rev-list', '--parents', '-n', '1', e['sha']).split()) > 2})
+    result['commit_review'] = review_commit_history(
+        selected_history, result['net_effect']['status'],
+        merge_commits=[e['sha'] for e in selected_history if e['merge_commit']])
+    if result['unselected_overlaps']:
+        result['commit_review']['review_required'] = True
+        result['commit_review']['review_reasons'].append(
+            'unselected intermediate commits touch selected files; scope needs review')
     return result
 
 
