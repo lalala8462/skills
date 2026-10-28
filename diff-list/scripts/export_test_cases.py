@@ -52,6 +52,30 @@ def _coverage(item, label):
     return set(keys)
 
 
+def _observable_evidence(value, identifier):
+    """Require observable source, target and result without pretending to verify semantics."""
+    if not isinstance(value, list) or not value:
+        raise ValueError('case {} requires observable_evidence (nonempty array)'.format(identifier))
+    assertions = []
+    for index, item in enumerate(value, 1):
+        if not isinstance(item, dict):
+            raise ValueError('case {} observable_evidence[{}] must be an object'.format(identifier, index))
+        label = 'case {} observable_evidence[{}]'.format(identifier, index)
+        surface = _string(item.get('surface'), label + '.surface')
+        target = _string(item.get('target'), label + '.target')
+        assertion = _string(item.get('assertion'), label + '.assertion')
+        if any('\n' in value or '\r' in value for value in (surface, target, assertion)):
+            raise ValueError(label + ' must be single-line')
+        simple = re.sub(r'[\s,，。.!！:：;；、]+', '', assertion)
+        generic = re.fullmatch(
+            r'(?:(?:业务|交易|支付|退款|订单|操作|请求|接口|系统|结果|响应|处理|执行|数据|状态|功能)){0,2}'
+            r'(?:成功|正常|正确|无异常|符合预期|与预期一致|通过)', simple)
+        if generic or simple in ('符合预期', '处理成功', '结果正确', '功能正常', '正常处理', '无异常'):
+            raise ValueError(label + '.assertion is not an observable, verifiable result')
+        assertions.append('{}. {}｜{}：{}'.format(index, surface, target, assertion))
+    return assertions
+
+
 def _case(item, number, prefix, ids, require_coverage):
     if not isinstance(item, dict):
         raise ValueError('case {} must be an object'.format(number))
@@ -63,6 +87,10 @@ def _case(item, number, prefix, ids, require_coverage):
     preconditions = _string(item.get('preconditions'), 'preconditions')
     steps = _lines(item.get('steps'), 'steps')
     expected = _lines(item.get('expected'), 'expected')
+    evidence = _observable_evidence(item.get('observable_evidence'), identifier)
+    expected += '\n可观察证据：\n' + '\n'.join(evidence)
+    if len(expected) > 32767:
+        raise ValueError('case {} expected result exceeds Excel cell limit'.format(identifier))
     signature = tuple(_identity(value) for value in (title, preconditions, steps, expected))
     coverage = _coverage(item, 'case ' + identifier) if require_coverage else set()
     return (identifier, title, preconditions, steps, expected), coverage, signature
@@ -71,7 +99,8 @@ def _case(item, number, prefix, ids, require_coverage):
 def normalize(data):
     """Accept historic cases input or two-category input without inventing tests.
 
-    New input: focus_cases + regular_cases. Every new case has coverage_key(s).
+    New input: focus_cases + regular_cases. Every case requires observable_evidence.
+    Both new categories also require coverage_key(s).
     Return dict for dual input; preserve a list for older API callers.
     """
     if not isinstance(data, dict):

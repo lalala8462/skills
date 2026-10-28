@@ -539,9 +539,11 @@ class AdditionalRegressionTests(unittest.TestCase):
         exporter=module('export_test_cases')
         rows=exporter.normalize({'cases':[
             {'title':'旧版报文兼容','preconditions':'旧版报文可用',
-             'steps':['发起请求','检查响应'],'expected':['请求成功','字段正确']},
+             'steps':['发起请求','检查响应'],'expected':['请求成功','字段正确'],
+             'observable_evidence':[{'surface':'接口','target':'测试响应体状态字段','assertion':'status=SUCCESS，订单号与请求一致'}]},
             {'case_id':'X02','title':'文本防护','preconditions':'测试准备',
-             'steps':'=1+2','expected':'保持为文本'}]})
+             'steps':'=1+2','expected':'保持为文本',
+             'observable_evidence':[{'surface':'文件','target':'导出单元格 D3','assertion':'文本内容保持 =1+2，不包含 Excel 公式节点'}]}]})
         self.assertEqual(rows[0][0], 'DL0001')
         self.assertEqual(rows[0][3], '1. 发起请求\n2. 检查响应')
         with tempfile.TemporaryDirectory() as td:
@@ -562,7 +564,8 @@ class AdditionalRegressionTests(unittest.TestCase):
     def test_export_test_cases_rejects_incomplete(self):
         exporter=module('export_test_cases')
         case={'title':'测试用例','preconditions':'准备',
-              'steps':['执行操作'],'expected':['符合预期']}
+              'steps':['执行操作'],'expected':['符合预期'],
+              'observable_evidence':[{'surface':'接口','target':'测试响应体状态字段','assertion':'status=SUCCESS，订单号与请求一致'}]}
         for payload in ({'cases':[]}, {'cases':[{**case,'steps':[]}]},
                         {'cases':[{**case,'preconditions':''}]},
                         {'cases':[{**case,'expected':[]}]},
@@ -589,7 +592,8 @@ class AdditionalRegressionTests(unittest.TestCase):
         def case(title, key):
             return {'title':title,'preconditions':'测试数据已准备',
                     'steps':['发起请求','检查结果'],'expected':['符合预期'],
-                    'coverage_key':key}
+                    'coverage_key':key,
+                    'observable_evidence':[{'surface':'接口','target':'测试响应体状态字段','assertion':'status=SUCCESS，订单号与请求一致'}]}
         data=exporter.normalize({'focus_cases':[case('重试幂等','refund.retry')],
                                  'regular_cases':[case('常规重试','refund.retry'),
                                                   case('正常退款','refund.basic')]})
@@ -621,7 +625,8 @@ class AdditionalRegressionTests(unittest.TestCase):
         import zipfile
         exporter=module('export_test_cases')
         case={'title':'核心','preconditions':'前提','steps':['执行'],
-              'expected':['状态正确'],'coverage_key':'basic'}
+              'expected':['状态正确'],'coverage_key':'basic',
+              'observable_evidence':[{'surface':'接口','target':'测试响应体状态字段','assertion':'status=SUCCESS，订单号与请求一致'}]}
         with self.assertRaisesRegex(ValueError,'partially overlaps'):
             exporter.normalize({'focus_cases':[case],
                 'regular_cases':[{**case,'title':'多覆盖','coverage_keys':['basic','other']}]})
@@ -640,7 +645,8 @@ class AdditionalRegressionTests(unittest.TestCase):
     def test_dual_sheet_fallback_exact_content(self):
         exporter=module('export_test_cases')
         case={'title':'正常支付','preconditions':'同样前提','steps':['相同步骤'],
-              'expected':['相同结果'],'coverage_key':'focus.key'}
+              'expected':['相同结果'],'coverage_key':'focus.key',
+              'observable_evidence':[{'surface':'接口','target':'测试响应体状态字段','assertion':'status=SUCCESS，订单号与请求一致'}]}
         duplicate={**case,'coverage_key':'regular.key'}
         data=exporter.normalize({'focus_cases':[case],'regular_cases':[duplicate]})
         self.assertEqual(data['deduplicated'],1)
@@ -655,6 +661,51 @@ class AdditionalRegressionTests(unittest.TestCase):
         self.assertFalse(any('用例数量' in err for err in errors))
         errors,_=validator.validate(report.replace('总用例数量：3','总用例数量：5'),template,[])
         self.assertTrue(any('不一致' in err for err in errors))
+
+
+    def test_observable_evidence_required_for_all_cases(self):
+        exporter=module('export_test_cases')
+        case={'title':'正常请求','preconditions':'订单存在','steps':['发起请求'],
+              'expected':['正常完成'],'coverage_key':'order|valid|success'}
+        for value in ({'focus_cases':[case], 'regular_cases':[]},
+                      {'focus_cases':[], 'regular_cases':[case]},
+                      {'cases':[case]}):
+            with self.assertRaisesRegex(ValueError,'observable_evidence'):
+                exporter.normalize(value)
+        for incomplete in ([], [{}], [{'surface':'接口','target':'返回体'}],
+                           [{'surface':'数据库','assertion':'status=SUCCESS'}]):
+            bad=dict(case,observable_evidence=incomplete)
+            with self.assertRaises(ValueError):
+                exporter.normalize({'focus_cases':[bad],'regular_cases':[]})
+
+    def test_vague_assertions_rejected(self):
+        exporter=module('export_test_cases')
+        for phrase in ('符合预期','处理成功','系统正常','接口成功','退款成功','状态正确'):
+            case={'title':'异常退款','preconditions':'准备退款单','steps':['提交退款'],
+                  'expected':['状态正确'],'coverage_key':'refund|duplicate|once',
+                  'observable_evidence':[{'surface':'数据库','target':'退款流水',
+                                          'assertion':phrase}]}
+            with self.assertRaisesRegex(ValueError,'not an observable'):
+                exporter.normalize({'focus_cases':[case],'regular_cases':[]})
+
+    def test_evidence_channels_visible_in_xlsx_expected_column(self):
+        import zipfile
+        exporter=module('export_test_cases')
+        channels=('页面','接口','日志','数据库','文件','下游行为','缓存')
+        item={'title':'检查证据来源','preconditions':'准备测试数据','steps':['执行请求'],
+              'expected':['处理完毕'],'coverage_key':'order|valid|success',
+              'observable_evidence':[{'surface':surface,'target':'订单状态字段',
+                                      'assertion':'status=SUCCESS'} for surface in channels]}
+        records=exporter.normalize({'focus_cases':[item],'regular_cases':[]})
+        for surface in channels:
+            self.assertIn(surface+'｜订单状态字段：status=SUCCESS',records['focus'][0][4])
+        with tempfile.TemporaryDirectory() as td:
+            out=Path(td)/'test.xlsx'
+            exporter.export(records,out)
+            with zipfile.ZipFile(out) as z:
+                xml=z.read('xl/worksheets/sheet1.xml').decode('utf-8')
+                self.assertIn('可观察证据：',xml)
+                self.assertIn('status=SUCCESS',xml)
 
 
 if __name__=='__main__':
