@@ -259,6 +259,7 @@ def main(argv=None):
                    'analysis_clone': str(root),
                    'selection': [{k:v for k,v in entry.items() if k not in ('diff','files')}
                                  for entry in evidence['selection']],
+                   'commit_review': evidence.get('commit_review'),
                    'net_status': effect['status'], 'net_reason': effect['reason'],
                    'files_analyzed': len(pairs) + len(config_pairs),
                    'java_files_analyzed': len(pairs), 'config_files_analyzed': len(config_pairs),
