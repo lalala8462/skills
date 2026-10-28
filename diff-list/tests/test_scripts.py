@@ -152,19 +152,19 @@ class DiffListTest(unittest.TestCase):
             '### 2.3 表配置 DML 准备清单':'无',
             '### 2.4 配置文件调整':'无',
             '### 3.1 整体流程说明':'返回业务处理结果。',
-            '### 3.2 Mermaid 流程图':'```mermaid\\nflowchart TD\\n A[请求] --> B[响应]\\n```',
+            '### 3.2 Mermaid 流程图':'```mermaid\nflowchart TD\n A[请求] --> B[响应]\n```',
             '## 4. 特殊逻辑与测试关注点':'新增字段对旧调用方的影响。',
             '## 5. 重点测试场景':'无',
             '## 6. 验证情况':'仅静态分析。'
         }
-        report='\\n'.join(line+'\\n'+blocks.get(line,'') if line.startswith('#') else line
+        report='\n'.join(line+'\n'+blocks.get(line,'') if line.startswith('#') else line
                          for line in template.splitlines())
         errors,_=val.validate(report,template,[])
         self.assertTrue(any('既有功能影响' in e for e in errors))
         corrected=report.replace('新增字段对旧调用方的影响。',
                                  '既有功能影响：旧调用方可能忽略该字段，需验证向后兼容。')
         errors,_=val.validate(corrected,template,[])
-        self.assertFalse(any('既有功能影响' in e for e in errors))
+        self.assertEqual(errors, [])
 
 
 if __name__=='__main__':
