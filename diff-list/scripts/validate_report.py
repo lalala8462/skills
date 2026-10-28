@@ -70,6 +70,17 @@ def validate(text,template,expected):
         for label in LABELS:
             if not re.search(r'(?m)^\s*(?:\d+[.)]\s*)?\*\*'+label+r'[:：]\*\*\s*\S',tests):
                 errors.append('缺少标签或内容: '+label)
+        markers=list(TEST.finditer(tests))
+        for i, marker in enumerate(markers):
+            group=tests[marker.end():markers[i+1].start() if i+1<len(markers) else len(tests)]
+            labels=[]
+            for lab in ('测试前提','预期结果'):
+                hits=list(re.finditer(r'(?m)^\s*(?:\d+[.)]\s*)?\*\*'+lab+r'[:：]\*\*\s*\S',group))
+                if len(hits)!=1:
+                    errors.append('第 '+str(i+1)+' 个场景缺少唯一有效的 '+lab)
+                labels.extend((m.start(),lab) for m in hits)
+            if len(labels)==2 and sorted(labels)[0][1]!='测试前提':
+                errors.append('第 '+str(i+1)+' 个场景标签顺序错误')
         counts=[len(re.findall(r'(?m)^\s*(?:\d+[.)]\s*)?\*\*'+lab+r'[:：]\*\*',tests)) for lab in LABELS]
         if len(set(counts))!=1:
             errors.append('测试点/测试前提/预期结果数量不一致')

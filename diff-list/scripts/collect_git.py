@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 from repo_access import prepare_repo
+from net_effect import compose
 
 
 def git(root, *args):
@@ -43,9 +44,15 @@ def collect(project):
         if not isinstance(r, dict) or not r.get('base') or not r.get('head'):
             raise ValueError('Range needs explicit base and head')
         a, b = resolved(root, r['base']), resolved(root, r['head'])
+        changed = paths(root, a, b)
+        diff = git(root, 'diff', '--no-ext-diff', '--no-color', '--find-renames',
+                   '--unified=8', a, b)
         result['selection'].append({'type': 'range', 'base': a, 'head': b,
-            'files': paths(root, a, b), 'diff': git(root, 'diff', '--no-ext-diff',
-                '--no-color', '--find-renames', '--unified=8', a, b)})
+                                    'files': changed, 'diff': diff})
+        result['net_effect'] = {'status': 'composed' if changed else 'no_net_change',
+                                'baseline': a, 'last_selected': b,
+                                'changed_files': changed, 'net_diff': diff,
+                                'applied_commits': [], 'reason': ''}
         return result
     revs = project['revisions']
     if not isinstance(revs, list) or not revs:
@@ -105,6 +112,7 @@ def collect(project):
             overlap = sorted(changed & all_paths)
             if overlap:
                 result['unselected_overlaps'].append({'sha':sha,'files':overlap})
+    result['net_effect'] = compose(root, entries)
     return result
 
 

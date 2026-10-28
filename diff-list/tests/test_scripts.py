@@ -106,5 +106,61 @@ class DiffListTest(unittest.TestCase):
                     '--output',str(Path(td)/'bad.json')]),2)
 
 
+    def test_selected_net_and_cancel(self):
+        collector=module('collect_git')
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td)
+            def g(*args):
+                return subprocess.check_output(['git','-C',str(root),*args],text=True).strip()
+            g('init','-q');g('config','user.name','Test');g('config','user.email','test@example.com')
+            file=root/'record.txt'
+            file.write_text('status=old\n',encoding='utf-8')
+            g('add','.');g('commit','-qm','initial')
+            file.write_text('status=temporary\n',encoding='utf-8')
+            g('add','.');g('commit','-qm','intermediate')
+            a=g('rev-parse','HEAD')
+            file.write_text('status=old\n',encoding='utf-8')
+            g('add','.');g('commit','-qm','undo')
+            b=g('rev-parse','HEAD')
+            result=collector.collect({'name':'sample','path':str(root),
+                                       'revisions':[b,a]})
+            self.assertEqual(result['net_effect']['status'],'no_net_change')
+            self.assertEqual(result['net_effect']['changed_files'],[])
+            self.assertEqual(len(result['net_effect']['applied_commits']),2)
+
+    def test_selected_net_intervening_conflict(self):
+        collector=module('collect_git')
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td)
+            def g(*args):
+                return subprocess.check_output(['git','-C',str(root),*args],text=True).strip()
+            g('init','-q');g('config','user.name','Test');g('config','user.email','test@example.com')
+            file=root/'record.txt'
+            file.write_text('status=old\n',encoding='utf-8')
+            g('add','.');g('commit','-qm','initial')
+            file.write_text('status=selected-a\n',encoding='utf-8')
+            g('add','.');g('commit','-qm','selected-a')
+            a=g('rev-parse','HEAD')
+            file.write_text('status=unselected\n',encoding='utf-8')
+            g('add','.');g('commit','-qm','intervening')
+            file.write_text('status=selected-b\n',encoding='utf-8')
+            g('add','.');g('commit','-qm','selected-b')
+            b=g('rev-parse','HEAD')
+            result=collector.collect({'name':'sample','path':str(root),
+                                       'revisions':[a,b]})
+            self.assertEqual(result['net_effect']['status'],'review_required')
+            self.assertFalse(result['net_effect']['net_diff'])
+            self.assertTrue(result['unselected_overlaps'])
+
+    def test_validate_misgrouped_tests(self):
+        val=module('validate_report')
+        template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
+        report=template.replace('## 5. 重点测试场景',
+            '## 5. 重点测试场景\n**测试点：** A\n**测试前提：** A1\n'
+            '**测试点：** B\n**预期结果：** B2\n**测试前提：** B1\n'
+            '**预期结果：** A2')
+        errors,_=val.validate(report,template,[])
+        self.assertTrue(any('唯一有效' in e for e in errors))
+
 if __name__=='__main__':
     unittest.main()

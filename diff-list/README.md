@@ -1,64 +1,47 @@
 # diff-list（Windows 10）
 
-按指定 Git 修订生成面向测试人员的提测说明。需要 **Git for Windows**、**Python 3.8+**（标准库），可通过 PowerShell 5.1/7 调用；不需要数据库连接，不安装 Python 第三方依赖。分析和撰写由执行 Skill 的助手负责；脚本只固定化**取证、候选检索、初始化和静态文档验证**，不能代替业务语义判断。
+直接输入 GitHub 仓库 URL 与修订号，输出提测 Markdown。无需本机项目路径、manifest 或预先克隆。需要 Git for Windows、Python 3.8+，PowerShell 5.1/7 均可；脚本仅依赖标准库。
 
-## 目录
-
-- `SKILL.md`：主规则（执行时必读）
-- `assets/diff-list-template.md`：固定标题模板，只有标题与空行
-- `references/analysis-checklist.md`：按需读取的影响与风险检查清单
-- `scripts/repo_access.py`：依据 GitHub 仓库 URL 自动创建/更新隔离 Git 缓存
-- `scripts/collect_git.py`：只读收集指定提交/范围 diff，提示同路径未选中提交交叉
-- `scripts/impact_candidates.py`：指定修订上的字面引用候选检索
-- `scripts/init_report.py`：从模板新建 `.md`
-- `scripts/validate_report.py`：文档结构/用语静态检查
-- `tests/test_scripts.py`：回归测试
-
-## 1. 直接指定 GitHub 仓库和修订号
-
-**无需创建 JSON 配置文件，也无需提前 clone 项目。** 调用 Skill 时直接说明 GitHub 仓库及修订即可：
+## Skill 直接调用
 
 ```text
 /diff-list https://github.com/lalala8462/webapi
-修订号：a1b2c3d4、e5f6a7b8
+提交：a1b2c3d4、e5f6a7b8
 ```
 
-多项目可一次提出，Skill 会分别取证，最终合并成一份提测 Markdown：
+多项目分别指定仓库/修订，最后合并同一份文档；也支持范围 `release-1..release-2`。提交号为示例。私有仓库使用 Git for Windows 已配置的 GitHub 凭据，缓存位于 `%LOCALAPPDATA%\diff-list\git-cache`。
 
-```text
-/diff-list
-webapi: https://github.com/lalala8462/webapi，修订 a1b2c3d4、e5f6a7b8
-adpts: https://github.com/lalala8462/adpts，范围 release-1..release-2
-```
-
-修订号仅为格式示例，必须换成真实提交；若仅提供项目名，必须能从当前会话/工作区唯一确认 GitHub 地址，否则需提供 URL。合并提交可使用 `--rev SHA:2` 选择第 2 个父节点（默认非合并提交用唯一父节点）；无法确认正确基线时先询问。对于离散提交，不能默认纳入两次提交之间其他人的修改。
-
-在 Skill 根目录 PowerShell 终端，脚本执行形式如下（由 Skill 自行组织，用户不必手动输入命令）：
+## 内部固定脚本
 
 ```powershell
 py -3 .\scripts\collect_git.py --repo https://github.com/lalala8462/webapi --rev a1b2c3d4 --rev e5f6a7b8 --output G:\tmp\webapi-evidence.json
 py -3 .\scripts\collect_git.py --repo https://github.com/lalala8462/adpts --base release-1 --head release-2 --output G:\tmp\adpts-evidence.json
-py -3 .\scripts\impact_candidates.py --repo https://github.com/lalala8462/webapi --rev YOUR_COMMIT_SHA --symbol isSuccess --symbol processPayment
-py -3 .\scripts\init_report.py --outdir G:\tmp --filename diff-list-payment.md
-```
-
-脚本自动在 `%LOCALAPPDATA%\diff-list\git-cache\<owner>\<repo>` 准备及更新 Git 缓存。缓存**只供取证，不是用户原有工作区**。私有仓库需要 Git for Windows 已配置有效的 GitHub 认证（如 Git Credential Manager）；如无权限或网络不可达，应报告失败，不改用不明来源代码。
-
-> 证据 JSON 含代码 diff，可能携带敏感配置。仅在受控本机存放，不得直接提交或复制到最终测试文档；已有证据文件不会被覆盖。默认 20 MB diff 上限可用 `--max-diff-bytes` 调整。`impact_candidates.py` 是字面引用检索，不代表已验证 Java 方法绑定。
-
-## 2. 根据指定修订撰写并校验
-
-将分析结论填入新建 Markdown，保持模板所有标题。对删除/废弃配置、间接调用方、需求与实现差异及高风险场景按主 Skill 和参考清单逐项核实。示例校验：
-
-```powershell
-py -3 .\scripts\validate_report.py G:\tmp\diff-list-payment.md --expect webapi=YOUR_40_CHARACTER_SHA --expect adpts=YOUR_40_CHARACTER_SHA
+py -3 .\scripts\impact_candidates.py --repo https://github.com/lalala8462/webapi --rev YOUR_SHA --symbol processPayment
+py -3 .\scripts\init_report.py --outdir G:\tmp --filename test-report.md
+py -3 .\scripts\validate_report.py G:\tmp\test-report.md --expect webapi=YOUR_FULL_40_CHARACTER_SHA
 py -3 -m unittest discover -s tests -v
 ```
 
-脚本 `PASS` 仅表示结构、文本和基本约束通过；**并不证明 Mermaid 8.8.3 能完整解析、Git 净行为归属准确、测试预期正确、实际环境已联调**。仍应检查真实修订上的调用链和业务分支。若 G: 盘不存在或不可写，可显式指定其他输出目录；默认不静默回退。
+`collect_git.py` 的 `net_effect` 字段区分：
 
-## 安全及兼容
+- `composed`：在**独立临时 Git 索引**中，仅应用选中提交的补丁，输出机械净差异 `net_diff`、`changed_files`。不包含未选中提交自动带入的其他变化。
+- `no_net_change`：选中补丁组合后与基线没有净差异；不应描述中途已撤销的改动。
+- `review_required`：选中补丁依赖其他提交、补丁冲突或无法机械合成；不输出假净差异，必须分析差异归属及交叉依赖。
 
-- Python 脚本只读取远程 GitHub 仓库并在隔离缓存中 clone/fetch；只写缓存、`--output` 证据文件或报告初始化路径，不触碰用户已有业务工作区、SQL 和服务。
-- 采用 `subprocess` 参数数组，不经 Shell 拼装用户输入；仅使用标准库，文本显式 UTF-8。
-- 未安装 Git/Python、GitHub 无访问权限、不可读取仓库或修订、跨分支无法排序、合并提交缺父节点时明确报错。
+这里的合成结果**并不证明最终业务行为**，更不等于真实 Git 分支结尾的全部代码。即使没有文件级交叉，未选中的其他文件仍可能影响调用链。范围模式直接比较指定两个端点，包含范围内全部提交。
+
+## 文件和边界
+
+- `SKILL.md`：调用和分析主指令（保持简短）。
+- `references/report-rules.md`：DDL、DML、配置和提测写作规范。
+- `references/analysis-checklist.md`：双向调用与风险检查。
+- `scripts/repo_access.py`：自动 GitHub 缓存。
+- `scripts/collect_git.py` + `scripts/net_effect.py`：Git 取证、祖先排序、独立索引净差异。
+- `scripts/impact_candidates.py`：指定 SHA 的符号字面候选。
+- `scripts/init_report.py` + `scripts/validate_report.py`：固定模板与静态校验。
+- `assets/diff-list-template.md`：只含标题和空行，保持不变。
+- `tests/test_scripts.py`：离线测试。
+
+所有脚本不得触碰用户已有业务仓库；临时 Git 索引和缓存属于工具内部数据。证据 JSON 可能包含敏感代码、密钥，严禁提交仓库或复制到提测文档。输出文件不覆盖既有同名文件。默认 `G:\tmp` 不能访问时明确报告，不静默改路径。
+
+**限制**：文字差异合成不等同 Java 类型绑定或业务正确性；文档静态检查也不代表 Mermaid 实际渲染、数据库环境或联调完成。
