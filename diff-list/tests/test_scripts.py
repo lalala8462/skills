@@ -708,5 +708,138 @@ class AdditionalRegressionTests(unittest.TestCase):
                 self.assertIn('status=SUCCESS',xml)
 
 
+class CommitHistoryRegressionTest(unittest.TestCase):
+    def test_commit_messages_reverse_intent_and_zero_net(self):
+        collector=module('collect_git')
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td)
+            def git(*args):
+                return subprocess.check_output(['git','-C',str(root),*args],
+                                               text=True, encoding='utf-8').strip()
+            git('init','-q')
+            git('config','user.name','Tests')
+            git('config','user.email','example@example.com')
+            file=root/'支付路由.java'
+            file.write_text('class Pay { String route=\"old\"; }\n',encoding='utf-8')
+            git('add','.')
+            git('commit','-qm','base')
+            base=git('rev-parse','HEAD')
+            file.write_text('class Pay { String route=\"new\"; }\n',encoding='utf-8')
+            git('add','.')
+            git('commit','-m','Use new payment route','-m',
+                'Design assumption: new payment route should be enabled')
+            one=git('rev-parse','HEAD')
+            file.write_text('class Pay { String route=\"old\"; }\n',encoding='utf-8')
+            git('add','.')
+            git('commit','-qm','Restore original payment route')
+            two=git('rev-parse','HEAD')
+            for spec in ({'revisions':[two,one]},
+                         {'range':{'base':base,'head':two}}):
+                evidence=collector.collect({'name':'pay','path':str(root),**spec})
+                self.assertEqual(evidence['net_effect']['status'],'no_net_change')
+                review=evidence['commit_review']
+                self.assertEqual([c['sha'] for c in review['commits']],[one,two])
+                self.assertEqual(review['commits'][0]['subject'],'Use new payment route')
+                self.assertIn('Design assumption',review['commits'][0]['body'])
+                self.assertTrue(review['review_required'])
+                self.assertEqual(review['textual_reverse_candidate_count'],1)
+                repeated=review['repeated_files']
+                self.assertEqual(len(repeated),1)
+                self.assertEqual(repeated[0]['touch_count'],2)
+                self.assertEqual(repeated[0]['reverse_candidates'][0]['later_commit'],two)
+                self.assertEqual(repeated[0]['scope'],'file_only_not_method_binding')
+
+    def test_same_file_repeated_is_not_proof_of_opposite_logic(self):
+        collector=module('collect_git')
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td)
+            def git(*args):
+                return subprocess.check_output(['git','-C',str(root),*args],
+                                               text=True, encoding='utf-8').strip()
+            git('init','-q')
+            git('config','user.name','Tests')
+            git('config','user.email','example@example.com')
+            f=root/'service.java'
+            f.write_text('class S {\n int a=1;\n int b=1;\n}\n',encoding='utf-8')
+            git('add','.')
+            git('commit','-qm','base')
+            f.write_text('class S {\n int a=2;\n int b=1;\n}\n',encoding='utf-8')
+            git('add','.')
+            git('commit','-qm','Update first field')
+            one=git('rev-parse','HEAD')
+            f.write_text('class S {\n int a=2;\n int b=2;\n}\n',encoding='utf-8')
+            git('add','.')
+            git('commit','-qm','Update second field')
+            two=git('rev-parse','HEAD')
+            result=collector.collect({'name':'service','path':str(root),
+                                      'revisions':[one,two]})
+            review=result['commit_review']
+            self.assertEqual(len(review['repeated_files']),1)
+            self.assertEqual(review['textual_reverse_candidate_count'],0)
+            self.assertEqual(len(review['commits']),2)
+            self.assertFalse(review['review_required'])
+
+    def test_selected_history_omits_unselected_commit_messages(self):
+        collector=module('collect_git')
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td)
+            def git(*args):
+                return subprocess.check_output(['git','-C',str(root),*args],
+                                               text=True, encoding='utf-8').strip()
+            git('init','-q')
+            git('config','user.name','Tests')
+            git('config','user.email','example@example.com')
+            for f in ('a.txt','b.txt','c.txt'):
+                (root/f).write_text('old\n',encoding='utf-8')
+            git('add','.')
+            git('commit','-qm','base')
+            (root/'a.txt').write_text('new\n',encoding='utf-8')
+            git('add','.')
+            git('commit','-qm','Selected A')
+            one=git('rev-parse','HEAD')
+            (root/'b.txt').write_text('middle\n',encoding='utf-8')
+            git('add','.')
+            git('commit','-qm','NOT SELECTED')
+            (root/'c.txt').write_text('new\n',encoding='utf-8')
+            git('add','.')
+            git('commit','-qm','Selected C')
+            three=git('rev-parse','HEAD')
+            report=collector.collect({'name':'sample','path':str(root),
+                                      'revisions':[one,three]})
+            reviewed=report['commit_review']['commits']
+            self.assertEqual([c['sha'] for c in reviewed],[one,three])
+            self.assertNotIn('NOT SELECTED',[c['subject'] for c in reviewed])
+
+    def test_cross_branch_range_warns_instead_of_claiming_linear_history(self):
+        collector=module('collect_git')
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td)
+            def git(*args):
+                return subprocess.check_output(['git','-C',str(root),*args],
+                                               text=True, encoding='utf-8').strip()
+            git('init','-q')
+            git('config','user.name','Tests')
+            git('config','user.email','example@example.com')
+            f=root/'route.txt'
+            f.write_text('old\n',encoding='utf-8')
+            git('add','.')
+            git('commit','-qm','base')
+            base=git('rev-parse','HEAD')
+            f.write_text('branch one\n',encoding='utf-8')
+            git('add','.')
+            git('commit','-qm','Branch one')
+            one=git('rev-parse','HEAD')
+            git('checkout','-q',base)
+            f.write_text('branch two\n',encoding='utf-8')
+            git('add','.')
+            git('commit','-qm','Branch two')
+            two=git('rev-parse','HEAD')
+            review=collector.collect({'name':'sample','path':str(root),
+                                      'range':{'base':one,'head':two}})['commit_review']
+            self.assertEqual(review['scope'],'endpoint_comparison_only')
+            self.assertTrue(review['review_required'])
+            self.assertEqual(review['commits'],[])
+
+
 if __name__=='__main__':
     unittest.main()
