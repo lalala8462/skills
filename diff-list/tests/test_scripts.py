@@ -162,5 +162,98 @@ class DiffListTest(unittest.TestCase):
         errors,_=val.validate(report,template,[])
         self.assertTrue(any('唯一有效' in e for e in errors))
 
+class LogicAstTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from shutil import which
+        if not which('javac') or not which('java'):
+            raise unittest.SkipTest('Requires JDK 8+ for Java AST scanner')
+
+    def test_ast_detects_changed_special_logic(self):
+        logic = module('logic_candidates')
+        old = '''class Pay {
+          void run(String status) { if (status == null) return; }
+          void run(int count) { if (count > 3) return; }
+        }'''
+        new = '''class Pay {
+          @Transactional void run(String status) {
+            if (status == null) retry();
+            if (status.equals("SECRET_STATUS_1")) setStatus("WAITING");
+            try { charge(); } catch (Exception ex) { rollback(); }
+            synchronized(this) { lock(); unlock(); }
+          }
+          void run(int count) { if (count > 3) return; }
+          void retry() {} void setStatus(String status) {} void charge() {}
+          void rollback() {} void lock() {} void unlock() {}
+        }
+        @interface Transactional {}'''
+        findings, errors = logic.extract_candidates([{'path':'src/Pay.java','before':old,'after':new}])
+        self.assertEqual(errors, [])
+        cats = {x['category'] for x in findings}
+        self.assertTrue({'BRANCH','STATE','RETRY','TRANSACTION','EXCEPTION','CONCURRENCY'} <= cats)
+        self.assertTrue(all(x['priority'] in ('high','medium') and
+                            not x['actual_behavior_verified'] and not x['binding_verified']
+                            for x in findings))
+        self.assertFalse(any('run(int)' in x['method'] for x in findings))
+        self.assertNotIn('SECRET_STATUS_1', json.dumps(findings))
+
+    def test_ast_source_format_only_is_ignored(self):
+        logic = module('logic_candidates')
+        before = 'class A{void test(){if(x>0){setStatus(1);}} int x;void setStatus(int s){}}'
+        after = 'class A { void test() { if (x > 0) { setStatus(1); } } int x; void setStatus(int s) {} }'
+        findings, errors = logic.extract_candidates([{'path':'A.java','before':before,'after':after}])
+        self.assertEqual(errors, [])
+        self.assertEqual(findings, [])
+
+    def test_ast_syntax_error_skips_without_fake_candidates(self):
+        logic = module('logic_candidates')
+        findings, errors = logic.extract_candidates([
+            {'path':'Bad.java','before':'class C {}','after':'class C { void broken( {'}])
+        self.assertFalse(findings)
+        self.assertEqual(len(errors),1)
+        self.assertEqual(errors[0]['path'],'Bad.java')
+
+    def test_java_source_pairs_range_and_selected(self):
+        collector = module('collect_git')
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            def g(*args):
+                return subprocess.check_output(['git','-C',str(root),*args],text=True).strip()
+            g('init','-q');g('config','user.name','Test');g('config','user.email','test@example.com')
+            java=root/'Main.java'
+            java.write_text('class Main { void f() {} }\n', encoding='utf-8')
+            g('add','.');g('commit','-qm','base'); a=g('rev-parse','HEAD')
+            java.write_text('class Main { void f() { retry(); } void retry(){} }\n', encoding='utf-8')
+            g('add','.');g('commit','-qm','selected'); b=g('rev-parse','HEAD')
+            for choice in ({'range': {'base':a,'head':b}}, {'revisions':[b]}):
+                r=collector.collect({'name':'demo','path':str(root), **choice}, capture_java=True)
+                self.assertEqual(r['net_effect']['status'],'composed')
+                pairs=r['net_effect']['java_sources']
+                self.assertEqual(len(pairs),1)
+                self.assertIn('void retry()',pairs[0]['after'])
+                self.assertNotIn('void retry()',pairs[0]['before'])
+
+    def test_rename_does_not_invent_special_changes(self):
+        collector = module('collect_git')
+        logic = module('logic_candidates')
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td)
+            def g(*args):
+                return subprocess.check_output(['git','-C',str(root),*args],text=True).strip()
+            g('init','-q');g('config','user.name','Test');g('config','user.email','test@example.com')
+            (root/'Old.java').write_text('class A { void f(){ if (ok) retry(); } boolean ok; void retry(){} }\n',encoding='utf-8')
+            g('add','.');g('commit','-qm','baseline');a=g('rev-parse','HEAD')
+            (root/'Old.java').rename(root/'New.java')
+            g('add','-A');g('commit','-qm','rename');b=g('rev-parse','HEAD')
+            for spec in ({'range':{'base':a,'head':b}}, {'revisions':[b]}):
+                evidence=collector.collect({'name':'demo','path':str(root),**spec},capture_java=True)
+                pairs=evidence['net_effect']['java_sources']
+                self.assertEqual(len(pairs),1)
+                self.assertEqual(pairs[0]['before'],pairs[0]['after'])
+                findings,skips=logic.extract_candidates(pairs)
+                self.assertEqual(findings,[])
+                self.assertEqual(skips,[])
+
+
 if __name__=='__main__':
     unittest.main()

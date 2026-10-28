@@ -16,7 +16,7 @@ def _run(cmd, *, stdin=None):
     return process.returncode, process.stdout, process.stderr.decode('utf-8', 'replace').strip()
 
 
-def compose(repo, selected):
+def compose(repo, selected, capture_java=False, max_java_files=80, max_java_bytes=300000):
     """selected: ordered [{sha, parent}]. Strictly apply their patches only.
 
     Uses a temporary shared clone with an isolated index. No checked-out source
@@ -40,7 +40,6 @@ def compose(repo, selected):
             return result
         env = os.environ.copy()
         env['GIT_OPTIONAL_LOCKS'] = '0'
-        # Run git in the temporary clone, never touching source repo index.
         def git(*args, stdin=None):
             return subprocess.run(['git', '-C', str(target), *args], input=stdin,
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -78,4 +77,36 @@ def compose(repo, selected):
         result['changed_files'] = [line for line in
                                    names.stdout.decode('utf-8', 'replace').splitlines() if line]
         result['status'] = 'composed' if result['changed_files'] else 'no_net_change'
+        if capture_java:
+            result['java_sources'] = []
+            result['java_skipped'] = []
+            candidates = [name for name in result['changed_files'] if name.endswith('.java')]
+            for name in candidates[max_java_files:]:
+                result['java_skipped'].append({'path': name, 'reason': 'file count limit'})
+            rename = git('diff', '--cached', '--name-status', '--find-renames', baseline)
+            rename_map = {}
+            if rename.returncode == 0:
+                for line in rename.stdout.decode('utf-8', 'replace').splitlines():
+                    columns = line.split('\t')
+                    if len(columns) == 3 and columns[0].startswith('R'):
+                        rename_map[columns[2]] = columns[1]
+            for name in candidates[:max_java_files]:
+                before = git('show', baseline + ':' + rename_map.get(name, name))
+                after = git('show', ':' + name)
+                if before.returncode != 0 and after.returncode != 0:
+                    result['java_skipped'].append({'path': name, 'reason': 'neither version exists'})
+                    continue
+                before_data = before.stdout if before.returncode == 0 else b''
+                after_data = after.stdout if after.returncode == 0 else b''
+                if max(len(before_data), len(after_data)) > max_java_bytes:
+                    result['java_skipped'].append({'path': name, 'reason': 'file size limit'})
+                    continue
+                try:
+                    before_text = before_data.decode('utf-8')
+                    after_text = after_data.decode('utf-8')
+                except UnicodeDecodeError:
+                    result['java_skipped'].append({'path': name, 'reason': 'non-UTF-8 source'})
+                    continue
+                result['java_sources'].append({'path': name, 'before': before_text,
+                                               'after': after_text})
         return result

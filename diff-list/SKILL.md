@@ -1,26 +1,21 @@
 ---
 name: diff-list
-description: "输入 GitHub 仓库与指定 Git 修订，生成面向测试人员的最终行为提测 Markdown：需求、DDL/DML、配置、业务流程图、特殊逻辑及风险场景。Windows 10；固定 Git 净差异取证与文档校验由脚本完成。"
+description: "按指定 GitHub 仓库及 Git 修订生成最终行为提测 Markdown，涵盖业务流程、特殊逻辑、DDL、DML、配置及高风险测试场景；Windows 10，Git 净差异与 Java 8 AST 候选由脚本提取。"
 ---
 
 # diff-list
 
-仅根据用户指定的 GitHub 仓库和修订生成一份 UTF-8 提测 Markdown。**不默认修代码、执行 SQL、修改配置或提交仓库**。面向测试人员解释业务变化，而不是罗列代码证据或全部常规回归用例。
+输入 GitHub 仓库 URL 与对应 Git 提交号或明确比较范围；可以多项目。无需 manifest、本机仓库或预克隆。**只读分析，不修业务代码、不执行 SQL、不提交 Git**。输出一份面向测试人员的 UTF-8 Markdown。
 
-## 使用
+## 执行
 
-1. 输入为项目 GitHub URL（或能唯一定位的项目名）与对应提交 SHA，支持重复提交号、明确 `base..head`，可一次输入多个项目。无需 manifest、本地源码路径或预先 clone。仅关键输入或合并提交父节点不明确时询问，**不擅自改用 HEAD**。
-2. Windows 10 + Git for Windows + Python 3.8+。按 `README.md` 调用 `scripts/collect_git.py`，每项目分别取证，再合并成一个报告。脚本自动缓存仓库、验证修订、按祖先关系排序、收集差异，计算离散提交的**选中补丁净效果**及未选中提交交叉提示。
-3. 只将 `net_effect.status=composed` 的 `net_diff` 当作*机械净差异候选*；`no_net_change` 不列纯粹抵消的变更；`review_required` 必须分析交叉依赖并在影响结论时向用户确认，**不得用整段区间差异冒充指定提交的结果**。脚本不能证明业务语义、跨项目调用或实际部署行为。
-4. 在选中修订读取相关源码和上下游：向下至调用、DB/Redis、通知、异常与重试；向上至未直接改动的消费者。可用 `impact_candidates.py` 搜索引用，但字面命中不是类型精确绑定。风险分类见 `references/analysis-checklist.md`，只展开本次改动确有影响的路径。
+1. Windows 10 使用 Git for Windows、Python 3.8+；**Java 8 AST 分析另需 JDK 8+ 的 `javac`、`java`**。按 `README.md` 运行 `collect_git.py` 和 `logic_candidates.py`，每项目分别取证。缓存由脚本自动管理，未指定修订不得改用 HEAD。
+2. `net_effect` 的 `composed` 为选中提交的机械补丁净效果，`no_net_change` 为无净变化，`review_required` 表示合成不可靠、必须核查依赖。`logic_candidates.py` 输出 AST 结构变化的风险候选及跳过原因，**只是语法候选，不是精确类型绑定、真实调用证明或验收预期**。
+3. 结合 `references/analysis-checklist.md` 验证候选：向下核实业务入口、分支、调用、DB/Redis、异常、重试、通知；向上追踪消费者。核实改动前行为、指定修订实际行为及已确认的业务预期。代码与需求冲突时说明当前缺陷；关键业务预期不清时在对话中询问，不编造。
+4. 按 `references/report-rules.md` 处理需求、DDL、DML、配置新增/变更/废弃，精选有业务意义的特殊分支和高风险场景，不罗列普通回归。
 
-## 研判与撰写
+## 文档与校验
 
-- 内部区分**变更前行为、选中修订实际行为、已确认的业务预期**。二者冲突时明确说明当前缺陷，测试预期以已确认需求为准；需求不清、影响结论时直接对话询问，不猜测。注释不覆盖可执行实现。
-- 每次先读取 `assets/diff-list-template.md`，用 `init_report.py` 建文档，保留所有标题与顺序；无关章节填“无”。表与配置规则见 `references/report-rules.md`；特别核对新增、沿用、变更、废弃的配置项与真实取值，勿将新增配置键误认成 DDL 或数据库现有记录。
-- 流程按业务步骤说明，给出与分支一致的 Mermaid 8.8.3 图。特殊逻辑强调新增判断、绕过、异常、幂等与恢复。仅选本次变化的高价值测试场景，每项分行给出 **测试点 / 测试前提 / 预期结果**，预期可观察、可判定。
-- 报告记录项目名称及完整 40 位 SHA、相对脚本路径、实际执行的验证范围；**不得出现**本机源码绝对路径、代码依据、证据编号、未决事项或真实密钥。Git 取证 JSON 仅内部使用。
+每次先读取 `assets/diff-list-template.md`，用 `init_report.py` 建文件，保留全部标题、无关章节写“无”。Mermaid 使用兼容 8.8.3 的 `flowchart TD` 或 `sequenceDiagram`；重点测试逐场景列 **测试点、测试前提、预期结果**，结果可观察可判定。不得写本机源码路径、行号/代码依据、未决项或真实密钥。报告包含完整 40 位修订 SHA、仓库相对脚本路径以及实际验证范围。
 
-## 检查与交付
-
-用 `validate_report.py` 校验模板、四类改动结论、Mermaid 围栏、测试场景标签及禁用内容，并结合人工审查净差异、运行时依赖与业务预期。默认输出 `G:\tmp`，不存在则创建，不覆盖已有文件。简短交付绝对文件路径、项目修订和真实验证范围；不把本地路径冒充下载链接。
+运行 `validate_report.py`，随后人工复核 Git 归属、AST 候选、业务语义及图文对应关系。默认写入 `G:\tmp`，不覆盖同名文件；最终交付路径、覆盖修订和真实验证范围。证据 JSON/AST 候选仅供内部分析，不复制到报告。
