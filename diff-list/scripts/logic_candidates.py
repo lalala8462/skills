@@ -12,9 +12,11 @@ import tempfile
 
 from repo_access import prepare_repo
 from collect_git import collect
+from config_candidates import extract_config_candidates
 
 PRIORITIES = {'STATE': 90, 'CONCURRENCY': 90, 'TRANSACTION': 88,
-              'EXCEPTION': 78, 'RETRY': 75, 'CONFIG': 65, 'BRANCH': 60}
+              'EXCEPTION': 78, 'RETRY': 75, 'CONFIG': 65, 'BRANCH': 60,
+              'CALL': 62, 'EXPRESSION': 62}
 HINTS = {
     'STATE': '核对状态变更前置条件、终态覆盖、落库与通知是否一致',
     'CONCURRENCY': '核对重复请求、锁作用域、释放与并发执行结果',
@@ -23,6 +25,8 @@ HINTS = {
     'RETRY': '核对重试次数、时序、幂等与原订单号复用',
     'CONFIG': '核对配置键、默认值、作用域及废弃/迁移情况',
     'BRANCH': '核对新增/删除的条件边界、默认分支与实际副作用',
+    'CALL': '核对目标方法、调用顺序、参数映射与实际副作用',
+    'EXPRESSION': '核对计算结果、单位精度、返回值及赋值边界',
 }
 
 
@@ -60,12 +64,74 @@ def run_scan(classpath, source):
         Path(name).unlink(missing_ok=True)
 
 
+def align_scopes(before, after):
+    """Map uniquely identifiable class/method renames; ambiguous matches remain separate."""
+    def methods(rows):
+        result = defaultdict(dict)
+        for row in rows:
+            if row['category'] == 'SCOPE' and '#' in row['method']:
+                cls, method = row['method'].rsplit('#', 1)
+                result[cls][method] = row['hash']
+        return result
+    olds, news = methods(before), methods(after)
+    # Exact class names always win; only unique positive matches permit class rename.
+    mapped = {n: n for n in news if n in olds}
+    old_available = [k for k in olds if k not in mapped.values()]
+    new_available = [k for k in news if k not in mapped]
+    scores = {}
+    for n in new_available:
+        for o in old_available:
+            common_names = len(set(news[n]) & set(olds[o]))
+            common_bodies = len(set(news[n].values()) & set(olds[o].values()))
+            scores[(n, o)] = 2*common_names + common_bodies
+    for n in new_available:
+        candidates = [(score, o) for (candidate, o), score in scores.items()
+                      if candidate == n and score > 0]
+        if not candidates:
+            continue
+        best = max(score for score, _ in candidates)
+        winners = [o for score, o in candidates if score == best]
+        if len(winners) != 1:
+            continue
+        o = winners[0]
+        competition = [(score, candidate) for (candidate, old), score in scores.items()
+                       if old == o and score > 0]
+        if len([candidate for score, candidate in competition if score == max(x[0] for x in competition)]) == 1:
+            mapped[n] = o
+    # For each mapped class, match uniquely identical method bodies (method rename).
+    method_map = {}
+    for new_cls, old_cls in mapped.items():
+        used_old = set()
+        for method in news[new_cls]:
+            if method in olds[old_cls]:
+                method_map[new_cls + '#' + method] = old_cls + '#' + method
+                used_old.add(method)
+        for method, fingerprint in news[new_cls].items():
+            if new_cls + '#' + method in method_map:
+                continue
+            matches = [name for name, body in olds[old_cls].items()
+                       if name not in used_old and body == fingerprint]
+            reverse = [name for name, body in news[new_cls].items()
+                       if name != method and body == fingerprint]
+            if len(matches) == 1 and not reverse:
+                method_map[new_cls + '#' + method] = old_cls + '#' + matches[0]
+                used_old.add(matches[0])
+    return mapped, method_map
+
+
 def compare_records(path, before, after):
-    """Multiset AST diff (stable method/category/description key, hash captures body)."""
+    """AST multiset diff with conservative class/method rename normalization."""
+    class_map, method_map = align_scopes(before, after)
     buckets = defaultdict(lambda: [[], []])
     for side, rows in enumerate((before, after)):
         for row in rows:
-            key = (row['method'], row['category'], row['detail'])
+            if row['category'] == 'SCOPE':
+                continue
+            scope = row['method']
+            if side == 1 and '#' in scope:
+                cls, method = scope.rsplit('#', 1)
+                scope = method_map.get(scope, class_map.get(cls, cls) + '#' + method)
+            key = (scope, row['category'], row['detail'])
             buckets[key][side].append(row)
     out = []
     for (method, category, detail), (old, new) in sorted(buckets.items()):
@@ -77,9 +143,10 @@ def compare_records(path, before, after):
             continue
         kind = 'modified' if removed and added else ('removed' if removed else 'added')
         score = PRIORITIES.get(category, 50)
-        if category == 'BRANCH' and re.search(r'(status|state|amount|money|refund|pay|lock|retry)',
-                                               detail, re.I):
-            score = 82
+        if category in ('BRANCH', 'CALL', 'EXPRESSION') and re.search(
+                r'(status|state|amount|money|refund|pay|paid|charge|debit|credit|balance|transfer|lock|retry|order)',
+                method + ' ' + detail, re.I):
+            score = max(82, score)
         out.append({'path': path, 'method': method, 'category': category,
                     'change': kind, 'description': detail,
                     'priority': 'high' if score >= 75 else 'medium',
@@ -91,6 +158,8 @@ def compare_records(path, before, after):
 
 
 def extract_candidates(pairs):
+    if not pairs:
+        return [], []
     source_file = Path(__file__).resolve().parent / 'java' / 'JavaLogicAst.java'
     if not source_file.is_file():
         raise ValueError('Missing JDK 8 compatible AST source: ' + str(source_file))
@@ -134,23 +203,31 @@ def main(argv=None):
                                     for v in args.rev]
         else:
             project['range'] = {'base': args.base, 'head': args.head}
-        evidence = collect(project, capture_java=True)
+        evidence = collect(project, capture_java=True, capture_config=True)
         effect = evidence['net_effect']
         pairs = effect.pop('java_sources', [])
         skipped = effect.pop('java_skipped', [])
+        config_pairs = effect.pop('config_sources', [])
+        skipped.extend(effect.pop('config_skipped', []))
         if effect['status'] == 'review_required':
             findings = []
             skipped.append({'path': '*', 'reason': 'selected commits cannot be composed; manual review required'})
         else:
             findings, errors = extract_candidates(pairs)
             skipped.extend(errors)
+            config_findings, config_errors = extract_config_candidates(config_pairs)
+            findings.extend(config_findings)
+            findings.sort(key=lambda x: (-x['priority_score'], x['path'], x['category'], x['description']))
+            skipped.extend(config_errors)
         payload = {'schema_version': 1, 'repository': args.repo, 'project': name,
                    'selection': [{k:v for k,v in entry.items() if k not in ('diff','files')}
                                  for entry in evidence['selection']],
                    'net_status': effect['status'], 'net_reason': effect['reason'],
-                   'files_analyzed': len(pairs), 'candidates': findings,
+                   'files_analyzed': len(pairs) + len(config_pairs),
+                   'java_files_analyzed': len(pairs), 'config_files_analyzed': len(config_pairs),
+                   'candidates': findings,
                    'skipped': skipped, 'review_required': bool(skipped) or effect['status']=='review_required',
-                   'note': 'AST syntax-only candidates, not Java type binding or verified business behavior.'}
+                   'note': 'AST/configuration change candidates, not verified business behavior or runtime settings.'}
         target = Path(args.output)
         target.parent.mkdir(parents=True, exist_ok=True)
         with target.open('x', encoding='utf-8') as out:

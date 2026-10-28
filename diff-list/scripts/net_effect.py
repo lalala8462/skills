@@ -16,7 +16,8 @@ def _run(cmd, *, stdin=None):
     return process.returncode, process.stdout, process.stderr.decode('utf-8', 'replace').strip()
 
 
-def compose(repo, selected, capture_java=False, max_java_files=80, max_java_bytes=300000):
+def compose(repo, selected, capture_java=False, capture_config=False,
+            max_java_files=80, max_java_bytes=300000, max_config_files=100, max_config_bytes=300000):
     """selected: ordered [{sha, parent}]. Strictly apply their patches only.
 
     Uses a temporary shared clone with an isolated index. No checked-out source
@@ -109,4 +110,32 @@ def compose(repo, selected, capture_java=False, max_java_files=80, max_java_byte
                     continue
                 result['java_sources'].append({'path': name, 'before': before_text,
                                                'after': after_text})
+        if capture_config:
+            result['config_sources'] = []
+            result['config_skipped'] = []
+            from config_candidates import SUPPORTED_EXTENSIONS
+            names = [name for name in result['changed_files']
+                     if name.lower().endswith(SUPPORTED_EXTENSIONS)]
+            for name in names[max_config_files:]:
+                result['config_skipped'].append({'path': name, 'reason': 'file count limit'})
+            rename = git('diff', '--cached', '--name-status', '--find-renames', baseline)
+            rename_map = {}
+            if rename.returncode == 0:
+                for row in rename.stdout.decode('utf-8', 'replace').splitlines():
+                    fields = row.split('\t')
+                    if len(fields) == 3 and fields[0].startswith('R'):
+                        rename_map[fields[2]] = fields[1]
+            for name in names[:max_config_files]:
+                previous = git('show', baseline + ':' + rename_map.get(name, name))
+                current = git('show', ':' + name)
+                before = previous.stdout if previous.returncode == 0 else b''
+                after = current.stdout if current.returncode == 0 else b''
+                if max(len(before), len(after)) > max_config_bytes:
+                    result['config_skipped'].append({'path': name, 'reason': 'file size limit'})
+                    continue
+                try:
+                    result['config_sources'].append({'path': name, 'before': before.decode('utf-8'),
+                                                     'after': after.decode('utf-8')})
+                except UnicodeDecodeError:
+                    result['config_skipped'].append({'path': name, 'reason': 'non-UTF-8 source'})
         return result

@@ -28,7 +28,7 @@ def paths(root, a, b):
                            '--find-renames', a, b).splitlines() if s]
 
 
-def collect(project, capture_java=False):
+def collect(project, capture_java=False, capture_config=False):
     if not isinstance(project, dict) or not project.get('path') or not project.get('name'):
         raise ValueError('Each project requires name and path')
     root = Path(git(project['path'], 'rev-parse', '--show-toplevel').strip()).resolve()
@@ -53,18 +53,19 @@ def collect(project, capture_java=False):
                                 'baseline': a, 'last_selected': b,
                                 'changed_files': changed, 'net_diff': diff,
                                 'applied_commits': [], 'reason': ''}
-        if capture_java:
-            result['net_effect']['java_sources'] = []
-            result['net_effect']['java_skipped'] = []
-            selected_java = [name for name in changed if name.endswith('.java')]
-            for name in selected_java[80:]:
-                result['net_effect']['java_skipped'].append({'path': name, 'reason': 'file count limit'})
+        if capture_java or capture_config:
             rename_output = git(root, 'diff', '--name-status', '--find-renames', a, b)
             rename_map = {}
             for line in rename_output.splitlines():
                 columns = line.split('\t')
                 if len(columns) == 3 and columns[0].startswith('R'):
                     rename_map[columns[2]] = columns[1]
+        if capture_java:
+            result['net_effect']['java_sources'] = []
+            result['net_effect']['java_skipped'] = []
+            selected_java = [name for name in changed if name.endswith('.java')]
+            for name in selected_java[80:]:
+                result['net_effect']['java_skipped'].append({'path': name, 'reason': 'file count limit'})
             for name in selected_java[:80]:
                 def source(rev, filename):
                     p = subprocess.run(['git', '-C', str(root), 'show', rev + ':' + filename],
@@ -79,6 +80,28 @@ def collect(project, capture_java=False):
                         'before':before.decode('utf-8'),'after':after.decode('utf-8')})
                 except UnicodeDecodeError:
                     result['net_effect']['java_skipped'].append({'path':name,'reason':'non-UTF-8 source'})
+        if capture_config:
+            from config_candidates import SUPPORTED_EXTENSIONS
+            result['net_effect']['config_sources'] = []
+            result['net_effect']['config_skipped'] = []
+            selected = [name for name in changed if name.lower().endswith(SUPPORTED_EXTENSIONS)]
+            for name in selected[100:]:
+                result['net_effect']['config_skipped'].append({'path': name, 'reason': 'file count limit'})
+            for name in selected[:100]:
+                def load(rev, filename):
+                    p = subprocess.run(['git', '-C', str(root), 'show', rev + ':' + filename],
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    return p.stdout if p.returncode == 0 else b''
+                before = load(a, rename_map.get(name, name))
+                after = load(b, name)
+                if max(len(before), len(after)) > 300000:
+                    result['net_effect']['config_skipped'].append({'path': name, 'reason': 'file size limit'})
+                    continue
+                try:
+                    result['net_effect']['config_sources'].append({'path':name,
+                        'before':before.decode('utf-8'),'after':after.decode('utf-8')})
+                except UnicodeDecodeError:
+                    result['net_effect']['config_skipped'].append({'path':name,'reason':'non-UTF-8 source'})
         return result
     revs = project['revisions']
     if not isinstance(revs, list) or not revs:
@@ -138,7 +161,7 @@ def collect(project, capture_java=False):
             overlap = sorted(changed & all_paths)
             if overlap:
                 result['unselected_overlaps'].append({'sha':sha,'files':overlap})
-    result['net_effect'] = compose(root, entries, capture_java=capture_java)
+    result['net_effect'] = compose(root, entries, capture_java=capture_java, capture_config=capture_config)
     return result
 
 

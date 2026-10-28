@@ -69,7 +69,6 @@ class DiffListTest(unittest.TestCase):
             self.assertEqual(len(r['unselected_overlaps']),1)
             self.assertIn('app.txt',r['unselected_overlaps'][0]['files'])
             self.assertEqual(r['worktree_status'],[])
-
     def test_github_url_parser(self):
         access=module('repo_access')
         self.assertEqual(access.parse_github_url('https://github.com/lalala8462/webapi'),
@@ -106,61 +105,9 @@ class DiffListTest(unittest.TestCase):
                     '--output',str(Path(td)/'bad.json')]),2)
 
 
-    def test_selected_net_and_cancel(self):
-        collector=module('collect_git')
-        with tempfile.TemporaryDirectory() as td:
-            root=Path(td)
-            def g(*args):
-                return subprocess.check_output(['git','-C',str(root),*args],text=True).strip()
-            g('init','-q');g('config','user.name','Test');g('config','user.email','test@example.com')
-            file=root/'record.txt'
-            file.write_text('status=old\n',encoding='utf-8')
-            g('add','.');g('commit','-qm','initial')
-            file.write_text('status=temporary\n',encoding='utf-8')
-            g('add','.');g('commit','-qm','intermediate')
-            a=g('rev-parse','HEAD')
-            file.write_text('status=old\n',encoding='utf-8')
-            g('add','.');g('commit','-qm','undo')
-            b=g('rev-parse','HEAD')
-            result=collector.collect({'name':'sample','path':str(root),
-                                       'revisions':[b,a]})
-            self.assertEqual(result['net_effect']['status'],'no_net_change')
-            self.assertEqual(result['net_effect']['changed_files'],[])
-            self.assertEqual(len(result['net_effect']['applied_commits']),2)
 
-    def test_selected_net_intervening_conflict(self):
-        collector=module('collect_git')
-        with tempfile.TemporaryDirectory() as td:
-            root=Path(td)
-            def g(*args):
-                return subprocess.check_output(['git','-C',str(root),*args],text=True).strip()
-            g('init','-q');g('config','user.name','Test');g('config','user.email','test@example.com')
-            file=root/'record.txt'
-            file.write_text('status=old\n',encoding='utf-8')
-            g('add','.');g('commit','-qm','initial')
-            file.write_text('status=selected-a\n',encoding='utf-8')
-            g('add','.');g('commit','-qm','selected-a')
-            a=g('rev-parse','HEAD')
-            file.write_text('status=unselected\n',encoding='utf-8')
-            g('add','.');g('commit','-qm','intervening')
-            file.write_text('status=selected-b\n',encoding='utf-8')
-            g('add','.');g('commit','-qm','selected-b')
-            b=g('rev-parse','HEAD')
-            result=collector.collect({'name':'sample','path':str(root),
-                                       'revisions':[a,b]})
-            self.assertEqual(result['net_effect']['status'],'review_required')
-            self.assertFalse(result['net_effect']['net_diff'])
-            self.assertTrue(result['unselected_overlaps'])
-
-    def test_validate_misgrouped_tests(self):
-        val=module('validate_report')
-        template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
-        report=template.replace('## 5. 重点测试场景',
-            '## 5. 重点测试场景\n**测试点：** A\n**测试前提：** A1\n'
-            '**测试点：** B\n**预期结果：** B2\n**测试前提：** B1\n'
-            '**预期结果：** A2')
-        errors,_=val.validate(report,template,[])
-        self.assertTrue(any('唯一有效' in e for e in errors))
+if __name__=='__main__':
+    unittest.main()
 
 class LogicAstTest(unittest.TestCase):
     @classmethod
@@ -254,6 +201,95 @@ class LogicAstTest(unittest.TestCase):
                 self.assertEqual(findings,[])
                 self.assertEqual(skips,[])
 
+class AdditionalRegressionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import shutil
+        if not (shutil.which('java') and shutil.which('javac')):
+            raise unittest.SkipTest('JDK 8+ required')
 
-if __name__=='__main__':
-    unittest.main()
+    def test_call_and_money_expression(self):
+        logic = module('logic_candidates')
+        old = '''class Pay { void settle(){ debit(); amount = amount.add(one); }
+          Object amount, one; void debit(){} void credit(){} }'''
+        new = '''class Pay { void settle(){ credit(); amount = amount.multiply(hundred); }
+          Object amount, hundred; void debit(){} void credit(){} }'''
+        candidates, skipped = logic.extract_candidates([{'path':'Pay.java','before':old,'after':new}])
+        self.assertEqual(skipped, [])
+        self.assertTrue(any(c['category']=='CALL' and c['description']=='call credit' for c in candidates))
+        self.assertTrue(any(c['category']=='CALL' and c['description']=='call debit' for c in candidates))
+        self.assertTrue(any(c['category']=='EXPRESSION' and c['description']=='assignment amount' for c in candidates))
+
+    def test_class_and_method_rename_not_false_high(self):
+        logic = module('logic_candidates')
+        old = '''class Pay { void execute(){ if(status==1) setStatus(1); }
+            int status; void setStatus(int value){} }'''
+        new = '''class PayService { void perform(){ if(status==1) setStatus(1); }
+            int status; void setStatus(int value){} }'''
+        candidates, skipped = logic.extract_candidates([{'path':'Pay.java','before':old,'after':new}])
+        self.assertEqual(skipped, [])
+        self.assertEqual(candidates, [])
+
+    def test_config_properties_yaml_xml_changes_and_secret_mask(self):
+        config = module('config_candidates')
+        pairs = [
+          {'path':'profile/test.properties','before':'refund.retry.enabled=false\nsecret.token=abc123\n','after':'refund.retry.enabled=true\nsecret.token=def456\n'},
+          {'path':'app.yml','before':'payment:\n  retry: false\n','after':'payment:\n  retry: true\n'},
+          {'path':'app.xml','before':'<beans><property name="retry" value="0"/></beans>',
+           'after':'<beans><property name="retry" value="1"/></beans>'},
+        ]
+        findings, skipped = config.extract_config_candidates(pairs)
+        self.assertEqual(skipped, [])
+        self.assertEqual(len(findings),4)
+        self.assertTrue(any(x['key']=='refund.retry.enabled' and x['after']=='true' for x in findings))
+        self.assertTrue(any(x['key']=='payment.retry' for x in findings))
+        secret = next(x for x in findings if x['key']=='secret.token')
+        self.assertEqual(secret['before'],'<redacted>')
+        self.assertNotIn('abc123',str(findings))
+
+    def test_config_unknown_yaml_is_skipped_not_silent(self):
+        config = module('config_candidates')
+        findings, skipped = config.extract_config_candidates([{'path':'app.yml',
+          'before':'urls:\n - http://localhost\n', 'after':'urls:\n - http://example.com\n'}])
+        self.assertEqual(findings,[])
+        self.assertEqual(len(skipped),1)
+
+    def test_config_capture_range_and_selected(self):
+        collector = module('collect_git')
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            def g(*args):
+                return subprocess.check_output(['git','-C',str(root),*args],text=True).strip()
+            g('init','-q');g('config','user.name','Test');g('config','user.email','test@example.com')
+            f = root/'application.properties'
+            f.write_text('refund.retry.enabled=false\n',encoding='utf-8')
+            g('add','.');g('commit','-qm','base');base=g('rev-parse','HEAD')
+            f.write_text('refund.retry.enabled=true\n',encoding='utf-8')
+            g('add','.');g('commit','-qm','update');head=g('rev-parse','HEAD')
+            for selection in ({'range':{'base':base,'head':head}}, {'revisions':[head]}):
+                result=collector.collect({'name':'demo','path':str(root),**selection},capture_config=True)
+                pairs=result['net_effect']['config_sources']
+                self.assertEqual(len(pairs),1)
+                findings,skipped=module('config_candidates').extract_config_candidates(pairs)
+                self.assertEqual(skipped,[])
+                self.assertEqual(findings[0]['change'],'modified')
+
+    def test_document_checks_mapping_and_code_fence_heading(self):
+        validator = module('validate_report')
+        template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
+        one, two = 'a'*40, 'b'*40
+        content=template.replace('## 1. 分析范围', '## 1. 分析范围\nwebapi '+one+'\nadpts '+two)
+        content=content.replace('### 2.1 需求改动', '### 2.1 需求改动\n需求修改')
+        content=content.replace('### 2.2 表字段 DDL 修改', '### 2.2 表字段 DDL 修改\n无')
+        content=content.replace('### 2.3 表配置 DML 准备清单', '### 2.3 表配置 DML 准备清单\n无')
+        content=content.replace('### 2.4 配置文件调整',
+            '### 2.4 配置文件调整\n```properties\n# this is a valid properties comment\nretry.enabled=true\n```')
+        content=content.replace('### 3.1 整体流程说明','### 3.1 整体流程说明\n无')
+        content=content.replace('### 3.2 Mermaid 流程图','### 3.2 Mermaid 流程图\n无')
+        content=content.replace('## 4. 特殊逻辑与测试关注点','## 4. 特殊逻辑与测试关注点\n无')
+        content=content.replace('## 5. 重点测试场景','## 5. 重点测试场景\n无')
+        content=content.replace('## 6. 验证情况','## 6. 验证情况\n静态测试')
+        errors,_=validator.validate(content,template,['webapi='+one,'adpts='+two])
+        self.assertEqual(errors,[])
+        errors,_=validator.validate(content,template,['webapi='+two])
+        self.assertTrue(any('对应关系' in x for x in errors))

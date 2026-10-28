@@ -40,6 +40,16 @@ public final class JavaLogicAst {
             n.matches("^(setstatus|setstate|setresult|markpaid|markfailed)$")) return "STATE";
         return null;
     }
+    private static boolean arithmetic(Tree.Kind kind) {
+        return kind == Tree.Kind.PLUS || kind == Tree.Kind.MINUS ||
+            kind == Tree.Kind.MULTIPLY || kind == Tree.Kind.DIVIDE ||
+            kind == Tree.Kind.REMAINDER;
+    }
+    private static boolean compoundArithmetic(Tree.Kind kind) {
+        return kind == Tree.Kind.PLUS_ASSIGNMENT || kind == Tree.Kind.MINUS_ASSIGNMENT ||
+            kind == Tree.Kind.MULTIPLY_ASSIGNMENT || kind == Tree.Kind.DIVIDE_ASSIGNMENT ||
+            kind == Tree.Kind.REMAINDER_ASSIGNMENT;
+    }
     private static boolean statusName(String variable) {
         return variable.toLowerCase(Locale.ROOT).matches(".*(status|state|result|paid|refundstate|refundstatus).*\\b");
     }
@@ -73,6 +83,8 @@ public final class JavaLogicAst {
                 signature.append(compact(argument.getType().toString()));
             }
             member = signature.append(')').toString();
+            if (node.getBody() != null)
+                emit("SCOPE", "method-body", node.getBody());
             super.visitMethod(node, unused);
             member = previous;
             return null;
@@ -109,16 +121,43 @@ public final class JavaLogicAst {
             String name = methodName(node.getMethodSelect());
             String category = classifyCall(name);
             if (category != null) emit(category, "call " + name, node);
+            emit("CALL", "call " + name, node);
             return super.visitMethodInvocation(node, unused);
         }
         @Override public Void visitAssignment(AssignmentTree node, Void unused) {
             if (statusName(node.getVariable().toString()))
                 emit("STATE", "assignment " + node.getVariable().toString(), node);
+            else
+                emit("EXPRESSION", "assignment " + node.getVariable().toString(), node);
             return super.visitAssignment(node, unused);
+        }
+        @Override public Void visitCompoundAssignment(CompoundAssignmentTree node, Void unused) {
+            if (compoundArithmetic(node.getKind()))
+                emit("EXPRESSION", "compound " + node.getKind().name(), node);
+            return super.visitCompoundAssignment(node, unused);
+        }
+        @Override public Void visitBinary(BinaryTree node, Void unused) {
+            if (arithmetic(node.getKind()))
+                emit("EXPRESSION", "arithmetic " + node.getKind().name(), node);
+            return super.visitBinary(node, unused);
+        }
+        @Override public Void visitUnary(UnaryTree node, Void unused) {
+            if (node.getKind() == Tree.Kind.PREFIX_INCREMENT ||
+                node.getKind() == Tree.Kind.POSTFIX_INCREMENT ||
+                node.getKind() == Tree.Kind.PREFIX_DECREMENT ||
+                node.getKind() == Tree.Kind.POSTFIX_DECREMENT)
+                emit("EXPRESSION", "unary " + node.getKind().name(), node);
+            return super.visitUnary(node, unused);
+        }
+        @Override public Void visitReturn(ReturnTree node, Void unused) {
+            if (node.getExpression() != null) emit("EXPRESSION", "return", node);
+            return super.visitReturn(node, unused);
         }
         @Override public Void visitVariable(VariableTree node, Void unused) {
             if (node.getInitializer() != null && statusName(node.getName().toString()))
                 emit("STATE", "initialization " + node.getName().toString(), node);
+            else if (node.getInitializer() != null)
+                emit("EXPRESSION", "initialization " + node.getName().toString(), node);
             return super.visitVariable(node, unused);
         }
         @Override public Void visitAnnotation(AnnotationTree node, Void unused) {

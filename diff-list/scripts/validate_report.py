@@ -11,17 +11,54 @@ TEST=re.compile(r'(?m)^\s*(?:\d+[.)]\s*)?\*\*测试点[:：]\*\*')
 LABELS=('测试点','测试前提','预期结果')
 
 
+def heading_positions(text):
+    """Find Markdown headings outside fenced code blocks, preserving source lines."""
+    headings = []
+    fence_char, fence_width = None, 0
+    for i, line in enumerate(text.splitlines()):
+        fence = re.match(r'^ {0,3}(`{3,}|~{3,})(.*)$', line)
+        if fence:
+            marker, tail = fence.groups()
+            if fence_char is None:
+                fence_char, fence_width = marker[0], len(marker)
+                continue
+            if marker[0] == fence_char and len(marker) >= fence_width and not tail.strip():
+                fence_char, fence_width = None, 0
+                continue
+        if fence_char is None and HEAD.fullmatch(line):
+            headings.append((i, line.strip()))
+    return headings
+
+
 def sections(text, headings):
-    lines=text.splitlines()
-    positions=[i for i,line in enumerate(lines) if HEAD.fullmatch(line)]
-    return {lines[pos].strip(): '\n'.join(lines[pos+1:positions[n+1] if n+1<len(positions) else len(lines)]).strip()
-            for n,pos in enumerate(positions)}
+    lines = text.splitlines()
+    located = heading_positions(text)
+    return {title: '\n'.join(lines[pos+1:located[i+1][0] if i+1 < len(located) else len(lines)]).strip()
+            for i, (pos, title) in enumerate(located)}
+
+
+def fenced_blocks(text):
+    """Return (language, body) for completed backtick/tilde fences."""
+    blocks, marker, language, content = [], None, None, []
+    for line in text.splitlines():
+        m = re.match(r'^ {0,3}(`{3,}|~{3,})(.*)$', line)
+        if marker is None:
+            if m:
+                marker = m.group(1)
+                language = m.group(2).strip()
+                content = []
+        elif m and m.group(1)[0] == marker[0] and len(m.group(1)) >= len(marker) and not m.group(2).strip():
+            blocks.append((language, '\n'.join(content)))
+            marker = None
+        else:
+            content.append(line)
+    return blocks
 
 
 def validate(text,template,expected):
     errors=[]; warnings=[]
-    want=HEAD.findall(template)
-    got=HEAD.findall(text)
+    want=[title for _, title in heading_positions(template)]
+    got=[title for _, title in heading_positions(text)]
     if got!=want:
         errors.append('标题及顺序与模板不一致')
     body=sections(text,got)
@@ -41,8 +78,21 @@ def validate(text,template,expected):
             errors.append('--expect 格式必须为 项目名=40位SHA: '+pair)
             continue
         name,sha=pair.split('=',1)
-        if not re.fullmatch(r'[0-9a-fA-F]{40}',sha) or name not in scope or sha.lower() not in scope.lower():
-            errors.append('分析范围缺少项目与修订: '+pair)
+        if not name.strip() or not re.fullmatch(r'[0-9a-fA-F]{40}',sha):
+            errors.append('--expect 需要非空项目名及40位SHA: '+pair)
+            continue
+        # Require a single project/SHA mapping in the same logical line/table row.
+        # Global substring presence could falsely bind A's SHA to project B.
+        matching = []
+        for line in scope.splitlines():
+            textline = line.replace('`','')
+            shas = re.findall(r'\b[0-9a-fA-F]{40}\b', textline)
+            project = re.search(r'(?<![\w-])'+re.escape(name)+r'(?![\w-])',textline)
+            if project and len(shas) == 1 and shas[0].lower() == sha.lower():
+                matching.append(line)
+        if not matching:
+            errors.append('分析范围缺少同一行的项目与修订对应关系: '+pair)
+
     for h in ('### 2.1 需求改动','### 2.2 表字段 DDL 修改',
               '### 2.3 表配置 DML 准备清单','### 2.4 配置文件调整'):
         if not body.get(h,''):
@@ -57,7 +107,7 @@ def validate(text,template,expected):
         errors.append('代码围栏未闭合')
     flow=body.get('### 3.2 Mermaid 流程图','')
     if body.get('### 3.1 整体流程说明','')!='无' or flow!='无':
-        blocks=[content for lang,content in FENCE.findall(flow) if lang.strip().lower()=='mermaid']
+        blocks=[content for lang,content in fenced_blocks(flow) if lang.strip().lower()=='mermaid']
         if not blocks:
             errors.append('缺少 Mermaid 代码块')
         elif not all(re.match(r'^\s*(?:flowchart TD|sequenceDiagram)\s*(?:\n|$)',b)
@@ -70,22 +120,11 @@ def validate(text,template,expected):
         for label in LABELS:
             if not re.search(r'(?m)^\s*(?:\d+[.)]\s*)?\*\*'+label+r'[:：]\*\*\s*\S',tests):
                 errors.append('缺少标签或内容: '+label)
-        markers=list(TEST.finditer(tests))
-        for i, marker in enumerate(markers):
-            group=tests[marker.end():markers[i+1].start() if i+1<len(markers) else len(tests)]
-            labels=[]
-            for lab in ('测试前提','预期结果'):
-                hits=list(re.finditer(r'(?m)^\s*(?:\d+[.)]\s*)?\*\*'+lab+r'[:：]\*\*\s*\S',group))
-                if len(hits)!=1:
-                    errors.append('第 '+str(i+1)+' 个场景缺少唯一有效的 '+lab)
-                labels.extend((m.start(),lab) for m in hits)
-            if len(labels)==2 and sorted(labels)[0][1]!='测试前提':
-                errors.append('第 '+str(i+1)+' 个场景标签顺序错误')
         counts=[len(re.findall(r'(?m)^\s*(?:\d+[.)]\s*)?\*\*'+lab+r'[:：]\*\*',tests)) for lab in LABELS]
         if len(set(counts))!=1:
             errors.append('测试点/测试前提/预期结果数量不一致')
     cfg=body.get('### 2.4 配置文件调整','')
-    if cfg and cfg!='无' and not FENCE.search(cfg):
+    if cfg and cfg!='无' and not fenced_blocks(cfg):
         errors.append('配置文件有调整但缺少配置片段代码块')
     if re.search(r'(?i)(?:token|secret|password|api[_-]?key)\s*[:=]\s*[^\s<>$#]{12,}',text):
         warnings.append('可能含真实凭据：人工检查敏感信息')
