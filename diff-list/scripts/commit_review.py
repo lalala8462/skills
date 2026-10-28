@@ -72,25 +72,29 @@ def review(entries, net_status, max_commits=300, omitted=0, merge_commits=()):
         if len(touched) < 2:
             continue
         reversal = []
-        history = hunks.get(path, [])
-        for later_index, (later_sha, later) in enumerate(history):
-            for earlier_sha, earlier in history[:later_index]:
-                if earlier_sha == later_sha:
-                    continue
-                if (earlier['removed'] == later['added'] and
-                        earlier['added'] == later['removed']):
-                    reversal.append({
-                        'earlier_commit': earlier_sha, 'later_commit': later_sha,
-                        'earlier_old_line': earlier['old_line'],
-                        'later_new_line': later['new_line'],
-                        'kind': 'textual_reverse_candidate'
-                    })
-        reverse_count += len(reversal)
+        previous = defaultdict(list)
+        candidate_count = 0
+        for later_sha, later in hunks.get(path, []):
+            before, after = tuple(later['removed']), tuple(later['added'])
+            if before != after:
+                for earlier_sha, earlier in previous.get((after, before), []):
+                    if earlier_sha == later_sha:
+                        continue
+                    candidate_count += 1
+                    if len(reversal) < 30:
+                        reversal.append({
+                            'earlier_commit': earlier_sha, 'later_commit': later_sha,
+                            'earlier_old_line': earlier['old_line'],
+                            'later_new_line': later['new_line'],
+                            'kind': 'textual_reverse_candidate'
+                        })
+            previous[(before, after)].append((later_sha, later))
+        reverse_count += candidate_count
         repeated.append({
             'path': path, 'commits': touched, 'touch_count': len(touched),
             'scope': 'file_only_not_method_binding',
             'reverse_candidates': reversal[:30],
-            'reverse_candidates_truncated': len(reversal) > 30
+            'reverse_candidates_truncated': candidate_count > 30
         })
     reasons = []
     if omitted:
