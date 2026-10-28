@@ -563,6 +563,32 @@ class AdditionalRegressionTests(unittest.TestCase):
         self.assertFalse(by_path['src/main/resources/mapper/OrderMapper.xml']['review_required'])
         self.assertEqual(by_path['src/main/resources/mapper/OrderMapper.xml']['kind'],'not_config_mapping')
 
+    def test_xml_config_mapping_add_remove_is_not_ignored(self):
+        config = module('config_candidates')
+        removed, skipped = config.extract_config_candidates([{
+            'path':'src/main/resources/applicationContext.xml',
+            'before':'<beans><property name="retry" value="1"/></beans>',
+            'after':'<beans></beans>'
+        }])
+        self.assertEqual(skipped,[])
+        self.assertEqual(len(removed),1)
+        self.assertEqual(removed[0]['key'],'retry')
+        self.assertEqual(removed[0]['change'],'removed')
+        self.assertEqual(removed[0]['before'],'1')
+        self.assertIsNone(removed[0]['after'])
+
+        added, skipped = config.extract_config_candidates([{
+            'path':'src/main/resources/applicationContext.xml',
+            'before':'<beans></beans>',
+            'after':'<beans><property name="retry" value="1"/></beans>'
+        }])
+        self.assertEqual(skipped,[])
+        self.assertEqual(len(added),1)
+        self.assertEqual(added[0]['key'],'retry')
+        self.assertEqual(added[0]['change'],'added')
+        self.assertIsNone(added[0]['before'])
+        self.assertEqual(added[0]['after'],'1')
+
     def test_config_capture_range_and_selected(self):
         collector = module('collect_git')
         with tempfile.TemporaryDirectory() as td:
