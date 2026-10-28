@@ -6,8 +6,10 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT=Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(ROOT / "scripts"))
 
 
 def module(name):
@@ -67,6 +69,41 @@ class DiffListTest(unittest.TestCase):
             self.assertEqual(len(r['unselected_overlaps']),1)
             self.assertIn('app.txt',r['unselected_overlaps'][0]['files'])
             self.assertEqual(r['worktree_status'],[])
+
+    def test_github_url_parser(self):
+        access=module('repo_access')
+        self.assertEqual(access.parse_github_url('https://github.com/lalala8462/webapi'),
+                         ('lalala8462','webapi','https://github.com/lalala8462/webapi.git'))
+        self.assertEqual(access.parse_github_url('https://github.com/lalala8462/webapi.git'),
+                         ('lalala8462','webapi','https://github.com/lalala8462/webapi.git'))
+        for bad in ('https://evil.com/owner/repo', 'https://user:pass@github.com/owner/repo',
+                    'https://github.com/owner/../repo', 'https://github.com/owner/repo/commit/a'):
+            with self.assertRaises(ValueError):
+                access.parse_github_url(bad)
+
+    def test_collect_cli_direct_revisions(self):
+        collector=module('collect_git')
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td)/'project';root.mkdir()
+            def g(*args):
+                return subprocess.check_output(['git','-C',str(root),*args],text=True).strip()
+            g('init','-q');g('config','user.name','Test');g('config','user.email','test@example.com')
+            (root/'a.txt').write_text('hello\n',encoding='utf-8')
+            g('add','.');g('commit','-qm','base')
+            (root/'a.txt').write_text('world\n',encoding='utf-8')
+            g('add','.');g('commit','-qm','change')
+            commit=g('rev-parse','HEAD')
+            evidence=Path(td)/'evidence.json'
+            with mock.patch.object(collector,'prepare_repo',return_value=(root,'project')) as prepared:
+                self.assertEqual(collector.main(['--repo','https://github.com/owner/project',
+                    '--rev',commit,'--output',str(evidence)]),0)
+                prepared.assert_called_once_with('https://github.com/owner/project',None)
+            parsed=json.loads(evidence.read_text(encoding='utf-8'))
+            self.assertEqual(parsed['schema_version'],2)
+            self.assertEqual(parsed['projects'][0]['selection'][0]['sha'],commit)
+            self.assertEqual(collector.main(['--repo','https://github.com/owner/project',
+                    '--rev',commit,'--base','start','--head','end',
+                    '--output',str(Path(td)/'bad.json')]),2)
 
 
 if __name__=='__main__':
