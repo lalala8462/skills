@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Static report validator: structure and hygiene, not semantic/Mermaid parsing."""
 import argparse
-from pathlib import PureWindowsPath
 import re
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 HEAD=re.compile(r'^#{1,6} .+$',re.M)
 FENCE=re.compile(r'^```([^\n]*)\n(.*?)^```\s*$',re.M|re.S)
@@ -102,35 +101,34 @@ def validate(text,template,expected):
         errors.append('禁止使用“是否必须新增数据”列')
     if re.search(r'待确认|待核实|代码依据|证据编号|源码行号',text):
         errors.append('包含禁止的占位或代码证据描述')
-    # Only auto-generated clones in the final cleanup footer may have local paths.
-    scrubbed = text
-    begin = '<!-- diff-list-generated-clones:start -->'
-    finish = '<!-- diff-list-generated-clones:end -->'
-    generated = re.search(re.escape(begin) + r'\n(.*?)\n' +
-                          re.escape(finish) + r'\s*\Z', text, re.S)
-    if begin in text or finish in text:
-        if generated is None or text.count(begin) != 1 or text.count(finish) != 1:
+    checked = text
+    start_tag = '<!-- diff-list-generated-clones:start -->'
+    end_tag = '<!-- diff-list-generated-clones:end -->'
+    found_block = re.search(re.escape(start_tag) + r'\n(.*?)\n' +
+                            re.escape(end_tag) + r'\s*\Z', text, re.S)
+    if start_tag in text or end_tag in text:
+        if not found_block or text.count(start_tag)!=1 or text.count(end_tag)!=1:
             errors.append('分析目录清单必须完整且位于报告最后')
         else:
-            lines = generated.group(1).splitlines()
-            if not lines or lines[0].strip() != '**本次创建的分析仓库目录（请后续手动删除）：**':
+            rows = found_block.group(1).splitlines()
+            if not rows or rows[0].strip() != '**本次创建的分析仓库目录（请后续手动删除）：**':
                 errors.append('分析目录清单缺少手动删除提示')
-            if len(lines) < 2:
+            if len(rows) < 2:
                 errors.append('分析目录清单为空')
-            for line in lines[1:]:
-                found = re.fullmatch(r'- \x60([^\x60\r\n]+)\x60', line)
-                if found is None:
+            for row in rows[1:]:
+                m = re.fullmatch(r'- \x60([^\x60\r\n]+)\x60', row)
+                if m is None:
                     errors.append('分析目录清单格式不正确')
                     continue
-                candidate = found.group(1)
-                parts = PureWindowsPath(candidate).parts
-                if (not re.fullmatch(r'[A-Za-z]:\\.*', candidate) or
+                p = m.group(1)
+                parts = PureWindowsPath(p).parts
+                if (not re.fullmatch(r'[A-Za-z]:\\.*', p) or
                         '..' in parts or len(parts) < 4 or
-                        [part.casefold() for part in parts[-3:-1]] != ['diff-list', 'runs'] or
+                        [piece.casefold() for piece in parts[-3:-1]] != ['diff-list','runs'] or
                         not parts[-1].startswith('run-')):
                     errors.append('分析目录路径不属于 diff-list 专用目录')
-            scrubbed = text[:generated.start()]
-    if re.search(r'[A-Za-z]:\\[^\s\x60|)]+', scrubbed):
+            checked = text[:found_block.start()]
+    if re.search(r'[A-Za-z]:\\[^\s\x60|)]+',checked):
         errors.append('文档包含 Windows 本机绝对路径')
     if text.count('```')%2:
         errors.append('代码围栏未闭合')
@@ -149,99 +147,19 @@ def validate(text,template,expected):
         for label in LABELS:
             if not re.search(r'(?m)^\s*(?:\d+[.)]\s*)?\*\*'+label+r'[:：]\*\*\s*\S',tests):
                 errors.append('缺少标签或内容: '+label)
-        # Check each scenario independently; totals alone hide mismatched groups.
-        point_re = re.compile(r'(?m)^[ \t]*(?:\d+[.)][ \t]*)?\*\*测试点[:：]\*\*[ \t]*(.*)
-    special=body.get('## 4. 特殊逻辑与测试关注点','')
-    if special and special!='无' and not re.search(r'既有功能影响|历史功能影响',special):
-        errors.append('特殊逻辑章节缺少“既有功能影响”说明')
-    field_change = (body.get('### 2.1 需求改动','') + '\n' +
-                    body.get('### 2.2 表字段 DDL 修改',''))
-    if re.search(r'(?:新增|增加|修改|调整|删除|废弃).{0,20}(?:对外报文|请求字段|响应字段|数据库字段|表字段|DTO字段|接口字段|消息字段)',field_change) and special=='无':
-        errors.append('字段/接口契约变化时须在特殊逻辑章节说明既有功能影响')
-    cfg=body.get('### 2.4 配置文件调整','')
-    if cfg and cfg!='无' and not fenced_blocks(cfg):
-        errors.append('配置文件有调整但缺少配置片段代码块')
-    if re.search(r'(?i)(?:token|secret|password|api[_-]?key)\s*[:=]\s*[^\s<>$#]{12,}',text):
-        warnings.append('可能含真实凭据：人工检查敏感信息')
-    warnings.append('静态检查不证明 Mermaid 8.8.3 实际渲染、业务语义或 Git 归属正确')
-    return errors,warnings
-
-
-def main(argv=None):
-    p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('report')
-    p.add_argument('--template',default=str(Path(__file__).resolve().parents[1]/'assets'/'diff-list-template.md'))
-    p.add_argument('--expect',action='append',default=[],help='项目名=40位SHA; repeatable')
-    a=p.parse_args(argv)
-    try:
-        raw=Path(a.report).read_bytes()
-        text=raw.decode('utf-8-sig')
-        template=Path(a.template).read_text(encoding='utf-8-sig')
-        errors,warnings=validate(text,template,a.expect)
-    except (OSError,UnicodeError) as exc:
-        print('ERROR: '+str(exc),file=sys.stderr)
-        return 2
-    for msg in errors: print('ERROR: '+msg)
-    for msg in warnings: print('NOTE: '+msg)
-    print('RESULT: '+('FAIL' if errors else 'PASS'))
-    return 1 if errors else 0
-
-
-if __name__=='__main__':
-    sys.exit(main())
-)
+        point_re = re.compile(r'(?m)^[ \t]*(?:\d+[.)][ \t]*)?\*\*测试点[:：]\*\*[ \t]*(.*)$')
         points = list(point_re.finditer(tests))
         for index, point in enumerate(points):
-            block = tests[point.end():points[index+1].start()
+            group = tests[point.end():points[index+1].start()
                           if index+1 < len(points) else len(tests)]
-            if not point.group(1).strip():
-                errors.append('第 {} 个测试点内容为空'.format(index+1))
             labels = [(m.group(1), m.group(2)) for m in re.finditer(
-                r'(?m)^[ \t]*(?:\d+[.)][ \t]*)?\*\*(测试前提|预期结果)[:：]\*\*[ \t]*(.*)
-    special=body.get('## 4. 特殊逻辑与测试关注点','')
-    if special and special!='无' and not re.search(r'既有功能影响|历史功能影响',special):
-        errors.append('特殊逻辑章节缺少“既有功能影响”说明')
-    field_change = (body.get('### 2.1 需求改动','') + '\n' +
-                    body.get('### 2.2 表字段 DDL 修改',''))
-    if re.search(r'(?:新增|增加|修改|调整|删除|废弃).{0,20}(?:对外报文|请求字段|响应字段|数据库字段|表字段|DTO字段|接口字段|消息字段)',field_change) and special=='无':
-        errors.append('字段/接口契约变化时须在特殊逻辑章节说明既有功能影响')
-    cfg=body.get('### 2.4 配置文件调整','')
-    if cfg and cfg!='无' and not fenced_blocks(cfg):
-        errors.append('配置文件有调整但缺少配置片段代码块')
-    if re.search(r'(?i)(?:token|secret|password|api[_-]?key)\s*[:=]\s*[^\s<>$#]{12,}',text):
-        warnings.append('可能含真实凭据：人工检查敏感信息')
-    warnings.append('静态检查不证明 Mermaid 8.8.3 实际渲染、业务语义或 Git 归属正确')
-    return errors,warnings
-
-
-def main(argv=None):
-    p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('report')
-    p.add_argument('--template',default=str(Path(__file__).resolve().parents[1]/'assets'/'diff-list-template.md'))
-    p.add_argument('--expect',action='append',default=[],help='项目名=40位SHA; repeatable')
-    a=p.parse_args(argv)
-    try:
-        raw=Path(a.report).read_bytes()
-        text=raw.decode('utf-8-sig')
-        template=Path(a.template).read_text(encoding='utf-8-sig')
-        errors,warnings=validate(text,template,a.expect)
-    except (OSError,UnicodeError) as exc:
-        print('ERROR: '+str(exc),file=sys.stderr)
-        return 2
-    for msg in errors: print('ERROR: '+msg)
-    for msg in warnings: print('NOTE: '+msg)
-    print('RESULT: '+('FAIL' if errors else 'PASS'))
-    return 1 if errors else 0
-
-
-if __name__=='__main__':
-    sys.exit(main())
-,
-                block)]
-            if ([key for key, _ in labels] != ['测试前提', '预期结果'] or
-                    any(not value.strip() for _, value in labels)):
-                errors.append('第 {} 个测试场景缺少唯一有效且按顺序的测试前提/预期结果'.format(index+1))
-        counts=[len(re.findall(r'(?m)^[ \t]*(?:\d+[.)][ \t]*)?\*\*'+lab+r'[:：]\*\*',tests)) for lab in LABELS]
+                r'(?m)^[ \t]*(?:\d+[.)][ \t]*)?\*\*(测试前提|预期结果)[:：]\*\*[ \t]*(.*)$',
+                group)]
+            if (not point.group(1).strip() or
+                    [lab for lab, _ in labels] != ['测试前提', '预期结果'] or
+                    any(not val.strip() for _, val in labels)):
+                errors.append('第 {} 个场景缺少唯一有效、按顺序的测试点/测试前提/预期结果'.format(index+1))
+        counts=[len(re.findall(r'(?m)^\s*(?:\d+[.)]\s*)?\*\*'+lab+r'[:：]\*\*',tests)) for lab in LABELS]
         if len(set(counts))!=1:
             errors.append('测试点/测试前提/预期结果数量不一致')
     special=body.get('## 4. 特殊逻辑与测试关注点','')
