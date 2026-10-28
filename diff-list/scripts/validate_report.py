@@ -141,8 +141,18 @@ def validate(text,template,expected):
     if export_section != '无':
         if not re.search(r'\S+\.xlsx\b',export_section,re.I):
             errors.append('测试用例导出章节缺少 Excel 文件名')
-        if not re.search(r'用例数量\s*[:：]\s*[1-9]\d*',export_section):
-            errors.append('测试用例导出章节缺少有效用例数量')
+        counts = {}
+        for label in ('重点用例数量', '常规用例数量', '总用例数量'):
+            found = re.search(re.escape(label) + r'\s*[:：]\s*(0|[1-9]\d*)(?!\d)', export_section)
+            if not found:
+                errors.append('测试用例导出章节缺少有效' + label)
+            else:
+                counts[label] = int(found.group(1))
+        if len(counts) == 3:
+            if counts['总用例数量'] < 1:
+                errors.append('总用例数量必须大于 0；两组均无用例时填写无')
+            elif counts['重点用例数量'] + counts['常规用例数量'] != counts['总用例数量']:
+                errors.append('重点、常规用例数量之和与总用例数量不一致')
         if re.search(r'(?:\*\*)?(?:测试点|测试前提|步骤描述|预期结果)[:：]',export_section):
             errors.append('Excel 测试用例不得重复写入 Markdown 报告')
     special=body.get('## 4. 特殊逻辑与测试关注点','')
