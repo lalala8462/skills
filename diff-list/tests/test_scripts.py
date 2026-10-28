@@ -574,12 +574,87 @@ class AdditionalRegressionTests(unittest.TestCase):
         validator=module('validate_report')
         template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
         report=template.replace('## 5. 测试用例导出',
-            '## 5. 测试用例导出\nExcel：cases.xlsx；用例数量：2')
+            '## 5. 测试用例导出\nExcel：cases.xlsx；重点用例数量：1；常规用例数量：1；总用例数量：2')
         errors,_=validator.validate(report,template,[])
         self.assertFalse(any('测试用例导出章节' in err for err in errors))
-        invalid=report.replace('用例数量：2','用例数量：两条')
+        invalid=report.replace('总用例数量：2','总用例数量：两条')
         errors,_=validator.validate(invalid,template,[])
-        self.assertTrue(any('有效用例数量' in err for err in errors))
+        self.assertTrue(any('总用例数量' in err for err in errors))
+
+
+    def test_two_sheet_dedup(self):
+        import zipfile
+        from xml.etree import ElementTree as ET
+        exporter=module('export_test_cases')
+        def case(title, key):
+            return {'title':title,'preconditions':'测试数据已准备',
+                    'steps':['发起请求','检查结果'],'expected':['符合预期'],
+                    'coverage_key':key}
+        data=exporter.normalize({'focus_cases':[case('重试幂等','refund.retry')],
+                                 'regular_cases':[case('常规重试','refund.retry'),
+                                                  case('正常退款','refund.basic')]})
+        self.assertEqual(data['deduplicated'],1)
+        self.assertEqual(len(data['regular']),1)
+        self.assertEqual(data['focus'][0][0],'DL-F0001')
+        self.assertEqual(data['regular'][0][0],'DL-N0001')
+        with tempfile.TemporaryDirectory() as td:
+            target=Path(td)/'cases.xlsx'
+            counts=exporter.export(data,target)
+            self.assertEqual((counts['focus'],counts['regular'],counts['total']), (1,1,2))
+            with zipfile.ZipFile(target) as archive:
+                self.assertIsNone(archive.testzip())
+                for name in archive.namelist():
+                    if name.endswith(('.xml','.rels')):
+                        ET.fromstring(archive.read(name))
+                ns={'x':'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+                workbook=ET.fromstring(archive.read('xl/workbook.xml'))
+                names=[item.attrib['name'] for item in workbook.findall('.//x:sheet',ns)]
+                self.assertEqual(names,['重点测试用例','常规功能用例'])
+                for n in (1,2):
+                    sheet=ET.fromstring(archive.read('xl/worksheets/sheet{}.xml'.format(n)))
+                    self.assertEqual(len(sheet.findall('.//x:row',ns)),2)
+                    self.assertFalse(sheet.findall('.//x:f',ns))
+            with self.assertRaises(FileExistsError):
+                exporter.export(data,target)
+
+    def test_dual_sheet_partial_overlap_and_empty_focus(self):
+        import zipfile
+        exporter=module('export_test_cases')
+        case={'title':'核心','preconditions':'前提','steps':['执行'],
+              'expected':['状态正确'],'coverage_key':'basic'}
+        with self.assertRaisesRegex(ValueError,'partially overlaps'):
+            exporter.normalize({'focus_cases':[case],
+                'regular_cases':[{**case,'title':'多覆盖','coverage_keys':['basic','other']}]})
+        with self.assertRaisesRegex(ValueError,'duplicate key'):
+            exporter.normalize({'focus_cases':[case,{**case,'title':'另一重点'}],
+                                'regular_cases':[]})
+        payload=exporter.normalize({'focus_cases':[],'regular_cases':[case]})
+        with tempfile.TemporaryDirectory() as td:
+            target=Path(td)/'normal.xlsx'
+            counts=exporter.export(payload,target)
+            self.assertEqual((counts['focus'],counts['regular']), (0,1))
+            with zipfile.ZipFile(target) as archive:
+                self.assertIn('常规功能用例',archive.read('xl/workbook.xml').decode('utf-8'))
+                self.assertIn('xl/worksheets/sheet2.xml',archive.namelist())
+
+    def test_dual_sheet_fallback_exact_content(self):
+        exporter=module('export_test_cases')
+        case={'title':'正常支付','preconditions':'同样前提','steps':['相同步骤'],
+              'expected':['相同结果'],'coverage_key':'focus.key'}
+        duplicate={**case,'coverage_key':'regular.key'}
+        data=exporter.normalize({'focus_cases':[case],'regular_cases':[duplicate]})
+        self.assertEqual(data['deduplicated'],1)
+        self.assertFalse(data['regular'])
+
+    def test_dual_sheet_report_counts(self):
+        validator=module('validate_report')
+        template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
+        report=template.replace('## 5. 测试用例导出',
+            '## 5. 测试用例导出\nExcel：cases.xlsx；重点用例数量：1；常规用例数量：2；总用例数量：3')
+        errors,_=validator.validate(report,template,[])
+        self.assertFalse(any('用例数量' in err for err in errors))
+        errors,_=validator.validate(report.replace('总用例数量：3','总用例数量：5'),template,[])
+        self.assertTrue(any('不一致' in err for err in errors))
 
 
 if __name__=='__main__':
