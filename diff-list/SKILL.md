@@ -19,4 +19,4 @@ description: "按指定 GitHub 或 GitLab 仓库及 Git 修订生成最终行为
 
 每次先读取 `assets/diff-list-template.md`，用 `init_report.py` 建文件，保留全部标题、无关章节写“无”。Mermaid 使用兼容 8.8.3 的 `flowchart TD` 或 `sequenceDiagram`；重点测试逐场景列 **测试点、测试前提、预期结果**，结果可观察可判定。不得写本机源码路径、行号/代码依据、未决项或真实密钥。报告包含完整 40 位修订 SHA、仓库相对脚本路径以及实际验证范围。
 
-运行 `validate_report.py`，核对项目与 SHA 的逐条对应关系、代码围栏、模板及测试标签；随后人工复核 Git 归属、AST/配置候选、业务语义及图文对应关系。默认写入 `G:\tmp`，不覆盖同名文件；最终交付路径、覆盖修订和真实验证范围。证据 JSON/AST 候选仅供内部分析，不复制到报告。
+完成报告正文后，使用 `append_run_dirs.py` 汇总本次 `collect_git.py`、`logic_candidates.py` 的 JSON 以及 `impact_candidates.py` 输出的所有新建仓库副本，在报告**最后（第 6 章）**列出准确目录及手动删除提醒，不自动清理。再运行 `validate_report.py`，核对项目与 SHA 的逐条对应关系、代码围栏、模板及测试标签；随后人工复核 Git 归属、AST/配置候选、业务语义及图文对应关系。默认写入 `G:\tmp`，不覆盖同名文件；最终交付路径、覆盖修订和真实验证范围。证据 JSON/AST 候选仅供内部分析，不复制到报告。

@@ -58,5 +58,8 @@ def prepare_repo(url, cache_dir=None):
     base.mkdir(parents=True, exist_ok=True)
     run_dir = Path(tempfile.mkdtemp(prefix='run-', dir=str(base)))
     target = run_dir / 'repo'
-    run_git('-c', 'core.longpaths=true', 'clone', '--quiet', '--no-checkout', canonical, target)
+    try:
+        run_git('-c', 'core.longpaths=true', 'clone', '--quiet', '--no-checkout', canonical, target)
+    except ValueError as exc:
+        raise ValueError(str(exc) + '\nCreated run directory (delete manually): ' + str(run_dir)) from exc
     return target, repo

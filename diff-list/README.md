@@ -19,11 +19,12 @@ py -3 .\scripts\logic_candidates.py --repo https://github.com/lalala8462/webapi 
 py -3 .\scripts\logic_candidates.py --repo https://github.com/lalala8462/adpts --base release-1 --head release-2 --output G:\tmp\adpts-logic.json
 py -3 .\scripts\impact_candidates.py --repo https://github.com/lalala8462/webapi --rev YOUR_SHA --symbol processPayment
 py -3 .\scripts\init_report.py --outdir G:\tmp --filename test-report.md
+py -3 .\scripts\append_run_dirs.py G:\tmp\test-report.md --source G:\tmp\webapi-evidence.json --source G:\tmp\webapi-logic.json
 py -3 .\scripts\validate_report.py G:\tmp\test-report.md --expect webapi=YOUR_FULL_40_CHARACTER_SHA
 py -3 -m unittest discover -s tests -v
 ```
 
-这些命令由 Skill 执行，用户只需提交 GitHub 或 GitLab 地址与修订号。`--rev` 可重复，范围用 `--base/--head`；合并提交需要明确父节点，可写 `--rev SHA:2`。私有仓库凭据不可用时报告错误，不改用 HEAD 或其他源。
+这些命令由 Skill 执行，用户只需提交 GitHub 或 GitLab 地址与修订号。`append_run_dirs.py` 的 `--source` 应包含本次全部取证和 AST JSON；执行了引用检索时，使用 `--clone` 追加每次 `impact_candidates.py` 输出的真实 `Analysis clone:` 路径。各脚本每运行一次都会创建新的目录，报告末尾必须列出所有目录。目录不会自动删除，用户可在后续验证完毕后自行删除。`--rev` 可重复，范围用 `--base/--head`；合并提交需要明确父节点，可写 `--rev SHA:2`。私有仓库凭据不可用时报告错误，不改用 HEAD 或其他源。
 
 ## 脚本分工
 
@@ -34,7 +35,7 @@ py -3 -m unittest discover -s tests -v
 | `logic_candidates.py` / `java/JavaLogicAst.java` | 比较 Java 8 AST 的分支、调用、赋值、计算和返回值变化；对重命名做保守的节点匹配 |
 | `config_candidates.py` | 对比 properties、普通 YAML 标量及 XML 属性映射的键值新增、删除与变更 |
 | `impact_candidates.py` | 指定修订的符号字面引用检索，不进行类型精确绑定 |
-| `init_report.py` / `validate_report.py` | 依据固定模板新建文档并校验结构、风险场景标签等 |
+| `init_report.py` / `append_run_dirs.py` / `validate_report.py` | 初始化报告、追加本次新建目录及手动删除提示、逐场景校验 |
 
 ## AST 候选规则和限制
 
