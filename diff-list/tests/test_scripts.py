@@ -234,8 +234,8 @@ class DiffListTest(unittest.TestCase):
         val=module('validate_report')
         template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
         report=template.replace('## 5. 测试用例导出',
-            '## 5. 测试用例导出\\nExcel：cases.xlsx；用例数量：2\\n'
-            '**测试点：** A\\n**测试前提：** A1\\n'
+            '## 5. 测试用例导出\nExcel：cases.xlsx；用例数量：2\n'
+            '**测试点：** A\n**测试前提：** A1\n'
             '**预期结果：** A2')
         errors,_=val.validate(report,template,[])
         self.assertTrue(any('不得重复' in e for e in errors))
@@ -543,7 +543,7 @@ class AdditionalRegressionTests(unittest.TestCase):
             {'case_id':'X02','title':'文本防护','preconditions':'测试准备',
              'steps':'=1+2','expected':'保持为文本'}]})
         self.assertEqual(rows[0][0], 'DL0001')
-        self.assertEqual(rows[0][3], '1. 发起请求\\n2. 检查响应')
+        self.assertEqual(rows[0][3], '1. 发起请求\n2. 检查响应')
         with tempfile.TemporaryDirectory() as td:
             target=Path(td)/'cases.xlsx'
             self.assertEqual(exporter.export(rows,target), 2)
@@ -574,7 +574,7 @@ class AdditionalRegressionTests(unittest.TestCase):
         validator=module('validate_report')
         template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
         report=template.replace('## 5. 测试用例导出',
-            '## 5. 测试用例导出\\nExcel：cases.xlsx；用例数量：2')
+            '## 5. 测试用例导出\nExcel：cases.xlsx；用例数量：2')
         errors,_=validator.validate(report,template,[])
         self.assertFalse(any('测试用例导出章节' in err for err in errors))
         invalid=report.replace('用例数量：2','用例数量：两条')
