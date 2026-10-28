@@ -38,6 +38,20 @@ def parse_hunks(diff):
     return [h for h in result if h['removed'] or h['added']]
 
 
+def parse_renames(diff):
+    """Return (old_path, new_path) pairs from Git rename metadata."""
+    pairs, old_path = [], None
+    for line in diff.splitlines():
+        if line.startswith('diff --git '):
+            old_path = None
+        elif line.startswith('rename from '):
+            old_path = line[len('rename from '):]
+        elif line.startswith('rename to ') and old_path is not None:
+            pairs.append((old_path, line[len('rename to '):]))
+            old_path = None
+    return pairs
+
+
 def review(entries, net_status, max_commits=300, omitted=0, merge_commits=()):
     """Summarize chronological commits; same-file edits are NOT method bindings.
 
@@ -50,6 +64,9 @@ def review(entries, net_status, max_commits=300, omitted=0, merge_commits=()):
         entries = entries[:max_commits]
     visits = defaultdict(list)
     hunks = defaultdict(list)
+    identities = {}
+    identity_paths = defaultdict(set)
+    latest_path = {}
     commits = []
     for entry in entries:
         sha = entry['sha']
@@ -61,10 +78,26 @@ def review(entries, net_status, max_commits=300, omitted=0, merge_commits=()):
             'message_truncated': len(raw_subject) > 300 or len(raw_body.strip()) > MAX_MESSAGE,
             'files': entry['files'], 'merge_commit': bool(entry.get('merge_commit'))
         })
+        # Preserve one file identity across Git renames so repeated/reversal
+        # analysis does not reset merely because the path changed.
+        for old_path, new_path in parse_renames(entry['diff']):
+            identity = identities.get(old_path, old_path)
+            identities[old_path] = identity
+            identities[new_path] = identity
+            identity_paths[identity].update((old_path, new_path))
+            latest_path[identity] = new_path
         for path in set(entry['files']):
-            visits[path].append(sha)
+            identity = identities.get(path, path)
+            identities[path] = identity
+            identity_paths[identity].add(path)
+            latest_path[identity] = path
+            visits[identity].append(sha)
         for hunk in parse_hunks(entry['diff']):
-            hunks[hunk['path']].append((sha, hunk))
+            identity = identities.get(hunk['path'], hunk['path'])
+            identities.setdefault(hunk['path'], identity)
+            identity_paths[identity].add(hunk['path'])
+            latest_path[identity] = hunk['path']
+            hunks[identity].append((sha, hunk))
     repeated = []
     reverse_count = 0
     for path in sorted(visits):
@@ -91,8 +124,10 @@ def review(entries, net_status, max_commits=300, omitted=0, merge_commits=()):
             previous[(before, after)].append((later_sha, later))
         reverse_count += candidate_count
         repeated.append({
-            'path': path, 'commits': touched, 'touch_count': len(touched),
-            'scope': 'file_only_not_method_binding',
+            'path': latest_path.get(path, path),
+            'identity_paths': sorted(identity_paths.get(path, {path})),
+            'commits': touched, 'touch_count': len(touched),
+            'scope': 'file_identity_across_renames_not_method_binding',
             'reverse_candidates': reversal[:30],
             'reverse_candidates_truncated': candidate_count > 30
         })
