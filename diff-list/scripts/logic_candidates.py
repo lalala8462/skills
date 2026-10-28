@@ -4,8 +4,10 @@ import argparse
 import base64
 from collections import Counter, defaultdict
 import json
+import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -16,7 +18,7 @@ from config_candidates import extract_config_candidates
 
 PRIORITIES = {'STATE': 90, 'CONCURRENCY': 90, 'TRANSACTION': 88,
               'EXCEPTION': 78, 'RETRY': 75, 'CONFIG': 65, 'BRANCH': 60,
-              'CALL': 62, 'EXPRESSION': 62}
+              'CALL': 62, 'EXPRESSION': 62, 'DISCARDED_CALL': 60}
 HINTS = {
     'STATE': '核对状态变更前置条件、终态覆盖、落库与通知是否一致',
     'CONCURRENCY': '核对重复请求、锁作用域、释放与并发执行结果',
@@ -27,6 +29,7 @@ HINTS = {
     'BRANCH': '核对新增/删除的条件边界、默认分支与实际副作用',
     'CALL': '核对目标方法、调用顺序、参数映射与实际副作用',
     'EXPRESSION': '核对计算结果、单位精度、返回值及赋值边界',
+    'DISCARDED_CALL': '调用作为独立语句；核实目标方法是否返回有意义的结果或仅依赖副作用，检查嵌套及递归处理',
 }
 
 
@@ -37,14 +40,26 @@ def safe_detail(text):
     return text[:180]
 
 
-def run_scan(classpath, source):
+def jdk_tools():
+    javac = shutil.which('javac')
+    if not javac:
+        raise ValueError('JDK compiler unavailable: javac not found on PATH')
+    javac = Path(javac).resolve()
+    java = javac.with_name('java.exe' if os.name == 'nt' else 'java')
+    if not java.is_file():
+        raise ValueError('Java runtime not found beside javac: ' + str(java))
+    tools_jar = javac.parent.parent / 'lib' / 'tools.jar'
+    return str(javac), str(java), str(tools_jar) if tools_jar.is_file() else None
+
+
+def run_scan(java, classpath, source):
     if not source.strip():
         return [], None
     with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', suffix='.java', delete=False) as file:
         name = file.name
         file.write(source)
     try:
-        run = subprocess.run(['java', '-cp', classpath, 'JavaLogicAst', name],
+        run = subprocess.run([java, '-cp', classpath, 'JavaLogicAst', name],
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                              encoding='utf-8', errors='replace', check=False)
         if run.returncode != 0:
@@ -163,16 +178,18 @@ def extract_candidates(pairs):
     source_file = Path(__file__).resolve().parent / 'java' / 'JavaLogicAst.java'
     if not source_file.is_file():
         raise ValueError('Missing JDK 8 compatible AST source: ' + str(source_file))
+    javac, java, tools_jar = jdk_tools()
     with tempfile.TemporaryDirectory(prefix='diff-list-ast-') as tmp:
-        compile_run = subprocess.run(['javac', '-source', '8', '-target', '8', '-encoding', 'UTF-8',
-                                      '-d', tmp, str(source_file)], capture_output=True,
+        classpath = os.pathsep.join([tmp, tools_jar] if tools_jar else [tmp])
+        compile_run = subprocess.run([javac, '-source', '8', '-target', '8', '-encoding', 'UTF-8',
+                                      '-cp', classpath, '-d', tmp, str(source_file)], capture_output=True,
                                      text=True, encoding='utf-8', errors='replace', check=False)
         if compile_run.returncode:
             raise ValueError('JDK compiler unavailable or AST compilation failed: ' + compile_run.stderr[:600])
         findings, skipped = [], []
         for pair in pairs:
-            old, old_error = run_scan(tmp, pair['before'])
-            new, new_error = run_scan(tmp, pair['after'])
+            old, old_error = run_scan(java, classpath, pair['before'])
+            new, new_error = run_scan(java, classpath, pair['after'])
             if old_error or new_error:
                 skipped.append({'path': pair['path'], 'reason': old_error or new_error})
                 continue
@@ -181,9 +198,28 @@ def extract_candidates(pairs):
         return findings, skipped
 
 
+def group_candidates(findings, limit=12):
+    """Group change hints by source method, without asserting call bindings or behavior."""
+    groups = defaultdict(list)
+    for item in findings:
+        if item.get('method'):
+            groups[(item['path'], item['method'])].append(item)
+    result = []
+    for (path, method), items in sorted(groups.items()):
+        categories = Counter(item['category'] for item in items)
+        calls = sorted({item['description'][5:] for item in items
+                        if item['category'] == 'CALL' and item['description'].startswith('call ')})
+        result.append({'path': path, 'method': method, 'candidate_count': len(items),
+                       'categories': dict(sorted(categories.items())),
+                       'changed_call_names': calls[:limit],
+                       'omitted_call_names': max(0, len(calls) - limit),
+                       'binding_verified': False})
+    return result
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--repo', required=True, help='GitHub HTTPS repository URL')
+    p.add_argument('--repo', required=True, help='GitHub or GitLab repository URL')
     p.add_argument('--rev', action='append', help='Selected commit SHA, repeat for multiple')
     p.add_argument('--base', help='Explicit range base')
     p.add_argument('--head', help='Explicit range head')
@@ -226,6 +262,7 @@ def main(argv=None):
                    'files_analyzed': len(pairs) + len(config_pairs),
                    'java_files_analyzed': len(pairs), 'config_files_analyzed': len(config_pairs),
                    'candidates': findings,
+                   'method_groups': group_candidates(findings),
                    'skipped': skipped, 'review_required': bool(skipped) or effect['status']=='review_required',
                    'note': 'AST/configuration change candidates, not verified business behavior or runtime settings.'}
         target = Path(args.output)

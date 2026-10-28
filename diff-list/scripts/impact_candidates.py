@@ -8,7 +8,7 @@ from repo_access import prepare_repo
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--repo',required=True,help='GitHub URL: https://github.com/owner/repo')
+    p.add_argument('--repo',required=True,help='GitHub or GitLab repository URL')
     p.add_argument('--cache-dir',help='Optional isolated Git cache directory')
     p.add_argument('--rev',required=True,help='Explicit target revision (not implicit HEAD)')
     p.add_argument('--symbol',action='append',required=True,help='Repeat for each symbol')

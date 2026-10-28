@@ -5,6 +5,7 @@ import re
 import subprocess
 import tempfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
 _REPO = re.compile(r'^https://github\.com/([A-Za-z0-9-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$')
 
@@ -18,6 +19,27 @@ def parse_github_url(url):
     return owner, repo, 'https://github.com/{}/{}.git'.format(owner, repo)
 
 
+def parse_repo_url(url):
+    """Accept GitHub or GitLab HTTP(S) clone URLs, without credentials or URL options."""
+    parts = urlsplit(url.strip())
+    if parts.hostname == 'github.com':
+        owner, repo, canonical = parse_github_url(url)
+        return ('github.com', owner, repo, canonical)
+    if (parts.scheme not in ('http', 'https') or not parts.hostname or
+            parts.username or parts.password or parts.query or parts.fragment or
+            parts.port is not None):
+        raise ValueError('Expected GitLab HTTP(S) repository URL without credentials')
+    segments = parts.path.strip('/').split('/')
+    if len(segments) < 2 or any(not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.-]*', s)
+                                or s in ('.', '..') for s in segments):
+        raise ValueError('Expected GitLab group/project repository path')
+    segments[-1] = re.sub(r'\.git$', '', segments[-1])
+    if not segments[-1] or segments[-1] in ('.', '..'):
+        raise ValueError('Invalid GitLab project name')
+    canonical = '{}://{}/{}.git'.format(parts.scheme, parts.hostname, '/'.join(segments))
+    return (parts.hostname, '/'.join(segments[:-1]), segments[-1], canonical)
+
+
 def run_git(*args):
     process = subprocess.run(['git', *map(str, args)], stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, encoding='utf-8',
@@ -29,9 +51,9 @@ def run_git(*args):
 
 def prepare_repo(url, cache_dir=None):
     """Clone/fetch only in the dedicated cache; never checkout/edit the user's code."""
-    owner, repo, canonical = parse_github_url(url)
+    host, owner, repo, canonical = parse_repo_url(url)
     base = Path(cache_dir) if cache_dir else Path(os.getenv('LOCALAPPDATA') or tempfile.gettempdir()) / 'diff-list' / 'git-cache'
-    target = base / owner / repo
+    target = base / owner / repo if host == 'github.com' else base / host / Path(owner) / repo
     if target.exists():
         if not target.is_dir() or not (target / '.git' / 'HEAD').is_file():
             raise ValueError('Cache path exists but is not a Git cache: ' + str(target))

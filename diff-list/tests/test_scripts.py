@@ -1,6 +1,7 @@
 """Run: py -3 -m unittest discover -s tests -v"""
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -20,6 +21,28 @@ def module(name):
 
 
 class DiffListTest(unittest.TestCase):
+    def test_jdk_tools_discovery(self):
+        logic = module('logic_candidates')
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            bin_dir = root / 'bin'
+            bin_dir.mkdir()
+            suffix = '.exe' if os.name == 'nt' else ''
+            javac = bin_dir / ('javac' + suffix)
+            java = bin_dir / ('java' + suffix)
+            javac.touch()
+            java.touch()
+            with mock.patch.object(logic.shutil, 'which', return_value=str(javac)):
+                self.assertEqual(logic.jdk_tools(), (str(javac.resolve()), str(java), None))
+                lib = root / 'lib'
+                lib.mkdir()
+                jar = lib / 'tools.jar'
+                jar.touch()
+                self.assertEqual(logic.jdk_tools(), (str(javac.resolve()), str(java), str(jar)))
+            with mock.patch.object(logic.shutil, 'which', return_value=None):
+                with self.assertRaisesRegex(ValueError, 'javac not found'):
+                    logic.jdk_tools()
+
     def test_template_heading_only(self):
         template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
         self.assertTrue(all(not line.strip() or line.startswith('# ' ) or line.startswith('## ')
@@ -79,6 +102,18 @@ class DiffListTest(unittest.TestCase):
                     'https://github.com/owner/../repo', 'https://github.com/owner/repo/commit/a'):
             with self.assertRaises(ValueError):
                 access.parse_github_url(bad)
+
+    def test_gitlab_url_parser(self):
+        access = module('repo_access')
+        self.assertEqual(access.parse_repo_url('http://gitlab.fingard.cn/rh-rhf/webapi-group/webapi3.0'),
+                         ('gitlab.fingard.cn', 'rh-rhf/webapi-group', 'webapi3.0',
+                          'http://gitlab.fingard.cn/rh-rhf/webapi-group/webapi3.0.git'))
+        for bad in ('http://user:pass@gitlab.example/group/project',
+                    'https://gitlab.example/group/../project',
+                    'https://gitlab.example/group/project?token=secret',
+                    'file:///group/project'):
+            with self.assertRaises(ValueError):
+                access.parse_repo_url(bad)
 
     def test_collect_cli_direct_revisions(self):
         collector=module('collect_git')
@@ -219,6 +254,32 @@ class AdditionalRegressionTests(unittest.TestCase):
         self.assertTrue(any(c['category']=='CALL' and c['description']=='call credit' for c in candidates))
         self.assertTrue(any(c['category']=='CALL' and c['description']=='call debit' for c in candidates))
         self.assertTrue(any(c['category']=='EXPRESSION' and c['description']=='assignment amount' for c in candidates))
+
+    def test_nested_call_discard_is_syntax_hint_only(self):
+        logic = module('logic_candidates')
+        before = 'class A { String walk(Object x) { return ""; } }'
+        after = '''class A { String walk(Object x) {
+            if (x instanceof java.util.Map) { walk(x); }
+            return "";
+        } }'''
+        candidates, skipped = logic.extract_candidates([{'path':'A.java','before':before,'after':after}])
+        self.assertEqual(skipped, [])
+        hint = next(c for c in candidates if c['category'] == 'DISCARDED_CALL')
+        self.assertEqual(hint['description'], 'standalone call walk')
+        self.assertFalse(hint['binding_verified'])
+        self.assertFalse(hint['actual_behavior_verified'])
+        groups = logic.group_candidates(candidates)
+        self.assertEqual(len(groups), 1)
+        self.assertIn('walk', groups[0]['changed_call_names'])
+        self.assertIn('DISCARDED_CALL', groups[0]['categories'])
+
+    def test_consumed_return_does_not_emit_discarded_call(self):
+        logic = module('logic_candidates')
+        old = 'class A { String f() { return ""; } String g(){ return ""; } }'
+        new = 'class A { String f() { return ""; } String g(){ return f(); } }'
+        candidates, skipped = logic.extract_candidates([{'path':'A.java','before':old,'after':new}])
+        self.assertEqual(skipped, [])
+        self.assertFalse(any(c['category'] == 'DISCARDED_CALL' for c in candidates))
 
     def test_class_and_method_rename_not_false_high(self):
         logic = module('logic_candidates')

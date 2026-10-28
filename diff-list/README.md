@@ -1,6 +1,6 @@
 # diff-list（Windows 10）
 
-直接指定 GitHub URL 和 Git 提交号/范围，Skill 输出一个提测 Markdown；自动缓存仓库。要求 Git for Windows + Python 3.8+（标准库）；启用 Java AST 候选检查还需 **JDK 8 或更新版本**，并让 `javac` 和 `java` 可执行。私有 GitHub 仓库使用本机 Git 凭据。
+直接指定 GitHub 或 GitLab URL 和 Git 提交号/范围，Skill 输出一个提测 Markdown；自动缓存仓库。要求 Git for Windows + Python 3.8+（标准库）；启用 Java AST 候选检查还需 **JDK 8 或更新版本**，并让 `javac` 和 `java` 可执行。私有 GitHub 或 GitLab 仓库使用本机 Git 凭据。
 
 ## 调用示例
 
@@ -23,13 +23,13 @@ py -3 .\scripts\validate_report.py G:\tmp\test-report.md --expect webapi=YOUR_FU
 py -3 -m unittest discover -s tests -v
 ```
 
-这些命令由 Skill 执行，用户只需提交 GitHub 地址与修订号。`--rev` 可重复，范围用 `--base/--head`；合并提交需要明确父节点，可写 `--rev SHA:2`。私有仓库凭据不可用时报告错误，不改用 HEAD 或其他源。
+这些命令由 Skill 执行，用户只需提交 GitHub 或 GitLab 地址与修订号。`--rev` 可重复，范围用 `--base/--head`；合并提交需要明确父节点，可写 `--rev SHA:2`。私有仓库凭据不可用时报告错误，不改用 HEAD 或其他源。
 
 ## 脚本分工
 
 | 脚本 | 作用 |
 | --- | --- |
-| `repo_access.py` | 自动 GitHub 克隆/更新隔离缓存（`%LOCALAPPDATA%\diff-list\git-cache`） |
+| `repo_access.py` | 自动仓库克隆/更新隔离缓存（`%LOCALAPPDATA%\diff-list\git-cache`） |
 | `collect_git.py` / `net_effect.py` | 按指定提交提取 diff，在临时索引合成净差异，提示未选中提交交叉 |
 | `logic_candidates.py` / `java/JavaLogicAst.java` | 比较 Java 8 AST 的分支、调用、赋值、计算和返回值变化；对重命名做保守的节点匹配 |
 | `config_candidates.py` | 对比 properties、普通 YAML 标量及 XML 属性映射的键值新增、删除与变更 |
@@ -41,6 +41,8 @@ py -3 -m unittest discover -s tests -v
 针对最终净变化的 `.java` 文件，AST 扫描条件、状态赋值、异常、重试、锁、事务、配置读取、一般方法调用、算术表达式、赋值和返回值。按类/方法和语法节点匹配并对可唯一确定的重命名做身份归并，输出 `added/removed/modified`、风险类别、优先级、方法与源码行号（**内部证据**），不会自动把候选写进测试文档。只改格式的代码不应生成候选；代码里未改动的旧条件不应被写成新增。
 
 风险优先级是**启发式**（例如状态、锁、事务或异常变化优先），不是实际业务风险的事实结论。AST 不执行 Java 类型检查、重载绑定或框架动态路由；对语法错误、过大文件、非 UTF-8、选中提交合成冲突，输出 `skipped`/`review_required`，不得声称无风险。Java 文件默认单文件最大 300 KB，离散提交最多自动读取 80 个变更 Java 文件（范围模式也受限），需人工分析被跳过的文件。
+
+`DISCARDED_CALL` 标记独立表达式中的调用，不判断方法是否有返回值、返回值是否重要或是否存在副作用。`method_groups` 按文件和方法汇总变化及有限数量的调用名，仅供模型选取重点并沿调用关系查看指定修订的实际源码；未改动的被调方法不会因调用而自动扫描，不能据此断言依赖关系或分析覆盖完整。模型还须结合业务场景补充风险，并复核父提交及最终行为。
 
 配置差异作为同一份内部候选 JSON 的 `CONFIG` 记录，包含键名、变更类型和可安全展示的布尔/整数值。密钥等敏感值被遮盖；复杂 YAML 和无法唯一解析的 XML 会列入 `skipped`，不推断运行时配置实际生效。配置候选不依赖 Java 编译器。
 

@@ -167,7 +167,7 @@ def collect(project, capture_java=False, capture_config=False):
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--repo', required=True, help='GitHub URL: https://github.com/owner/repo')
+    p.add_argument('--repo', required=True, help='GitHub or GitLab repository URL')
     p.add_argument('--rev', action='append', help='Commit SHA or SHA:parentIndex; repeat to select multiple commits')
     p.add_argument('--base', help='Base for explicit range, used together with --head')
     p.add_argument('--head', help='Head for explicit range, used together with --base')

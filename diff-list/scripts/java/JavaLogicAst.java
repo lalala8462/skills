@@ -124,6 +124,13 @@ public final class JavaLogicAst {
             emit("CALL", "call " + name, node);
             return super.visitMethodInvocation(node, unused);
         }
+        @Override public Void visitExpressionStatement(ExpressionStatementTree node, Void unused) {
+            if (node.getExpression() instanceof MethodInvocationTree) {
+                MethodInvocationTree call = (MethodInvocationTree) node.getExpression();
+                emit("DISCARDED_CALL", "standalone call " + methodName(call.getMethodSelect()), call);
+            }
+            return super.visitExpressionStatement(node, unused);
+        }
         @Override public Void visitAssignment(AssignmentTree node, Void unused) {
             if (statusName(node.getVariable().toString()))
                 emit("STATE", "assignment " + node.getVariable().toString(), node);

@@ -1,18 +1,18 @@
 ---
 name: diff-list
-description: "按指定 GitHub 仓库及 Git 修订生成最终行为提测 Markdown，涵盖业务流程、特殊逻辑、DDL、DML、配置及高风险测试场景；Windows 10，Git 净差异与 Java 8 AST 候选由脚本提取。"
+description: "按指定 GitHub 或 GitLab 仓库及 Git 修订生成最终行为提测 Markdown，涵盖业务流程、特殊逻辑、DDL、DML、配置及高风险测试场景；Windows 10，Git 净差异与 Java 8 AST 候选由脚本提取。"
 ---
 
 # diff-list
 
-输入 GitHub 仓库 URL 与对应 Git 提交号或明确比较范围；可以多项目。仓库由脚本自动缓存。**只读分析，不修业务代码、不执行 SQL、不提交 Git**。输出一份面向测试人员的 UTF-8 Markdown。
+输入 GitHub 或 GitLab 仓库 URL 与对应 Git 提交号或明确比较范围；可以多项目。仓库由脚本自动缓存。**只读分析，不修业务代码、不执行 SQL、不提交 Git**。输出一份面向测试人员的 UTF-8 Markdown。
 
 ## 执行
 
 1. Windows 10 使用 Git for Windows、Python 3.8+；**Java 8 AST 分析另需 JDK 8+ 的 `javac`、`java`**。按 `README.md` 运行 `collect_git.py` 和 `logic_candidates.py`，每项目分别取证。缓存由脚本自动管理，未指定修订不得改用 HEAD。
-2. `net_effect` 的 `composed` 为选中提交的机械补丁净效果，`no_net_change` 为无净变化，`review_required` 表示合成不可靠、必须核查依赖。`logic_candidates.py` 输出 AST 表达式/调用、分支、状态、异常等变化，以及配置键新增/修改/删除的风险候选和跳过原因。**候选不是精确类型绑定、真实调用证明、环境生效事实或验收预期**。
-3. 结合 `references/analysis-checklist.md` 验证候选：向下核实业务入口、分支、调用、DB/Redis、异常、重试、通知；向上追踪消费者。核实改动前行为、指定修订实际行为及已确认的业务预期。代码与需求冲突时说明当前缺陷；关键业务预期不清时在对话中询问，不编造。
-4. 按 `references/report-rules.md` 处理需求、DDL、DML、配置新增/变更/废弃，精选有业务意义的特殊分支和高风险场景，不罗列普通回归。
+2. `net_effect` 的 `composed` 为选中提交的机械补丁净效果，`no_net_change` 为无净变化，`review_required` 表示合成不可靠、必须核查依赖。`logic_candidates.py` 输出 AST 表达式/调用、分支、状态、异常等变化，以及配置键新增/修改/删除的风险候选、按方法汇总和跳过原因。独立调用候选仅表示语法上没有接收返回值，普通 void 或依靠副作用的调用也会命中。**候选不是精确类型绑定、真实调用证明、环境生效事实或验收预期**。
+3. 模型基于净差异、候选及 `references/analysis-checklist.md` 独立推导重点业务场景，再回到指定修订源码核实并补充脚本无法发现的行为；不能只把脚本候选整理成报告。按场景向下追踪涉及的嵌套数据、返回值、未改动的被调方法、DB/Redis、异常、重试和通知，向上追踪消费者；核实改动前行为、指定修订实际行为及已确认业务预期。候选和字面引用不是调用绑定，未追踪或跳过内容不得宣称已覆盖。代码与需求冲突时说明当前缺陷；关键业务预期不清时在对话中询问，不编造。
+4. 将已核实的场景与脚本结果交叉复核，检查是否遗漏关键入口、异步失败和配置契约，再按 `references/report-rules.md` 生成报告。精选有业务意义的特殊分支和高风险场景，不罗列普通回归。
 
 ## 文档与校验
 
