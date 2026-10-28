@@ -57,6 +57,7 @@ public final class JavaLogicAst {
         private final CompilationUnitTree unit;
         private final SourcePositions positions;
         private final Deque<String> classes = new ArrayDeque<String>();
+        private final Map<String, Integer> anonymousCounts = new HashMap<String, Integer>();
         private String member = "<initializer>";
         Scan(CompilationUnitTree unit, Trees trees) {
             this.unit = unit;
@@ -70,7 +71,15 @@ public final class JavaLogicAst {
                 encoded(compact(detail)) + "\t" + digest(node.toString()) + "\t" + line);
         }
         @Override public Void visitClass(ClassTree node, Void unused) {
-            classes.addLast(node.getSimpleName().toString());
+            String name = node.getSimpleName().toString();
+            if (name.isEmpty()) {
+                String owner = String.join(".", classes) + "#" + member;
+                Integer count = anonymousCounts.get(owner);
+                int next = count == null ? 1 : count.intValue() + 1;
+                anonymousCounts.put(owner, Integer.valueOf(next));
+                name = "<anonymous:" + next + ">";
+            }
+            classes.addLast(name);
             super.visitClass(node, unused);
             classes.removeLast();
             return null;
