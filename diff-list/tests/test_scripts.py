@@ -184,6 +184,144 @@ class DiffListTest(unittest.TestCase):
         self.assertEqual(errors, [])
 
 
+    def test_selected_net_and_cancel(self):
+        collector=module('collect_git')
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td)
+            def g(*args):
+                return subprocess.check_output(['git','-C',str(root),*args],text=True).strip()
+            g('init','-q');g('config','user.name','Test');g('config','user.email','test@example.com')
+            file=root/'record.txt'
+            file.write_text('status=old\n',encoding='utf-8')
+            g('add','.');g('commit','-qm','initial')
+            file.write_text('status=temporary\n',encoding='utf-8')
+            g('add','.');g('commit','-qm','intermediate')
+            a=g('rev-parse','HEAD')
+            file.write_text('status=old\n',encoding='utf-8')
+            g('add','.');g('commit','-qm','undo')
+            b=g('rev-parse','HEAD')
+            result=collector.collect({'name':'sample','path':str(root),
+                                       'revisions':[b,a]})
+            self.assertEqual(result['net_effect']['status'],'no_net_change')
+            self.assertEqual(result['net_effect']['changed_files'],[])
+            self.assertEqual(len(result['net_effect']['applied_commits']),2)
+
+    def test_selected_net_intervening_conflict(self):
+        collector=module('collect_git')
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td)
+            def g(*args):
+                return subprocess.check_output(['git','-C',str(root),*args],text=True).strip()
+            g('init','-q');g('config','user.name','Test');g('config','user.email','test@example.com')
+            file=root/'record.txt'
+            file.write_text('status=old\n',encoding='utf-8')
+            g('add','.');g('commit','-qm','initial')
+            file.write_text('status=selected-a\n',encoding='utf-8')
+            g('add','.');g('commit','-qm','selected-a')
+            a=g('rev-parse','HEAD')
+            file.write_text('status=unselected\n',encoding='utf-8')
+            g('add','.');g('commit','-qm','intervening')
+            file.write_text('status=selected-b\n',encoding='utf-8')
+            g('add','.');g('commit','-qm','selected-b')
+            b=g('rev-parse','HEAD')
+            result=collector.collect({'name':'sample','path':str(root),
+                                       'revisions':[a,b]})
+            self.assertEqual(result['net_effect']['status'],'review_required')
+            self.assertFalse(result['net_effect']['net_diff'])
+            self.assertTrue(result['unselected_overlaps'])
+
+    def test_validate_misgrouped_tests(self):
+        val=module('validate_report')
+        template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
+        report=template.replace('## 5. 重点测试场景',
+            '## 5. 重点测试场景\n**测试点：** A\n**测试前提：** A1\n'
+            '**测试点：** B\n**预期结果：** B2\n**测试前提：** B1\n'
+            '**预期结果：** A2')
+        errors,_=val.validate(report,template,[])
+        self.assertTrue(any('唯一有效' in e for e in errors))
+
+    def test_unicode_java_and_config_paths(self):
+        collector=module('collect_git')
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td)
+            def git(*args):
+                return subprocess.check_output(['git','-C',str(root),*args],
+                                               encoding='utf-8').strip()
+            git('init','-q')
+            git('config','user.name','Test')
+            git('config','user.email','test@example.com')
+            java=root/'订单服务.java'
+            cfg=root/'渠道配置.properties'
+            java.write_text('class Pay { void run() {} }\n',encoding='utf-8')
+            cfg.write_text('retry=false\n',encoding='utf-8')
+            git('add','.');git('commit','-qm','base')
+            base=git('rev-parse','HEAD')
+            java.write_text('class Pay { void run(){ retry(); } void retry(){} }\n',
+                            encoding='utf-8')
+            cfg.write_text('retry=true\n',encoding='utf-8')
+            git('add','.');git('commit','-qm','selected')
+            head=git('rev-parse','HEAD')
+            for spec in ({'revisions':[head]}, {'range':{'base':base,'head':head}}):
+                result=collector.collect({'name':'demo','path':str(root),**spec},
+                                         capture_java=True,capture_config=True)
+                net=result['net_effect']
+                self.assertEqual(net['status'],'composed')
+                self.assertIn('订单服务.java',net['changed_files'])
+                self.assertIn('渠道配置.properties',net['changed_files'])
+                self.assertEqual([p['path'] for p in net['java_sources']],['订单服务.java'])
+                self.assertEqual([p['path'] for p in net['config_sources']],['渠道配置.properties'])
+                self.assertFalse(net['java_skipped'])
+                self.assertFalse(net['config_skipped'])
+
+    def test_footer_allows_only_isolated_clone_directories(self):
+        val=module('validate_report')
+        template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
+        sha='a'*40
+        blocks={
+            '## 1. 分析范围':'webapi '+sha,
+            '### 2.1 需求改动':'无',
+            '### 2.2 表字段 DDL 修改':'无',
+            '### 2.3 表配置 DML 准备清单':'无',
+            '### 2.4 配置文件调整':'无',
+            '### 3.1 整体流程说明':'无',
+            '### 3.2 Mermaid 流程图':'无',
+            '## 4. 特殊逻辑与测试关注点':'无',
+            '## 5. 重点测试场景':'无',
+            '## 6. 验证情况':'已执行静态分析。'
+        }
+        report='\n'.join(line+'\n'+blocks.get(line,'') if line.startswith('#') else line
+                         for line in template.splitlines())
+        footer=('\n<!-- diff-list-generated-clones:start -->\n'
+                '**本次创建的分析仓库目录（请后续手动删除）：**\n'
+                '- \x60C:\\Users\\test\\AppData\\Local\\diff-list\\runs\\run-abc\x60\n'
+                '<!-- diff-list-generated-clones:end -->\n')
+        errors,_=val.validate(report+footer,template,['webapi='+sha])
+        self.assertEqual(errors,[])
+        errors,_=val.validate(report+footer.replace('diff-list\\runs','work\\source'),
+                               template,['webapi='+sha])
+        self.assertTrue(any('专用目录' in err for err in errors))
+        errors,_=val.validate(report+'\nC:\\work\\Main.java',template,['webapi='+sha])
+        self.assertTrue(any('Windows 本机绝对路径' in err for err in errors))
+
+    def test_append_run_dirs_records_exact_locations(self):
+        writer=module('append_run_dirs')
+        with tempfile.TemporaryDirectory() as td:
+            with mock.patch.dict('os.environ',{'LOCALAPPDATA':td}):
+                clone=Path(td)/'diff-list'/'runs'/'run-123'/'repo'
+                (clone/'.git').mkdir(parents=True)
+                report=Path(td)/'report.md'
+                report.write_text('# Report\n## 6. 验证情况\n静态分析。\n',encoding='utf-8')
+                evidence=Path(td)/'evidence.json'
+                evidence.write_text(json.dumps({'analysis_clone':str(clone)}),
+                                    encoding='utf-8')
+                dirs=writer.append(report,[str(evidence)],[str(clone)])
+                self.assertEqual(dirs,[str(clone.parent)])
+                self.assertIn(str(clone.parent),report.read_text(encoding='utf-8'))
+                self.assertIn('请后续手动删除',report.read_text(encoding='utf-8'))
+                with self.assertRaises(ValueError):
+                    writer.append(report,[str(evidence)],[])
+
+
 if __name__=='__main__':
     unittest.main()
 
