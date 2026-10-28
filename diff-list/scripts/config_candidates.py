@@ -137,26 +137,44 @@ def extract_config_candidates(pairs):
     findings, skipped = [], []
     for pair in pairs:
         path = pair['path']
+        before = after = None
+        before_error = after_error = None
         try:
             before = parse(path, pair['before'])
+        except ValueError as exc:
+            before_error = str(exc)[:240]
+        try:
             after = parse(path, pair['after'])
         except ValueError as exc:
-            reason = str(exc)[:240]
-            lower = path.lower()
+            after_error = str(exc)[:240]
+
+        lower = path.lower()
+        no_xml_mapping = 'no supported XML key/value mappings'
+        if lower.endswith('.xml'):
+            # If only one side has supported mappings, the other side is an
+            # empty mapping set so additions/removals remain visible. Only when
+            # neither side contains supported mappings is the file non-target.
+            if before_error == no_xml_mapping and after_error is None:
+                before, before_error = {}, None
+            elif after_error == no_xml_mapping and before_error is None:
+                after, after_error = {}, None
+            elif before_error == no_xml_mapping and after_error == no_xml_mapping:
+                skipped.append({'path': path, 'reason': no_xml_mapping,
+                                'kind': 'not_config_mapping',
+                                'review_required': False})
+                continue
+
+        error = before_error or after_error
+        if error:
             review_required = True
             kind = 'parse_failure'
-            if lower.endswith('.xml') and reason == 'no supported XML key/value mappings':
-                # Mapper/POM/other XML remains part of the ordinary Git diff, but
-                # it is not a key/value config document supported by this parser.
-                review_required = False
-                kind = 'not_config_mapping'
-            elif lower.endswith(('.yaml', '.yml')) and not _likely_runtime_yaml(path):
+            if lower.endswith(('.yaml', '.yml')) and not _likely_runtime_yaml(path):
                 # CI/workflow/other generic YAML can use constructs intentionally
                 # unsupported here. Do not promote this parser limitation to a
                 # global review flag unless the path looks like runtime config.
                 review_required = False
                 kind = 'non_runtime_yaml'
-            skipped.append({'path': path, 'reason': reason, 'kind': kind,
+            skipped.append({'path': path, 'reason': error, 'kind': kind,
                             'review_required': review_required})
             continue
         for key in sorted(set(before) | set(after)):
