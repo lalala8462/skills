@@ -7,9 +7,6 @@ from pathlib import Path, PureWindowsPath
 
 HEAD=re.compile(r'^#{1,6} .+$',re.M)
 FENCE=re.compile(r'^```([^\n]*)\n(.*?)^```\s*$',re.M|re.S)
-TEST=re.compile(r'(?m)^\s*(?:\d+[.)]\s*)?\*\*测试点[:：]\*\*')
-LABELS=('测试点','测试前提','预期结果')
-
 
 def heading_positions(text):
     """Find Markdown headings outside fenced code blocks, preserving source lines."""
@@ -140,28 +137,14 @@ def validate(text,template,expected):
         elif not all(re.match(r'^\s*(?:flowchart TD|sequenceDiagram)\s*(?:\n|$)',b)
                      for b in blocks):
             errors.append('Mermaid 图必须以 flowchart TD 或 sequenceDiagram 开始')
-    tests=body.get('## 5. 重点测试场景','')
-    if tests!='无':
-        if not TEST.search(tests):
-            errors.append('重点测试场景缺少“测试点”标签')
-        for label in LABELS:
-            if not re.search(r'(?m)^\s*(?:\d+[.)]\s*)?\*\*'+label+r'[:：]\*\*\s*\S',tests):
-                errors.append('缺少标签或内容: '+label)
-        point_re = re.compile(r'(?m)^[ \t]*(?:\d+[.)][ \t]*)?\*\*测试点[:：]\*\*[ \t]*(.*)$')
-        points = list(point_re.finditer(tests))
-        for index, point in enumerate(points):
-            group = tests[point.end():points[index+1].start()
-                          if index+1 < len(points) else len(tests)]
-            labels = [(m.group(1), m.group(2)) for m in re.finditer(
-                r'(?m)^[ \t]*(?:\d+[.)][ \t]*)?\*\*(测试前提|预期结果)[:：]\*\*[ \t]*(.*)$',
-                group)]
-            if (not point.group(1).strip() or
-                    [lab for lab, _ in labels] != ['测试前提', '预期结果'] or
-                    any(not val.strip() for _, val in labels)):
-                errors.append('第 {} 个场景缺少唯一有效、按顺序的测试点/测试前提/预期结果'.format(index+1))
-        counts=[len(re.findall(r'(?m)^\s*(?:\d+[.)]\s*)?\*\*'+lab+r'[:：]\*\*',tests)) for lab in LABELS]
-        if len(set(counts))!=1:
-            errors.append('测试点/测试前提/预期结果数量不一致')
+    export_section=body.get('## 5. 测试用例导出','')
+    if export_section != '无':
+        if not re.search(r'\\S+\\.xlsx\\b',export_section,re.I):
+            errors.append('测试用例导出章节缺少 Excel 文件名')
+        if not re.search(r'用例数量\\s*[:：]\\s*[1-9]\\d*',export_section):
+            errors.append('测试用例导出章节缺少有效用例数量')
+        if re.search(r'(?:\\*\\*)?(?:测试点|测试前提|步骤描述|预期结果)[:：]',export_section):
+            errors.append('Excel 测试用例不得重复写入 Markdown 报告')
     special=body.get('## 4. 特殊逻辑与测试关注点','')
     if special and special!='无' and not re.search(r'既有功能影响|历史功能影响',special):
         errors.append('特殊逻辑章节缺少“既有功能影响”说明')

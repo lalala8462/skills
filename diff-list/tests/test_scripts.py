@@ -64,14 +64,14 @@ class DiffListTest(unittest.TestCase):
                       '### 3.1 整体流程说明':'请求后检查支付状态。',
                       '### 3.2 Mermaid 流程图':'```mermaid\nflowchart TD\n A[请求] --> B[状态]\n```',
                       '## 4. 特殊逻辑与测试关注点':'无',
-                      '## 5. 重点测试场景':'**测试点：** 状态检查\n**测试前提：** 渠道成功\n**预期结果：** 更新成功',
+                      '## 5. 测试用例导出':'Excel：webapi-cases.xlsx；用例数量：1',
                       '## 6. 验证情况':'仅完成静态分析。'}
             report='\n'.join(line+'\n'+sections.get(line,'') if line.startswith('#') else line
                              for line in template.splitlines())
             errors,_=val.validate(report,template,['webapi='+sha])
             self.assertEqual(errors,[])
-            errors,_=val.validate(report.replace('**预期结果：**','**其他：**'),template,[])
-            self.assertTrue(any('预期结果' in e for e in errors))
+            errors,_=val.validate(report.replace('用例数量：1','用例数量：零'),template,[])
+            self.assertTrue(any('用例数量' in e for e in errors))
             errors,_=val.validate(report+'\n待确认',template,[])
             self.assertTrue(any('禁止' in e for e in errors))
 
@@ -171,7 +171,7 @@ class DiffListTest(unittest.TestCase):
             '### 3.1 整体流程说明':'返回业务处理结果。',
             '### 3.2 Mermaid 流程图':'```mermaid\nflowchart TD\n A[请求] --> B[响应]\n```',
             '## 4. 特殊逻辑与测试关注点':'新增字段对旧调用方的影响。',
-            '## 5. 重点测试场景':'无',
+            '## 5. 测试用例导出':'无',
             '## 6. 验证情况':'仅静态分析。'
         }
         report='\n'.join(line+'\n'+blocks.get(line,'') if line.startswith('#') else line
@@ -230,15 +230,15 @@ class DiffListTest(unittest.TestCase):
             self.assertFalse(result['net_effect']['net_diff'])
             self.assertTrue(result['unselected_overlaps'])
 
-    def test_validate_misgrouped_tests(self):
+    def test_markdown_rejects_duplicated_excel_cases(self):
         val=module('validate_report')
         template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
-        report=template.replace('## 5. 重点测试场景',
-            '## 5. 重点测试场景\n**测试点：** A\n**测试前提：** A1\n'
-            '**测试点：** B\n**预期结果：** B2\n**测试前提：** B1\n'
+        report=template.replace('## 5. 测试用例导出',
+            '## 5. 测试用例导出\\nExcel：cases.xlsx；用例数量：2\\n'
+            '**测试点：** A\\n**测试前提：** A1\\n'
             '**预期结果：** A2')
         errors,_=val.validate(report,template,[])
-        self.assertTrue(any('唯一有效' in e for e in errors))
+        self.assertTrue(any('不得重复' in e for e in errors))
 
     def test_unicode_java_and_config_paths(self):
         collector=module('collect_git')
@@ -286,7 +286,7 @@ class DiffListTest(unittest.TestCase):
             '### 3.1 整体流程说明':'无',
             '### 3.2 Mermaid 流程图':'无',
             '## 4. 特殊逻辑与测试关注点':'无',
-            '## 5. 重点测试场景':'无',
+            '## 5. 测试用例导出':'无',
             '## 6. 验证情况':'已执行静态分析。'
         }
         report='\n'.join(line+'\n'+blocks.get(line,'') if line.startswith('#') else line
@@ -526,12 +526,61 @@ class AdditionalRegressionTests(unittest.TestCase):
         content=content.replace('### 3.1 整体流程说明','### 3.1 整体流程说明\n无')
         content=content.replace('### 3.2 Mermaid 流程图','### 3.2 Mermaid 流程图\n无')
         content=content.replace('## 4. 特殊逻辑与测试关注点','## 4. 特殊逻辑与测试关注点\n无')
-        content=content.replace('## 5. 重点测试场景','## 5. 重点测试场景\n无')
+        content=content.replace('## 5. 测试用例导出','## 5. 测试用例导出\n无')
         content=content.replace('## 6. 验证情况','## 6. 验证情况\n静态测试')
         errors,_=validator.validate(content,template,['webapi='+one,'adpts='+two])
         self.assertEqual(errors,[])
         errors,_=validator.validate(content,template,['webapi='+two])
         self.assertTrue(any('对应关系' in x for x in errors))
+
+    def test_export_test_cases_xlsx_structure(self):
+        import zipfile
+        from xml.etree import ElementTree as ET
+        exporter=module('export_test_cases')
+        rows=exporter.normalize({'cases':[
+            {'title':'旧版报文兼容','preconditions':'旧版报文可用',
+             'steps':['发起请求','检查响应'],'expected':['请求成功','字段正确']},
+            {'case_id':'X02','title':'文本防护','preconditions':'测试准备',
+             'steps':'=1+2','expected':'保持为文本'}]})
+        self.assertEqual(rows[0][0], 'DL0001')
+        self.assertEqual(rows[0][3], '1. 发起请求\\n2. 检查响应')
+        with tempfile.TemporaryDirectory() as td:
+            target=Path(td)/'cases.xlsx'
+            self.assertEqual(exporter.export(rows,target), 2)
+            with zipfile.ZipFile(target) as archive:
+                self.assertIsNone(archive.testzip())
+                root=ET.fromstring(archive.read('xl/worksheets/sheet1.xml'))
+                ns={'s':'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+                workbook_rows=root.findall('.//s:row',ns)
+                self.assertEqual(len(workbook_rows),3)
+                self.assertEqual(len(workbook_rows[0].findall('s:c',ns)),5)
+                self.assertIn('用例编号',archive.read('xl/worksheets/sheet1.xml').decode('utf-8'))
+                self.assertFalse(root.findall('.//s:f',ns))
+            with self.assertRaises(FileExistsError):
+                exporter.export(rows,target)
+
+    def test_export_test_cases_rejects_incomplete(self):
+        exporter=module('export_test_cases')
+        case={'title':'测试用例','preconditions':'准备',
+              'steps':['执行操作'],'expected':['符合预期']}
+        for payload in ({'cases':[]}, {'cases':[{**case,'steps':[]}]},
+                        {'cases':[{**case,'preconditions':''}]},
+                        {'cases':[{**case,'expected':[]}]},
+                        {'cases':[{**case,'case_id':'1'},{**case,'case_id':'1'}]}):
+            with self.assertRaises(ValueError):
+                exporter.normalize(payload)
+
+    def test_report_excel_summary_requires_count(self):
+        validator=module('validate_report')
+        template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
+        report=template.replace('## 5. 测试用例导出',
+            '## 5. 测试用例导出\\nExcel：cases.xlsx；用例数量：2')
+        errors,_=validator.validate(report,template,[])
+        self.assertFalse(any('测试用例导出章节' in err for err in errors))
+        invalid=report.replace('用例数量：2','用例数量：两条')
+        errors,_=validator.validate(invalid,template,[])
+        self.assertTrue(any('有效用例数量' in err for err in errors))
+
 
 if __name__=='__main__':
     unittest.main()
