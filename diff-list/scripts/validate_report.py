@@ -123,6 +123,13 @@ def validate(text,template,expected):
         counts=[len(re.findall(r'(?m)^\s*(?:\d+[.)]\s*)?\*\*'+lab+r'[:：]\*\*',tests)) for lab in LABELS]
         if len(set(counts))!=1:
             errors.append('测试点/测试前提/预期结果数量不一致')
+    special=body.get('## 4. 特殊逻辑与测试关注点','')
+    if special and special!='无' and not re.search(r'既有功能影响|历史功能影响',special):
+        errors.append('特殊逻辑章节缺少“既有功能影响”说明')
+    field_change = (body.get('### 2.1 需求改动','') + '\n' +
+                    body.get('### 2.2 表字段 DDL 修改',''))
+    if re.search(r'(?:新增|增加|修改|调整|删除|废弃).{0,20}(?:对外报文|请求字段|响应字段|数据库字段|表字段|DTO字段|接口字段|消息字段)',field_change) and special=='无':
+        errors.append('字段/接口契约变化时须在特殊逻辑章节说明既有功能影响')
     cfg=body.get('### 2.4 配置文件调整','')
     if cfg and cfg!='无' and not fenced_blocks(cfg):
         errors.append('配置文件有调整但缺少配置片段代码块')
