@@ -1,11 +1,11 @@
 ---
 name: diff-list
-description: "按指定 GitHub 或 GitLab 仓库及 Git 修订生成最终行为提测 Markdown，涵盖业务流程、特殊逻辑、DDL、DML、配置及高风险测试场景；Windows 10，Git 净差异与 Java 8 AST 候选由脚本提取。"
+description: "按指定 GitHub 或 GitLab 仓库及 Git 修订生成差异分析 Markdown 与重点测试用例 Excel，涵盖业务流程、特殊逻辑、DDL、DML、配置及高风险测试场景；Windows 10，Git 净差异与 Java 8 AST 候选由脚本提取。"
 ---
 
 # diff-list
 
-输入 GitHub 或 GitLab 仓库 URL 与对应 Git 提交号或明确比较范围；可以多项目。每个脚本调用在专用目录新建独立仓库副本，不检出文件、不复用缓存，也不访问本地业务工作区。**只读分析，不修业务代码、不执行 SQL、不提交 Git**。输出一份面向测试人员的 UTF-8 Markdown。
+输入 GitHub 或 GitLab 仓库 URL 与对应 Git 提交号或明确比较范围；可以多项目。每个脚本调用在专用目录新建独立仓库副本，不检出文件、不复用缓存，也不访问本地业务工作区。**只读分析，不修业务代码、不执行 SQL、不提交 Git**。输出差异分析 Markdown 和单独的重点测试用例 Excel，测试场景不在 Markdown 中重复。
 
 ## 执行
 
@@ -13,10 +13,10 @@ description: "按指定 GitHub 或 GitLab 仓库及 Git 修订生成最终行为
 2. `net_effect` 的 `composed` 为选中提交的机械补丁净效果，`no_net_change` 为无净变化，`review_required` 表示合成不可靠、必须核查依赖。`logic_candidates.py` 输出 AST 表达式/调用、分支、状态、异常等变化，以及配置键新增/修改/删除的风险候选、按方法汇总和跳过原因。独立调用候选仅表示语法上没有接收返回值，普通 void 或依靠副作用的调用也会命中。**候选不是精确类型绑定、真实调用证明、环境生效事实或验收预期**。
 3. 模型基于净差异、候选及 `references/analysis-checklist.md` 独立推导重点业务场景，再回到指定修订源码核实并补充脚本无法发现的行为；不能只把脚本候选整理成报告。按场景向下追踪涉及的嵌套数据、返回值、未改动的被调方法、DB/Redis、异常、重试和通知，向上追踪消费者；核实改动前行为、指定修订实际行为及已确认业务预期。候选和字面引用不是调用绑定，未追踪或跳过内容不得宣称已覆盖。代码与需求冲突时说明当前缺陷；关键业务预期不清时在对话中询问，不编造。
 4. **字段及既有功能影响必查**：对新增/删除/修改的对外请求与响应字段、DTO/VO、数据库表字段、Mapper/SQL、消息契约，追踪字段从输入到落库/回包/通知的实际映射，并检查旧调用方、历史数据、旧版本代码、既有查询/退款/回调及默认值/空值兼容。字段声明即使未产生 AST 候选也不能跳过；仅在影响确有依据时列重点测试，不臆测已兼容。细则见 `references/analysis-checklist.md`。
-5. 将上述结论与脚本结果交叉复核，检查关键入口、异步失败和配置契约，再按 `references/report-rules.md` 生成报告。**“特殊逻辑与测试关注点”须交代对既有功能的影响**；有实质回归风险时，“重点测试场景”用测试点/前提/预期描述。只列本次变更可能影响的历史业务，不铺开全量常规回归。
+5. 将上述结论与脚本结果交叉复核，检查关键入口、异步失败和配置契约，再按 `references/report-rules.md` 生成报告。**“特殊逻辑与测试关注点”须交代对既有功能的影响**。有实质回归风险时，基于已核实场景生成内部 JSON 用例数据（cases 数组，包含 title、preconditions、steps、expected，可提供 case_id），步骤和预期需具体、可执行、可判定，不得编造未核实的调用路径或配置。再运行 export_test_cases.py 将所有重点测试场景导出一份 Excel；不铺开全量普通回归。
 
 ## 文档与校验
 
-每次先读取 `assets/diff-list-template.md`，用 `init_report.py` 建文件，保留全部标题、无关章节写“无”。Mermaid 使用兼容 8.8.3 的 `flowchart TD` 或 `sequenceDiagram`；重点测试逐场景列 **测试点、测试前提、预期结果**，结果可观察可判定。不得写本机源码路径、行号/代码依据、未决项或真实密钥。报告包含完整 40 位修订 SHA、仓库相对脚本路径以及实际验证范围。
+每次先读取 `assets/diff-list-template.md`，用 `init_report.py` 建文件，保留全部标题、无关章节写“无”。Mermaid 使用兼容 8.8.3 的 `flowchart TD` 或 `sequenceDiagram`；重点用例只保存在 Excel，固定五列为 **用例编号、用例名称、前置条件、步骤描述、预期结果**。Markdown 第 5 章“测试用例导出”仅填写 Excel 文件名和“用例数量：N”（没有重点用例时写“无”），不能再次列出用例内容。不得写本机源码路径、行号/代码依据、未决项或真实密钥。报告包含完整 40 位修订 SHA、仓库相对脚本路径以及实际验证范围。
 
-完成报告正文后，使用 `append_run_dirs.py` 汇总本次 `collect_git.py`、`logic_candidates.py` 的 JSON 以及 `impact_candidates.py` 输出的所有新建仓库副本，在报告**最后（第 6 章）**列出准确目录及手动删除提醒，不自动清理。再运行 `validate_report.py`，核对项目与 SHA 的逐条对应关系、代码围栏、模板及测试标签；随后人工复核 Git 归属、AST/配置候选、业务语义及图文对应关系。默认写入 `G:\tmp`，不覆盖同名文件；最终交付路径、覆盖修订和真实验证范围。证据 JSON/AST 候选仅供内部分析，不复制到报告。
+模型生成并核实内部用例 JSON 后，先运行 `export_test_cases.py` 导出 Excel（不可覆盖同名文件；若无重点用例则不生成）；完成报告正文后，使用 `append_run_dirs.py` 汇总本次 `collect_git.py`、`logic_candidates.py` 的 JSON 以及 `impact_candidates.py` 输出的所有新建仓库副本，在报告**最后（第 6 章）**列出准确目录及手动删除提醒，不自动清理。再运行 `validate_report.py`，核对项目与 SHA 的逐条对应关系、代码围栏、模板及测试标签；随后人工复核 Git 归属、AST/配置候选、业务语义及图文对应关系。默认写入 `G:\tmp`，不覆盖同名文件；最终交付路径、覆盖修订和真实验证范围。证据 JSON/AST 候选仅供内部分析，不复制到报告。

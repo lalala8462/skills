@@ -1,6 +1,6 @@
 # diff-list（Windows 10）
 
-直接指定 GitHub 或 GitLab URL 和 Git 提交号/范围，Skill 输出一个提测 Markdown；每次脚本调用创建独立的无检出仓库副本，不访问本地业务工作区。要求 Git for Windows + Python 3.8+（标准库）；启用 Java AST 候选检查还需 **JDK 8 或更新版本**，并让 `javac` 和 `java` 可执行。私有 GitHub 或 GitLab 仓库使用本机 Git 凭据。
+直接指定 GitHub 或 GitLab URL 和 Git 提交号/范围，Skill 输出一份差异分析 Markdown 和单独的重点测试用例 Excel；每次脚本调用创建独立的无检出仓库副本，不访问本地业务工作区。要求 Git for Windows + Python 3.8+（标准库）；启用 Java AST 候选检查还需 **JDK 8 或更新版本**，并让 `javac` 和 `java` 可执行。私有 GitHub 或 GitLab 仓库使用本机 Git 凭据。
 
 ## Skill 当前实际工作流程
 
@@ -9,11 +9,16 @@ flowchart TD
     A["**1. 脚本固定取证**<br/>Git 净差异、Java AST 变化、配置变化、调用引用候选"]
     B["**2. 模型独立推导业务重点**<br/>结合风险检查清单及实际业务入口提出关键场景"]
     C["**3. 回到源码核实并交叉补充**<br/>嵌套对象、未修改的方法、历史功能、字段映射及上下游依赖"]
-    D["**4. 生成与校验最终报告**<br/>精选特殊逻辑和测试场景，校验 Markdown，附目录清理提醒"]
+    D["**4. 生成与校验最终交付物**<br/>差异 Markdown 与测试用例 Excel，附目录清理提醒"]
     A --> B --> C --> D
 ```
 
 脚本输出是分析线索，不等于已确认的业务结论；模型必须回到指定修订的源码核实，并补充脚本未覆盖的影响。
+## 交付内容
+
+- **差异分析 Markdown**：描述业务变化、DDL、DML、配置、特殊逻辑和历史功能影响。第 5 章只记录 Excel 文件名和用例数量，测试内容不在报告里重复。
+- **测试用例 Excel**：参考附件的“测试用例”工作表，固定五列：`用例编号`、`用例名称`、`前置条件`、`步骤描述`、`预期结果`；步骤与预期按顺序编号换行。
+
 ## 调用示例
 
 ```text
@@ -31,6 +36,7 @@ py -3 .\scripts\logic_candidates.py --repo https://github.com/lalala8462/webapi 
 py -3 .\scripts\logic_candidates.py --repo https://github.com/lalala8462/adpts --base release-1 --head release-2 --output G:\tmp\adpts-logic.json
 py -3 .\scripts\impact_candidates.py --repo https://github.com/lalala8462/webapi --rev YOUR_SHA --symbol processPayment
 py -3 .\scripts\init_report.py --outdir G:\tmp --filename test-report.md
+py -3 .\scripts\export_test_cases.py --input G:\tmp\test-cases.json --output G:\tmp\test-cases.xlsx
 py -3 .\scripts\append_run_dirs.py G:\tmp\test-report.md --source G:\tmp\webapi-evidence.json --source G:\tmp\webapi-logic.json
 py -3 .\scripts\validate_report.py G:\tmp\test-report.md --expect webapi=YOUR_FULL_40_CHARACTER_SHA
 py -3 -m unittest discover -s tests -v
@@ -47,7 +53,18 @@ py -3 -m unittest discover -s tests -v
 | `logic_candidates.py` / `java/JavaLogicAst.java` | 比较 Java 8 AST 的分支、调用、赋值、计算和返回值变化；对重命名做保守的节点匹配 |
 | `config_candidates.py` | 对比 properties、普通 YAML 标量及 XML 属性映射的键值新增、删除与变更 |
 | `impact_candidates.py` | 指定修订的符号字面引用检索，不进行类型精确绑定 |
-| `init_report.py` / `append_run_dirs.py` / `validate_report.py` | 初始化报告、追加本次新建目录及手动删除提示、逐场景校验 |
+| `export_test_cases.py` | 将模型核实的结构化 JSON 用例导出为五列 XLSX（Python 标准库，无额外依赖） |
+| `init_report.py` / `append_run_dirs.py` / `validate_report.py` | 初始化差异报告、追加目录清理提示、校验结构和 Excel 摘要 |
+
+## 测试用例数据及导出
+
+模型根据变更影响及实际源码生成临时 `test-cases.json`，格式为：
+
+```json
+{"cases":[{"case_id":"DL0001","title":"旧报文兼容性验证","preconditions":"已具备旧版请求及测试环境","steps":["使用旧版报文发起请求","检查返回报文"],"expected":["请求满足已确认接口契约","原有响应字段保持正确"]}]}
+```
+
+`case_id` 可以省略，由脚本自动生成 `DL0001` 等编号。`steps`、`expected` 支持非空字符串或字符串数组；数组中的各项自动加序号。缺少可执行步骤、前提、预期或编号重复时导出失败，不自动补造动作。无重点场景时第 5 章填“无”，不生成 Excel。Excel 默认输出到 `G:\tmp`，已有文件不覆盖。内部 JSON 不应作为最终交付物。
 
 ## AST 候选规则和限制
 
