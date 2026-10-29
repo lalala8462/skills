@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from coverage_constraints import check_source_coverage
 
-VERSION = '1.1.0'
+VERSION = '1.2.0'
 PURPOSES = ('acceptance', 'core_regression', 'related_regression', 'boundary')
 PURPOSE_NAMES = ('需求验收', '既有核心流程回归', '关联回归', '业务规则与边界验证')
 RULE_KINDS = {'behavior', 'source', 'selection', 'configuration', 'contract',
@@ -164,6 +164,9 @@ def compile_plan(raw, analysis=None):
     equivalents = registry(plan.get('equivalences', []), 'equivalence')
     projects, facts, obligations = {}, {}, {}
     if analysis is not None:
+        from analysis_engine import VERSION as ANALYZER_VERSION
+        if type(analysis.get('schema_version'))!=int or analysis['schema_version']!=1 or analysis.get('analyzer_version')!=ANALYZER_VERSION:
+            raise ValueError('analysis must be regenerated with the current analyzer')
         if analysis.get('analysis_id') != analysis_id:
             raise ValueError('test points belong to a different analysis')
         for project in analysis['projects']:
@@ -346,8 +349,10 @@ def verify_catalog(catalog, analysis=None):
 
 def validate_cases(data, analysis=None):
     """校验唯一承载、全部数据组、结构断言及原始覆盖要求的保留。"""
-    if data.get('schema_version') != 2 or any(k in data for k in ('cases', 'focus_cases', 'regular_cases')):
-        raise ValueError('four-purpose cases require schema_version=2 without legacy groups')
+    fields(data, ('schema_version','test_point_catalog','purpose_cases'),
+           ('schema_version','test_point_catalog','purpose_cases'), 'current four-purpose cases')
+    if type(data['schema_version'])!=int or data['schema_version'] != 2:
+        raise ValueError('current four-purpose cases require schema_version=2')
     catalog = verify_catalog(data.get('test_point_catalog'), analysis)
     groups = data.get('purpose_cases')
     if not isinstance(groups, dict) or set(groups) != set(PURPOSES):
@@ -358,8 +363,8 @@ def validate_cases(data, analysis=None):
         if not isinstance(groups[purpose], list):
             raise ValueError('purpose case group must be an array')
         for case in groups[purpose]:
-            if not isinstance(case, dict):
-                raise ValueError('case must be an object')
+            case_fields=('case_id','title','preconditions','steps','expected','observable_evidence','coverage_links','test_point_links')
+            fields(case,case_fields,case_fields,'case')
             links = case.get('test_point_links')
             if not isinstance(links, list) or not links:
                 raise ValueError('case requires test_point_links')
@@ -369,6 +374,9 @@ def validate_cases(data, analysis=None):
             coverage_links = case.get('coverage_links', [])
             if not isinstance(coverage_links, list) or any(not isinstance(l, dict) for l in coverage_links):
                 raise ValueError('coverage_links must be an array of objects')
+            for coverage in coverage_links:
+                coverage_fields=('obligation_id','condition','assertion','fact_ids','evidence_ids','observable_evidence_indices')
+                fields(coverage,coverage_fields,coverage_fields,'coverage link')
             linked_obligations = {l.get('obligation_id') for l in coverage_links}
             expected_obligations = set()
             for link in links:

@@ -6,7 +6,7 @@ import re
 from functools import lru_cache
 from source_index import stable, source_lines
 
-VERSION = '1.1.0'
+VERSION = '1.2.0'
 COMMON_RULES = dict(version=1, config_annotations=['Value', 'ConfigurationProperties'],
                     config_scopes={}, aliases=['JSONField', 'JsonProperty'], limits={})
 STANDARD_TYPES = set('String Object Boolean Integer Long Double Float Short Byte Character Math System '

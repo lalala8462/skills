@@ -27,15 +27,14 @@ def checked_run_dir(clone):
 
 def input_clones(source):
     payload = json.loads(Path(source).read_text(encoding='utf-8-sig'))
-    if not isinstance(payload, dict):
-        raise ValueError('Evidence JSON must be an object')
-    if isinstance(payload.get('analysis_clone'), str):
-        return [payload['analysis_clone']]
+    from analysis_engine import VERSION
+    if not isinstance(payload,dict) or type(payload.get('schema_version'))!=int or payload['schema_version']!=1 or payload.get('analyzer_version')!=VERSION:
+        raise ValueError('source must be current analysis.json')
     projects = payload.get('projects')
-    if isinstance(projects, list):
-        return [entry.get('analysis_clone',entry.get('repository')) for entry in projects
-                if isinstance(entry, dict) and isinstance(entry.get('analysis_clone',entry.get('repository')), str)]
-    raise ValueError('Evidence JSON has no analysis clone: ' + str(source))
+    if not isinstance(projects,list) or not projects or any(not isinstance(entry,dict) or
+            not isinstance(entry.get('analysis_clone'),str) or not entry['analysis_clone'] for entry in projects):
+        raise ValueError('analysis projects must contain analysis_clone')
+    return [entry['analysis_clone'] for entry in projects]
 
 
 def append(report, sources, clones):
@@ -62,8 +61,8 @@ def append(report, sources, clones):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('report')
-    parser.add_argument('--source', action='append', default=[])
-    parser.add_argument('--clone', action='append', default=[])
+    parser.add_argument('--source', action='append', default=[],help='本次当前版本生成的 analysis.json，可重复')
+    parser.add_argument('--clone', action='append', default=[],help='本次独立补查创建的隔离仓库目录，可重复')
     args = parser.parse_args(argv)
     try:
         for path in append(args.report, args.source, args.clone):

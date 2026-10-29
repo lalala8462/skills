@@ -1,6 +1,6 @@
 # 结构化测试点、四类归属与用例契约
 
-标准用例流程先编译测试点，再编写用例。不要先生成自由文本再让模型语义去重。`analysis.json` 的原始覆盖义务继续保留；结构化测试点不能替代源码证据与覆盖校验。
+每次由当前版本采集和分析生成本次材料，标准用例流程先编译测试点，再编写用例。不要先生成自由文本再让模型语义去重。`analysis.json` 的原始覆盖义务继续保留；结构化测试点不能替代源码证据与覆盖校验。
 
 ## 四类目的
 
@@ -86,7 +86,7 @@ data_groups 是角色到实例值的对象数组。角色要与条件及真实�
 | argument_source | before/after 值不一致、请求缺省或记录字段 null/空；source_is 断言对应 after 来源 |
 | switch_case | selector 等于具体 case；default 使用不在显式 case 集合中的条件 |
 
-源码条件与原始、等价后的条件都要一致；等价声明不能覆盖明确数量或状态约束。观察关联必须指向该测试点实际引用的观察对象。配置启停值和其余只要求源码复核的维度不自动推导业务断言；自然语言步骤仍需核实。分析器/编译器1.1.0与旧版本材料不混用。
+源码条件与原始、等价后的条件都要一致；等价声明不能覆盖明确数量或状态约束。观察关联必须指向该测试点实际引用的观察对象。配置启停值和其余只要求源码复核的维度不自动推导业务断言；自然语言步骤仍需核实。分析器/编译器版本必须与本次运行代码一致，不支持历史材料迁移。
 
 编译命令：
 
@@ -98,7 +98,7 @@ py -3 .\scripts\test_points.py --input G:\tmp\point-plan.json --analysis G:\tmp\
 
 ## 用例输入与覆盖校验
 
-新输入使用 schema_version=2，把完整编译目录放入 test_point_catalog。purpose_cases 必须包含四个数组，键为 acceptance/core_regression/related_regression/boundary。每条仍保留 case_id/title/preconditions/steps/expected/observable_evidence 和原有 coverage_links；不再用模型自由填写的 coverage_key 决定身份。
+用例输入只使用 schema_version=2，把完整编译目录放入 test_point_catalog。purpose_cases 必须包含四个数组，键为 acceptance/core_regression/related_regression/boundary。每条必须有 case_id/title/preconditions/steps/expected/observable_evidence/coverage_links/test_point_links；身份只由结构化测试点决定。
 
 新增关联示例：
 
@@ -138,9 +138,9 @@ py -3 .\scripts\test_points.py --input G:\tmp\point-plan.json --analysis G:\tmp\
 
 导出器把固定条件、全部合并数据组补入“前置条件”，把结构断言补入“预期结果”，避免只有内部挂号、可读用例却没有实际数据和断言。自然语言步骤和额外预期仍需核实，结构校验不证明其语义正确或测试已执行。
 
-## 输出与兼容
+## 输出与交付
 
-新标准 Excel 按固定顺序生成四个工作表：需求验收、既有核心流程回归、关联回归、业务规则与边界验证。五列不变；不增加内部编号/证据列。所有类为空时报告写“无”，不导出 Excel。
+Excel 按固定顺序生成四个工作表：需求验收、既有核心流程回归、关联回归、业务规则与边界验证。五列不变；不增加内部编号/证据列。所有类为空时报告写“无”，不导出 Excel。
 
 Markdown 第5章只列文件及四类数量、总数，不复制用例：
 
@@ -148,4 +148,4 @@ Markdown 第5章只列文件及四类数量、总数，不复制用例：
 Excel：test-cases.xlsx；需求验收用例数量：2；既有核心流程回归用例数量：1；关联回归用例数量：1；业务规则与边界验证用例数量：3；总用例数量：7
 ```
 
-旧 cases 或 focus_cases/regular_cases 输入及两个工作表继续兼容，其通过不表示完成新测试点去重与四类归属校验。旧两组关联1.1.0分析材料时，coverage_links 须补 trigger_conditions（同 conditions 数组）及可选 source_bindings，观察对象补 constraint，执行相同源码条件/断言检查；导出到原五列。没有分析材料时保留原格式检查。新输入禁止混用旧数组。编译与导出均只读分析材料，不重新克隆、修改业务项目、提交或推送。
+只接受本文定义的当前格式，根对象、用例和覆盖关联中的历史字段或未知字段直接报错，不执行自动转换、文本去重或旧工作表导出。Excel 导出强制提供本次 analysis/review，报告校验强制提供 analysis/review/cases；内部结构检查不能替代源码覆盖校验。编译与导出只读本次分析材料，不重新克隆、修改业务项目、提交或推送。

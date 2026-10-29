@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Static report validator: structure and hygiene, not semantic/Mermaid parsing."""
+"""校验报告结构、固定源码证据和覆盖声明；不证明测试执行或 Mermaid 渲染。"""
 import argparse
 import json
 import re
@@ -143,10 +143,9 @@ def validate(text,template,expected):
         if not re.search(r'\S+\.xlsx\b',export_section,re.I):
             errors.append('测试用例导出章节缺少 Excel 文件名')
         counts = {}
-        purpose_labels=('需求验收用例数量','既有核心流程回归用例数量','关联回归用例数量','业务规则与边界验证用例数量')
-        labels=purpose_labels if any(label in export_section for label in purpose_labels) else ('重点用例数量','常规用例数量')
-        if labels==purpose_labels and any(label in export_section for label in ('重点用例数量','常规用例数量')):
-            errors.append('测试用例导出章节不能混用四类和旧两类数量')
+        labels=('需求验收用例数量','既有核心流程回归用例数量','关联回归用例数量','业务规则与边界验证用例数量')
+        if any(label in export_section for label in ('重点用例数量','常规用例数量')):
+            errors.append('测试用例导出章节只接受当前四类数量')
         for label in labels+('总用例数量',):
             found = re.search(re.escape(label) + r'\s*[:：]\s*(0|[1-9]\d*)(?!\d)', export_section)
             if not found:
@@ -181,26 +180,22 @@ def main(argv=None):
     p.add_argument('report')
     p.add_argument('--template',default=str(Path(__file__).resolve().parents[1]/'assets'/'diff-list-template.md'))
     p.add_argument('--expect',action='append',default=[],help='项目名=40位SHA; repeatable')
-    p.add_argument('--analysis',help='固定取证及覆盖分析结果')
-    p.add_argument('--review',help='模型源码补查与处置记录')
-    p.add_argument('--cases',help='带结构化覆盖关联的用例JSON')
+    p.add_argument('--analysis',required=True,help='本次当前版本生成的固定取证结果')
+    p.add_argument('--review',required=True,help='本次模型源码补查与处置记录')
+    p.add_argument('--cases',required=True,help='当前四类用例JSON')
     a=p.parse_args(argv)
     try:
         raw=Path(a.report).read_bytes()
         text=raw.decode('utf-8-sig')
         template=Path(a.template).read_text(encoding='utf-8-sig')
         errors,warnings=validate(text,template,a.expect)
-        if any((a.analysis,a.review,a.cases)):
-            if not all((a.analysis,a.review,a.cases)):
-                errors.append('--analysis、--review、--cases 必须一起提供')
-            else:
-                from validate_analysis import validate_files
-                coverage_errors,coverage_warnings=validate_files(a.analysis,a.review,a.cases)
-                errors.extend(coverage_errors);warnings.extend(coverage_warnings)
-                if not coverage_errors:
-                    case_data=json.loads(Path(a.cases).read_text(encoding='utf-8-sig'))
-                    errors.extend(validate_case_counts(text,case_data))
-                    warnings.append('覆盖声明校验通过，不代表业务测试已执行')
+        from validate_analysis import validate_files
+        coverage_errors,coverage_warnings=validate_files(a.analysis,a.review,a.cases)
+        errors.extend(coverage_errors);warnings.extend(coverage_warnings)
+        if not coverage_errors:
+            case_data=json.loads(Path(a.cases).read_text(encoding='utf-8-sig'))
+            errors.extend(validate_case_counts(text,case_data))
+            warnings.append('覆盖声明校验通过，不代表业务测试已执行')
     except (OSError,UnicodeError,ValueError,KeyError,TypeError,IndexError) as exc:
         print('ERROR: '+str(exc),file=sys.stderr)
         return 2
@@ -212,16 +207,9 @@ def main(argv=None):
 
 def validate_case_counts(text,cases):
     """有用例材料时，报告数量必须与实际导出结果一致。"""
-    from export_test_cases import normalize
-    if cases.get('schema_version')==2:
-        from test_points import PURPOSES,PURPOSE_NAMES,validate_cases
-        validate_cases(cases)
-        counts={name+'用例数量':len(cases['purpose_cases'][p]) for p,name in zip(PURPOSES,PURPOSE_NAMES)}
-    elif not cases.get('focus_cases') and not cases.get('regular_cases'):
-        counts={'重点用例数量':0,'常规用例数量':0}
-    else:
-        rows=normalize(cases)
-        counts={'重点用例数量':len(rows['focus']),'常规用例数量':len(rows['regular'])}
+    from test_points import PURPOSES,PURPOSE_NAMES,validate_cases
+    validate_cases(cases)
+    counts={name+'用例数量':len(cases['purpose_cases'][p]) for p,name in zip(PURPOSES,PURPOSE_NAMES)}
     section=sections(text,[]).get('## 5. 测试用例导出','')
     total=sum(counts.values())
     if total==0:

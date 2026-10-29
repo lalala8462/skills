@@ -1,5 +1,7 @@
 # 固定分析与覆盖契约
 
+每次使用当前版本重新采集、分析并生成完整材料，不迁移或接受旧版分析数据。
+
 本文件用于内部分析。源码位置、内部证据编号及未解析明细不复制到用户报告；报告验证情况如实说明静态边界。
 
 ## 输入与修订
@@ -39,12 +41,11 @@
 
 ## 用例覆盖关联
 
-标准用例先按 [测试点契约](test-point-contract.md) 编译结构化目录，使用 schema_version=2、test_point_catalog 和 purpose_cases 四类数组；每条有 test_point_links 及以下 coverage_links。旧 focus_cases/regular_cases 继续兼容，五列内容保持。旧结构示例：
+标准用例先按 [测试点契约](test-point-contract.md) 编译结构化目录，使用 schema_version=2、test_point_catalog 和 purpose_cases 四类数组；每条有 test_point_links 及以下 coverage_links。五列内容保持。单条用例的覆盖关联片段：
 
 ```json
 {
-  "case_id":"FOCUS-001",
-  "coverage_key":"business.branch.empty",
+  "case_id":"AC-001",
   "coverage_links":[{
     "obligation_id":"复制必要覆盖项的id",
     "fact_ids":["复制该项fact_ids"],
@@ -58,7 +59,7 @@
 
 condition/assertion 按覆盖项原样关联，不能自行换成另一个分支；数组位置从0开始，指向实际 observable_evidence。已提取的错误文本必须出现在该用例预期或所引用观察断言中。一个用例可关联多个确实覆盖的项目；不要求为每个语法提示单独建用例，也不能靠挂编号证明实际步骤已经完整覆盖。
 
-新四类输入还会按测试点契约，将可解析的源码触发条件与真实测试点谓词比较，并核对明确来源/错误断言及观察关联。仅复制 condition/assertion 元数据不能替代测试点条件。旧两组关联1.1.0分析材料时，也须在 coverage_links 填 trigger_conditions（同测试点条件数组）及可选 source_bindings，在对应 observable_evidence 填 constraint，执行同样的源码约束检查；无分析材料时保留原格式兼容。分析器与测试点编译器当前版本1.1.0，版本不匹配必须重新生成材料。
+按测试点契约，将可解析的源码触发条件与真实测试点谓词比较，并核对明确来源/错误断言及观察关联。仅复制 condition/assertion 元数据不能替代测试点条件。只接受当前四类用例与当前分析器/编译器版本，其他格式或版本直接拒绝。
 
 ## 补查与处置
 
@@ -85,6 +86,6 @@ status 只允许 not_applicable（有证据说明不适用）或 reviewed_bounda
 
 ## 完成校验
 
-校验依次检查快照/版本身份、Git 文件归属与内容、事实和覆盖引用、测试点确定性重算及四类唯一归属、用例格式与去重后覆盖、例外证据、剩余必要覆盖项。旧用例格式只检查原覆盖契约，不宣称新去重通过；不带分析参数时不验证源码与快照。带参数时必须完整提供 analysis/review/cases；导出失败不生成新的 Excel。
+校验依次检查快照/版本身份、Git 文件归属与内容、事实和覆盖引用、测试点确定性重算及四类唯一归属、用例格式与去重后覆盖、例外证据、剩余必要覆盖项。报告交付校验必须完整提供本次 analysis/review/cases；Excel 导出必须提供 analysis/review；导出失败不生成新的 Excel。
 
 PASS 只说明静态证据和结构化覆盖声明可追溯、一致、无未处置项；不能证明模型写出的所有文字正确、动态调用绑定正确、用例确实执行或业务需求成立。报告必须继续区分静态分析、构建测试与真实联调。

@@ -1,4 +1,5 @@
 """Run: py -3 -m unittest discover -s tests -v"""
+import copy
 import importlib.util
 import json
 import os
@@ -64,7 +65,7 @@ class DiffListTest(unittest.TestCase):
                       '### 3.1 整体流程说明':'请求后检查支付状态。',
                       '### 3.2 Mermaid 流程图':'```mermaid\nflowchart TD\n A[请求] --> B[状态]\n```',
                       '## 4. 特殊逻辑与测试关注点':'无',
-                      '## 5. 测试用例导出':'Excel：webapi-cases.xlsx；重点用例数量：1；常规用例数量：0；总用例数量：1',
+                      '## 5. 测试用例导出':'Excel：webapi-cases.xlsx；需求验收用例数量：1；既有核心流程回归用例数量：0；关联回归用例数量：0；业务规则与边界验证用例数量：0；总用例数量：1',
                       '## 6. 验证情况':'仅完成静态分析。'}
             report='\n'.join(line+'\n'+sections.get(line,'') if line.startswith('#') else line
                              for line in template.splitlines())
@@ -157,7 +158,7 @@ class DiffListTest(unittest.TestCase):
                     '--output',str(Path(td)/'bad.json')]),2)
 
 
-    def test_report_requires_legacy_function_impact(self):
+    def test_report_requires_existing_function_impact(self):
         val=module('validate_report')
         template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
         sha='a'*40
@@ -312,7 +313,8 @@ class DiffListTest(unittest.TestCase):
                 report=Path(td)/'report.md'
                 report.write_text('# Report\n## 6. 验证情况\n静态分析。\n',encoding='utf-8')
                 evidence=Path(td)/'evidence.json'
-                evidence.write_text(json.dumps({'analysis_clone':str(clone)}),
+                evidence.write_text(json.dumps({'schema_version':1,'analyzer_version':module('analysis_engine').VERSION,
+                    'projects':[{'analysis_clone':str(clone)}]}),
                                     encoding='utf-8')
                 dirs=writer.append(report,[str(evidence)],[str(clone)])
                 self.assertEqual(dirs,[str(clone.parent)])
@@ -320,6 +322,16 @@ class DiffListTest(unittest.TestCase):
                 self.assertIn('请后续手动删除',report.read_text(encoding='utf-8'))
                 with self.assertRaises(ValueError):
                     writer.append(report,[str(evidence)],[])
+
+    def test_append_run_dirs_rejects_previous_metadata_shapes(self):
+        writer=module('append_run_dirs')
+        with tempfile.TemporaryDirectory() as td:
+            source=Path(td)/'analysis.json'
+            for payload in ({'analysis_clone':'unused'},
+                    {'schema_version':1,'analyzer_version':module('analysis_engine').VERSION,
+                     'projects':[{'repository':'unused'}]}):
+                source.write_text(json.dumps(payload),encoding='utf-8')
+                with self.assertRaises(ValueError):writer.input_clones(source)
 
     def test_range_long_paths_capture_java_and_config(self):
         collector = module('collect_git')
@@ -676,22 +688,25 @@ class AdditionalRegressionTests(unittest.TestCase):
         errors,_=validator.validate(content,template,['webapi='+two])
         self.assertTrue(any('对应关系' in x for x in errors))
 
+    def export_input(self,raw=None):
+        from test_test_points import analysis,plan,cases
+        from test_points import compile_plan
+        return cases(compile_plan(raw or plan(),analysis()))
+
     def test_export_test_cases_xlsx_structure(self):
         import zipfile
         from xml.etree import ElementTree as ET
-        exporter=module('export_test_cases')
-        rows=exporter.normalize({'cases':[
-            {'title':'旧版报文兼容','preconditions':'旧版报文可用',
-             'steps':['发起请求','检查响应'],'expected':['请求成功','字段正确'],
-             'observable_evidence':[{'surface':'接口','target':'测试响应体状态字段','assertion':'status=SUCCESS，订单号与请求一致'}]},
-            {'case_id':'X02','title':'文本防护','preconditions':'测试准备',
-             'steps':'=1+2','expected':'保持为文本',
-             'observable_evidence':[{'surface':'文件','target':'导出单元格 D3','assertion':'文本内容保持 =1+2，不包含 Excel 公式节点'}]}]})
-        self.assertEqual(rows[0][0], 'DL0001')
-        self.assertEqual(rows[0][3], '1. 发起请求\n2. 检查响应')
+        from test_test_points import plan
+        raw=plan();other=copy.deepcopy(raw['candidates'][0]);other['id']='second'
+        other['entry']['target']='POST /refund/check';raw['candidates'].append(other)
+        data=self.export_input(raw)
+        cases=data['purpose_cases']['acceptance']
+        cases[0]['steps']=['发起请求','检查响应'];cases[1]['steps']='=1+2'
+        exporter=module('export_test_cases');rows=exporter.normalize(data)
+        self.assertEqual(rows['purposes']['acceptance'][0][3],'1. 发起请求\n2. 检查响应')
         with tempfile.TemporaryDirectory() as td:
             target=Path(td)/'cases.xlsx'
-            self.assertEqual(exporter.export(rows,target), 2)
+            self.assertEqual(exporter.export(rows,target)['total'],2)
             with zipfile.ZipFile(target) as archive:
                 self.assertIsNone(archive.testzip())
                 root=ET.fromstring(archive.read('xl/worksheets/sheet1.xml'))
@@ -699,156 +714,98 @@ class AdditionalRegressionTests(unittest.TestCase):
                 workbook_rows=root.findall('.//s:row',ns)
                 self.assertEqual(len(workbook_rows),3)
                 self.assertEqual(len(workbook_rows[0].findall('s:c',ns)),5)
-                self.assertIn('用例编号',archive.read('xl/worksheets/sheet1.xml').decode('utf-8'))
+                self.assertIn('=1+2',archive.read('xl/worksheets/sheet1.xml').decode('utf-8'))
                 self.assertFalse(root.findall('.//s:f',ns))
-            with self.assertRaises(FileExistsError):
-                exporter.export(rows,target)
+            with self.assertRaises(FileExistsError):exporter.export(rows,target)
 
-    def test_export_test_cases_rejects_incomplete(self):
+    def test_export_rejects_incomplete_current_cases(self):
         exporter=module('export_test_cases')
-        case={'title':'测试用例','preconditions':'准备',
-              'steps':['执行操作'],'expected':['符合预期'],
-              'observable_evidence':[{'surface':'接口','target':'测试响应体状态字段','assertion':'status=SUCCESS，订单号与请求一致'}]}
-        for payload in ({'cases':[]}, {'cases':[{**case,'steps':[]}]},
-                        {'cases':[{**case,'preconditions':''}]},
-                        {'cases':[{**case,'expected':[]}]},
-                        {'cases':[{**case,'case_id':'1'},{**case,'case_id':'1'}]}):
-            with self.assertRaises(ValueError):
-                exporter.normalize(payload)
+        for field,value in [('case_id',''),('steps',[]),('preconditions',''),('expected',[])]:
+            data=self.export_input();data['purpose_cases']['acceptance'][0][field]=value
+            with self.assertRaises(ValueError):exporter.normalize(data)
 
-    def test_report_excel_summary_requires_count(self):
-        validator=module('validate_report')
-        template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
-        report=template.replace('## 5. 测试用例导出',
-            '## 5. 测试用例导出\nExcel：cases.xlsx；重点用例数量：1；常规用例数量：1；总用例数量：2')
+    def test_old_case_formats_and_coverage_fields_are_rejected(self):
+        exporter=module('export_test_cases')
+        for data in ({'cases':[]},{'focus_cases':[],'regular_cases':[]}):
+            with self.assertRaisesRegex(ValueError,'current four-purpose cases'):exporter.normalize(data)
+        for field in ('coverage_key','coverage_keys'):
+            data=self.export_input();data['purpose_cases']['acceptance'][0][field]='unused'
+            with self.assertRaisesRegex(ValueError,'unsupported fields'):exporter.normalize(data)
+        data=self.export_input();data['purpose_cases']['acceptance'][0]['coverage_links'][0]['trigger_conditions']=[]
+        with self.assertRaisesRegex(ValueError,'unsupported fields'):exporter.normalize(data)
+
+    def test_delivery_commands_require_current_analysis_material(self):
+        with tempfile.TemporaryDirectory() as td:
+            out=Path(td)/'cases.xlsx'
+            for script,args in [('export_test_cases.py',['--input','cases.json','--output',str(out)]),
+                                ('validate_report.py',['report.md'])]:
+                result=subprocess.run([sys.executable,'-B',str(ROOT/'scripts'/script),*args],capture_output=True)
+                self.assertEqual(result.returncode,2)
+                self.assertIn(b'--analysis',result.stderr)
+                self.assertFalse(out.exists())
+
+    def test_report_excel_summary_requires_current_counts(self):
+        validator=module('validate_report');template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
+        summary='Excel：cases.xlsx；需求验收用例数量：1；既有核心流程回归用例数量：0；关联回归用例数量：0；业务规则与边界验证用例数量：0；总用例数量：1'
+        report=template.replace('## 5. 测试用例导出','## 5. 测试用例导出\n'+summary)
         errors,_=validator.validate(report,template,[])
         self.assertFalse(any('测试用例导出章节' in err for err in errors))
-        invalid=report.replace('总用例数量：2','总用例数量：两条')
-        errors,_=validator.validate(invalid,template,[])
+        errors,_=validator.validate(report.replace('总用例数量：1','总用例数量：两条'),template,[])
         self.assertTrue(any('总用例数量' in err for err in errors))
+        old=report.replace(summary,'Excel：cases.xlsx；重点用例数量：1；常规用例数量：0；总用例数量：1')
+        errors,_=validator.validate(old,template,[])
+        self.assertTrue(any('只接受当前四类数量' in err for err in errors))
 
-
-    def test_two_sheet_dedup(self):
+    def test_four_sheets_keep_empty_groups_and_valid_xml(self):
         import zipfile
         from xml.etree import ElementTree as ET
-        exporter=module('export_test_cases')
-        def case(title, key):
-            return {'title':title,'preconditions':'测试数据已准备',
-                    'steps':['发起请求','检查结果'],'expected':['符合预期'],
-                    'coverage_key':key,
-                    'observable_evidence':[{'surface':'接口','target':'测试响应体状态字段','assertion':'status=SUCCESS，订单号与请求一致'}]}
-        data=exporter.normalize({'focus_cases':[case('重试幂等','refund.retry')],
-                                 'regular_cases':[case('常规重试','refund.retry'),
-                                                  case('正常退款','refund.basic')]})
-        self.assertEqual(data['deduplicated'],1)
-        self.assertEqual(len(data['regular']),1)
-        self.assertEqual(data['focus'][0][0],'DL-F0001')
-        self.assertEqual(data['regular'][0][0],'DL-N0001')
+        from test_points import PURPOSE_NAMES
+        exporter=module('export_test_cases');rows=exporter.normalize(self.export_input())
         with tempfile.TemporaryDirectory() as td:
-            target=Path(td)/'cases.xlsx'
-            counts=exporter.export(data,target)
-            self.assertEqual((counts['focus'],counts['regular'],counts['total']), (1,1,2))
+            target=Path(td)/'cases.xlsx';counts=exporter.export(rows,target)
+            self.assertEqual((counts['acceptance'],counts['core_regression'],counts['total']),(1,0,1))
             with zipfile.ZipFile(target) as archive:
-                self.assertIsNone(archive.testzip())
                 for name in archive.namelist():
-                    if name.endswith(('.xml','.rels')):
-                        ET.fromstring(archive.read(name))
+                    if name.endswith(('.xml','.rels')):ET.fromstring(archive.read(name))
                 ns={'x':'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
                 workbook=ET.fromstring(archive.read('xl/workbook.xml'))
-                names=[item.attrib['name'] for item in workbook.findall('.//x:sheet',ns)]
-                self.assertEqual(names,['重点测试用例','常规功能用例'])
-                for n in (1,2):
+                self.assertEqual([item.attrib['name'] for item in workbook.findall('.//x:sheet',ns)],list(PURPOSE_NAMES))
+                for n in range(1,5):
                     sheet=ET.fromstring(archive.read('xl/worksheets/sheet{}.xml'.format(n)))
-                    self.assertEqual(len(sheet.findall('.//x:row',ns)),2)
-                    self.assertFalse(sheet.findall('.//x:f',ns))
-            with self.assertRaises(FileExistsError):
-                exporter.export(data,target)
+                    self.assertEqual(len(sheet.findall('.//x:row',ns)),2 if n==1 else 1)
 
-    def test_dual_sheet_partial_overlap_and_empty_focus(self):
-        import zipfile
+    def test_duplicate_case_ids_are_rejected(self):
+        from test_test_points import plan
+        raw=plan();other=copy.deepcopy(raw['candidates'][0]);other['id']='second'
+        other['entry']['target']='POST /refund/check';raw['candidates'].append(other)
+        data=self.export_input(raw);rows=data['purpose_cases']['acceptance']
+        rows[1]['case_id']=rows[0]['case_id']
+        with self.assertRaisesRegex(ValueError,'duplicate or multiline case_id'):module('export_test_cases').normalize(data)
+
+    def test_observable_evidence_required_for_current_cases(self):
         exporter=module('export_test_cases')
-        case={'title':'核心','preconditions':'前提','steps':['执行'],
-              'expected':['状态正确'],'coverage_key':'basic',
-              'observable_evidence':[{'surface':'接口','target':'测试响应体状态字段','assertion':'status=SUCCESS，订单号与请求一致'}]}
-        with self.assertRaisesRegex(ValueError,'partially overlaps'):
-            exporter.normalize({'focus_cases':[case],
-                'regular_cases':[{**case,'title':'多覆盖','coverage_keys':['basic','other']}]})
-        with self.assertRaisesRegex(ValueError,'duplicate key'):
-            exporter.normalize({'focus_cases':[case,{**case,'title':'另一重点'}],
-                                'regular_cases':[]})
-        payload=exporter.normalize({'focus_cases':[],'regular_cases':[case]})
-        with tempfile.TemporaryDirectory() as td:
-            target=Path(td)/'normal.xlsx'
-            counts=exporter.export(payload,target)
-            self.assertEqual((counts['focus'],counts['regular']), (0,1))
-            with zipfile.ZipFile(target) as archive:
-                self.assertIn('常规功能用例',archive.read('xl/workbook.xml').decode('utf-8'))
-                self.assertIn('xl/worksheets/sheet2.xml',archive.namelist())
-
-    def test_dual_sheet_fallback_exact_content(self):
-        exporter=module('export_test_cases')
-        case={'title':'正常支付','preconditions':'同样前提','steps':['相同步骤'],
-              'expected':['相同结果'],'coverage_key':'focus.key',
-              'observable_evidence':[{'surface':'接口','target':'测试响应体状态字段','assertion':'status=SUCCESS，订单号与请求一致'}]}
-        duplicate={**case,'coverage_key':'regular.key'}
-        data=exporter.normalize({'focus_cases':[case],'regular_cases':[duplicate]})
-        self.assertEqual(data['deduplicated'],1)
-        self.assertFalse(data['regular'])
-
-    def test_dual_sheet_report_counts(self):
-        validator=module('validate_report')
-        template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
-        report=template.replace('## 5. 测试用例导出',
-            '## 5. 测试用例导出\nExcel：cases.xlsx；重点用例数量：1；常规用例数量：2；总用例数量：3')
-        errors,_=validator.validate(report,template,[])
-        self.assertFalse(any('用例数量' in err for err in errors))
-        errors,_=validator.validate(report.replace('总用例数量：3','总用例数量：5'),template,[])
-        self.assertTrue(any('不一致' in err for err in errors))
-
-
-    def test_observable_evidence_required_for_all_cases(self):
-        exporter=module('export_test_cases')
-        case={'title':'正常请求','preconditions':'订单存在','steps':['发起请求'],
-              'expected':['正常完成'],'coverage_key':'order|valid|success'}
-        for value in ({'focus_cases':[case], 'regular_cases':[]},
-                      {'focus_cases':[], 'regular_cases':[case]},
-                      {'cases':[case]}):
-            with self.assertRaisesRegex(ValueError,'observable_evidence'):
-                exporter.normalize(value)
-        for incomplete in ([], [{}], [{'surface':'接口','target':'返回体'}],
-                           [{'surface':'数据库','assertion':'status=SUCCESS'}]):
-            bad=dict(case,observable_evidence=incomplete)
-            with self.assertRaises(ValueError):
-                exporter.normalize({'focus_cases':[bad],'regular_cases':[]})
+        for incomplete in ([],[{}],[{'surface':'接口','target':'返回体'}],[{'surface':'数据库','assertion':'status=SUCCESS'}]):
+            data=self.export_input();data['purpose_cases']['acceptance'][0]['observable_evidence']=incomplete
+            with self.assertRaises(ValueError):exporter.normalize(data)
 
     def test_vague_assertions_rejected(self):
         exporter=module('export_test_cases')
         for phrase in ('符合预期','处理成功','系统正常','接口成功','退款成功','状态正确'):
-            case={'title':'异常退款','preconditions':'准备退款单','steps':['提交退款'],
-                  'expected':['状态正确'],'coverage_key':'refund|duplicate|once',
-                  'observable_evidence':[{'surface':'数据库','target':'退款流水',
-                                          'assertion':phrase}]}
-            with self.assertRaisesRegex(ValueError,'not an observable'):
-                exporter.normalize({'focus_cases':[case],'regular_cases':[]})
+            data=self.export_input();data['purpose_cases']['acceptance'][0]['observable_evidence'][0]['assertion']=phrase
+            with self.assertRaisesRegex(ValueError,'not an observable'):exporter.normalize(data)
 
     def test_evidence_channels_visible_in_xlsx_expected_column(self):
         import zipfile
-        exporter=module('export_test_cases')
-        channels=('页面','接口','日志','数据库','文件','下游行为','缓存')
-        item={'title':'检查证据来源','preconditions':'准备测试数据','steps':['执行请求'],
-              'expected':['处理完毕'],'coverage_key':'order|valid|success',
-              'observable_evidence':[{'surface':surface,'target':'订单状态字段',
-                                      'assertion':'status=SUCCESS'} for surface in channels]}
-        records=exporter.normalize({'focus_cases':[item],'regular_cases':[]})
-        for surface in channels:
-            self.assertIn(surface+'｜订单状态字段：status=SUCCESS',records['focus'][0][4])
+        exporter=module('export_test_cases');channels=('页面','接口','日志','数据库','文件','下游行为','缓存')
+        data=self.export_input();case=data['purpose_cases']['acceptance'][0]
+        case['observable_evidence'] += [dict(surface=surface,target='订单状态字段',assertion='status=SUCCESS') for surface in channels]
+        records=exporter.normalize(data)
+        for surface in channels:self.assertIn(surface+'｜订单状态字段：status=SUCCESS',records['purposes']['acceptance'][0][4])
         with tempfile.TemporaryDirectory() as td:
-            out=Path(td)/'test.xlsx'
-            exporter.export(records,out)
-            with zipfile.ZipFile(out) as z:
-                xml=z.read('xl/worksheets/sheet1.xml').decode('utf-8')
-                self.assertIn('可观察证据：',xml)
-                self.assertIn('status=SUCCESS',xml)
+            out=Path(td)/'test.xlsx';exporter.export(records,out)
+            with zipfile.ZipFile(out) as archive:
+                xml=archive.read('xl/worksheets/sheet1.xml').decode('utf-8')
+                self.assertIn('可观察证据：',xml);self.assertIn('status=SUCCESS',xml)
 
 
 class CommitHistoryRegressionTest(unittest.TestCase):

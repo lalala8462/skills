@@ -8,7 +8,6 @@ from pathlib import Path
 from analysis_engine import VERSION, redact
 from export_test_cases import normalize
 from source_index import batch_blobs, git_bytes, stable, source_lines
-from coverage_constraints import check_source_coverage
 
 
 def nonempty(value):
@@ -60,7 +59,7 @@ def verify_evidence(project, records):
 
 def validate(analysis,context,review,cases,verify_sources=True):
     errors=[];warnings=[]
-    if analysis.get('schema_version')!=1 or analysis.get('analyzer_version')!=VERSION:
+    if type(analysis.get('schema_version'))!=int or analysis['schema_version']!=1 or analysis.get('analyzer_version')!=VERSION:
         return ['unsupported analysis schema/analyzer version'],warnings
     projects=analysis.get('projects',[])
     if not projects or len({p['name'] for p in projects})!=len(projects):
@@ -79,7 +78,7 @@ def validate(analysis,context,review,cases,verify_sources=True):
     for row in evidence.values():
         if row.get('project') not in owners:
             errors.append('unknown evidence project: '+str(row.get('id')))
-    facts={};obligations={};obligation_projects={}
+    facts={};obligations={}
     for project in projects:
         errors += ['snapshot failure: '+e for e in project.get('hard_errors',[])]
         if set(project.get('snapshots',{}))!={'baseline','result'}:
@@ -102,7 +101,6 @@ def validate(analysis,context,review,cases,verify_sources=True):
             if item['id']!=expected or item['id'] in obligations:
                 errors.append('obligation identity mismatch: '+item['id'])
             obligations[item['id']]=item
-            obligation_projects[item['id']]=project['name']
             if any(f not in facts for f in item['fact_ids']):
                 errors.append('unknown obligation fact: '+item['id'])
             refs=set(e for f in item['fact_ids'] if f in facts for e in facts[f]['evidence_ids'])
@@ -111,24 +109,16 @@ def validate(analysis,context,review,cases,verify_sources=True):
         represented={stable(f['data']) for f in project['facts'] if f['kind']=='analysis_boundary'}
         if any(stable(row) not in represented for row in project.get('boundaries',[])):
             errors.append('analysis limits or parse failures lack evidence-backed boundary dispositions: '+project['name'])
-    four_purposes=cases.get('schema_version')==2
-    if four_purposes:
-        from test_points import PURPOSES, validate_cases
-        try:
-            validate_cases(cases,analysis)
-        except (ValueError,TypeError,KeyError) as exc:
-            return errors+['invalid test points: '+str(exc)],warnings
-        groups=[cases['purpose_cases'][purpose] for purpose in PURPOSES]
-    else:
-        groups=[cases.get('focus_cases'),cases.get('regular_cases')]
-        warnings.append('Legacy case format: test-point deduplication and four-purpose checks were not performed; source constraints still apply.')
-        if any(not isinstance(g,list) for g in groups):
-            return errors+['analysis requires four-purpose cases or legacy focus_cases/regular_cases arrays'],warnings
+    from test_points import PURPOSES, validate_cases
+    try:
+        validate_cases(cases,analysis)
+    except (ValueError,TypeError,KeyError) as exc:
+        return errors+['invalid test points: '+str(exc)],warnings
+    groups=[cases['purpose_cases'][purpose] for purpose in PURPOSES]
     if any(groups):
         try:
             normalized=normalize(cases)
-            rows=(sum(normalized['purposes'].values(),[]) if four_purposes
-                  else normalized['focus']+normalized['regular'])
+            rows=sum(normalized['purposes'].values(),[])
             surviving={r[0] for r in rows}
         except (ValueError,TypeError,KeyError) as exc:
             return errors+['invalid cases: '+str(exc)],warnings
@@ -141,8 +131,6 @@ def validate(analysis,context,review,cases,verify_sources=True):
         if case['case_id'] not in surviving:
             continue
         links=case.get('coverage_links',[])
-        if not links and not four_purposes:
-            errors.append('case has no structured coverage links: '+case['case_id'])
         for link in links:
             identifier=link.get('obligation_id')
             item=obligations.get(identifier)
@@ -158,21 +146,6 @@ def validate(analysis,context,review,cases,verify_sources=True):
             observations=case.get('observable_evidence',[])
             if not positions or any(type(i)!=int or i<0 or i>=len(observations) for i in positions):
                 errors.append('coverage needs actual observable evidence: '+identifier);continue
-            if not four_purposes:
-                from test_points import conditions
-                try:
-                    triggers=conditions(link.get('trigger_conditions',[]))
-                    source_facts={f['id']:f for f in owners[obligation_projects[identifier]]['facts']}
-                    failures=[]
-                    for position in positions:
-                        try:
-                            check_source_coverage(dict(conditions=triggers,expected=observations[position].get('constraint',{}),
-                                source_bindings=link.get('source_bindings',{})),[item],source_facts)
-                            break
-                        except ValueError as exc:failures.append(str(exc))
-                    else:raise ValueError(failures[0])
-                except (ValueError,TypeError,KeyError) as exc:
-                    errors.append('invalid source coverage: '+str(exc));continue
             text='\n'.join(case['expected']) if isinstance(case['expected'],list) else case['expected']
             text+='\n'+'\n'.join(observations[i]['assertion'] for i in positions)
             if any(message not in text for message in item['assertion'].get('errors',[]) if message):
@@ -207,7 +180,7 @@ def validate(analysis,context,review,cases,verify_sources=True):
 def validate_files(analysis_path,review_path,cases_path):
     analysis_path=Path(analysis_path)
     analysis=json.loads(analysis_path.read_text(encoding='utf-8-sig'))
-    context_path=(analysis_path.parent/analysis.get('context_file','context.jsonl')).resolve()
+    context_path=(analysis_path.parent/analysis['context_file']).resolve()
     if context_path.parent!=analysis_path.parent.resolve():
         raise ValueError('context file must stay beside analysis.json')
     context=[json.loads(line) for line in context_path.read_text(encoding='utf-8').splitlines() if line.strip()]

@@ -5,7 +5,7 @@ description: "按指定 GitHub/GitLab 仓库及修订生成差异分析 Markdown
 
 # diff-list
 
-输入明确仓库与 Git 修订，可多项目。业务仓库只读；每次分析创建新的隔离无检出仓库，内部复用固定快照。脚本不构建目标项目、不执行 SQL、不提交或推送；分析目录保留供复核。
+输入明确仓库与 Git 修订，可多项目。每次使用当前版本重新采集、分析并生成报告，不复用或迁移历史分析产物。业务仓库只读；每次分析创建新的隔离无检出仓库，内部复用固定快照。脚本不构建目标项目、不执行 SQL、不提交或推送；分析目录保留供复核。
 
 ## 标准流程
 
@@ -13,13 +13,13 @@ description: "按指定 GitHub/GitLab 仓库及修订生成差异分析 Markdown
 2. 读取 [分析契约](references/analysis-contract.md) 和 [检查清单](references/analysis-checklist.md)，逐项核对最终差异并补查上下游、字段来源及既有消费者。离散提交读取合成结果树；合成失败不能改用最后选中提交或扩大范围。仅分析明确提供仓库及修订的服务。
 3. 按 [测试点契约](references/test-point-contract.md) 登记需求主线、规则、影响依据与测试点候选，运行 `scripts/test_points.py` 编译。相同结构确定性去重；实例值放数据组，语义等价须显式说明依据。不能用自由文本相似度代替身份，也不能把源码当前行为直接当成已确认需求。
 4. 依据编译目录填写 schema_version=2 用例及 review 处置，按 [报告规则](references/report-rules.md) 完成 Markdown。用例必须有可执行步骤、具体观察对象、结构断言及全部必要覆盖关联，不能只挂编号或写“符合预期”。
-5. 执行 `validate_analysis.py`；通过后使用带 analysis/review 的 `export_test_cases.py` 导出。用 `append_run_dirs.py` 记录全部分析目录，再运行带 analysis/review/cases 和项目修订 expect 参数的 `validate_report.py`。检查输出内容与排版，如实说明尚未执行的验证。
+5. 执行 `validate_analysis.py`；通过后使用必须提供 analysis/review 的 `export_test_cases.py` 导出。用 `append_run_dirs.py` 记录全部分析目录，再运行带 analysis/review/cases 和项目修订 expect 参数的 `validate_report.py`。检查输出内容与排版，如实说明尚未执行的验证。
 
 ## 归属与输出
 
 测试点唯一归属顺序为 **需求验收 > 既有核心流程回归 > 关联回归 > 业务规则与边界验证**，与风险等级、执行顺序分开。需求验收包含必要反向和边界；回归必须有本次影响依据。各类可为空，不凑数量或铺开无关回归。
 
-Excel 按以上四类分工作表，保留五列：用例编号、用例名称、前置条件、步骤描述、预期结果。固定条件和数据组自动补入前置条件，结构断言及观察证据补入预期结果。旧两组输入仅保留兼容，新流程不使用。
+Excel 按以上四类分工作表，保留五列：用例编号、用例名称、前置条件、步骤描述、预期结果。固定条件和数据组自动补入前置条件，结构断言及观察证据补入预期结果。只接受当前四类输入和当前版本目录；其他历史格式直接拒绝。
 
 Markdown 保留 [模板](assets/diff-list-template.md) 全部标题，无内容写“无”；Mermaid 使用兼容8.8.3的 flowchart TD 或 sequenceDiagram。第5章仅列 Excel 文件名、四类数量与总数；确认无遗漏且四类都为空时不生成 Excel。正文不展示本机源码路径、源码行号、内部编号、密钥或未决占位；报告末尾的分析目录清单由脚本追加。
 

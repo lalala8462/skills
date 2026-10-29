@@ -4,14 +4,12 @@ import argparse
 import json
 import re
 import sys
-import unicodedata
 import zipfile
 from pathlib import Path
 from xml.sax.saxutils import escape
 
 HEADERS = ('用例编号', '用例名称', '前置条件', '步骤描述', '预期结果')
 BAD_XML = re.compile('[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]')
-SHEETS = ('重点测试用例', '常规功能用例')
 
 
 def _string(value, label):
@@ -31,25 +29,6 @@ def _lines(value, label):
         raise ValueError(label + ' must be a nonempty string or string array')
     items = [_string(item, label) for item in value]
     return '\n'.join('{}. {}'.format(n, item) for n, item in enumerate(items, 1))
-
-
-def _identity(text):
-    """Conservative text equality; business equivalence uses explicit coverage keys."""
-    return ' '.join(unicodedata.normalize('NFKC', text).casefold().split())
-
-
-def _coverage(item, label):
-    """Stable model-reviewed coverage identities, independent of case titles."""
-    if 'coverage_keys' in item:
-        value = item['coverage_keys']
-        if not isinstance(value, list) or not value:
-            raise ValueError(label + ' coverage_keys must be a nonempty array')
-        keys = [_identity(_string(key, label + ' coverage_keys')) for key in value]
-    else:
-        keys = [_identity(_string(item.get('coverage_key'), label + ' coverage_key'))]
-    if len(set(keys)) != len(keys):
-        raise ValueError(label + ' repeats a coverage key')
-    return set(keys)
 
 
 def _observable_evidence(value, identifier):
@@ -76,112 +55,41 @@ def _observable_evidence(value, identifier):
     return assertions
 
 
-def _case(item, number, prefix, ids, require_coverage):
-    if not isinstance(item, dict):
-        raise ValueError('case {} must be an object'.format(number))
-    identifier = _string(item.get('case_id') or '{}{:04d}'.format(prefix, number), 'case_id')
+def _case(item, ids):
+    identifier = _string(item.get('case_id'), 'case_id')
     if '\n' in identifier or identifier in ids:
         raise ValueError('duplicate or multiline case_id: ' + identifier)
     ids.add(identifier)
     title = _string(item.get('title'), 'title')
     preconditions = _string(item.get('preconditions'), 'preconditions')
-    triggers=[link['trigger_conditions'] for link in item.get('coverage_links',[]) if link.get('trigger_conditions')] if require_coverage else []
-    if triggers:
-        from test_points import conditions,render_condition,unique
-        variants=unique([conditions(group) for group in triggers])
-        preconditions=_string(preconditions+'\n固定触发条件：\n'+'\n'.join('；'.join(render_condition(p) for p in group)
-                              for group in variants),'preconditions')
     steps = _lines(item.get('steps'), 'steps')
     expected = _lines(item.get('expected'), 'expected')
     evidence = _observable_evidence(item.get('observable_evidence'), identifier)
     expected += '\n可观察证据：\n' + '\n'.join(evidence)
-    constraints=[o for o in item.get('observable_evidence',[]) if 'constraint' in o] if require_coverage else []
-    if constraints:
-        from test_points import expectation,canonical
-        expected += '\n结构断言：\n'+'\n'.join(o['target']+'：'+canonical(expectation(o['constraint'])) for o in constraints)
     if len(expected) > 32767:
         raise ValueError('case {} expected result exceeds Excel cell limit'.format(identifier))
-    signature = tuple(_identity(value) for value in (title, preconditions, steps, expected))
-    coverage = _coverage(item, 'case ' + identifier) if require_coverage else set()
-    return (identifier, title, preconditions, steps, expected), coverage, signature
+    return identifier, title, preconditions, steps, expected
 
 
 def normalize(data):
-    """Accept historic cases input or two-category input without inventing tests.
-
-    New input: focus_cases + regular_cases. Every case requires observable_evidence.
-    Both new categories also require coverage_key(s).
-    Return dict for dual input; preserve a list for older API callers.
-    """
-    if not isinstance(data, dict):
-        raise ValueError('input must be an object')
-    if data.get('schema_version') == 2 or 'purpose_cases' in data or 'test_point_catalog' in data:
-        from test_points import PURPOSES, case_material, validate_cases
-        if data.get('schema_version') != 2 or any(k in data for k in ('cases', 'focus_cases', 'regular_cases')):
-            raise ValueError('four-purpose input requires schema_version=2 and cannot mix legacy groups')
-        validate_cases(data)
-        ids, groups = set(), {}
-        for purpose in PURPOSES:
-            rows = []
-            for number, item in enumerate(sorted(data['purpose_cases'][purpose], key=lambda c: c.get('case_id', '')), 1):
-                if not item.get('case_id'):
-                    raise ValueError('four-purpose cases require stable case_id')
-                material, assertions = case_material(data, item)
-                expanded = dict(item, preconditions=_string(item.get('preconditions'), 'preconditions') + '\n' + material,
-                                expected=_lines(item.get('expected'), 'expected') + '\n' + assertions)
-                rows.append(_case(expanded, number, 'DL', ids, False)[0])
-            groups[purpose] = rows
-        if not any(groups.values()):
-            raise ValueError('no test cases to export')
-        if sum(map(len, groups.values())) > 10000:
-            raise ValueError('too many test cases')
-        return {'purposes': groups, 'deduplicated': 0}
-    if 'cases' in data:
-        if 'focus_cases' in data or 'regular_cases' in data:
-            raise ValueError('do not mix cases with focus_cases/regular_cases')
-        if not isinstance(data['cases'], list) or not data['cases']:
-            raise ValueError('input must contain a nonempty cases array')
-        if len(data['cases']) > 10000:
-            raise ValueError('too many test cases')
-        ids = set()
-        return [_case(item, n, 'DL', ids, False)[0]
-                for n, item in enumerate(data['cases'], 1)]
-
-    focus, regular = data.get('focus_cases'), data.get('regular_cases')
-    if not isinstance(focus, list) or not isinstance(regular, list):
-        raise ValueError('new input requires focus_cases and regular_cases arrays')
-    if not focus and not regular:
+    """只接受当前四类用例；源码和覆盖校验由交付入口先执行。"""
+    from test_points import PURPOSES, case_material, validate_cases
+    validate_cases(data)
+    ids, groups = set(), {}
+    for purpose in PURPOSES:
+        rows = []
+        for item in sorted(data['purpose_cases'][purpose], key=lambda c: c.get('case_id', '')):
+            material, assertions = case_material(data, item)
+            expanded = dict(item, preconditions=_string(item.get('preconditions'), 'preconditions') + '\n' + material,
+                            expected=_lines(item.get('expected'), 'expected') + '\n' + assertions)
+            rows.append(_case(expanded, ids))
+        groups[purpose] = rows
+    if not any(groups.values()):
         raise ValueError('no test cases to export')
-    if len(focus) + len(regular) > 10000:
+    if sum(map(len, groups.values())) > 10000:
         raise ValueError('too many test cases')
+    return {'purposes': groups}
 
-    ids, focus_keys, regular_keys = set(), set(), set()
-    focus_rows, regular_rows = [], []
-    focus_signatures, regular_signatures = set(), set()
-    for number, item in enumerate(focus, 1):
-        row, keys, signature = _case(item, number, 'DL-F', ids, True)
-        if keys & focus_keys or signature in focus_signatures:
-            raise ValueError('duplicate key or scenario inside focus_cases: ' + row[0])
-        focus_keys.update(keys)
-        focus_signatures.add(signature)
-        focus_rows.append(row)
-
-    deduplicated = 0
-    for number, item in enumerate(regular, 1):
-        row, keys, signature = _case(item, len(regular_rows)+1, 'DL-N', ids, True)
-        overlap = keys & focus_keys
-        if keys <= focus_keys or signature in focus_signatures:
-            ids.discard(row[0])
-            deduplicated += 1
-            continue
-        if overlap:
-            raise ValueError('regular case {} partially overlaps focus coverage; split the case'.format(row[0]))
-        if keys & regular_keys or signature in regular_signatures:
-            raise ValueError('duplicate key or scenario inside regular_cases: ' + row[0])
-        regular_keys.update(keys)
-        regular_signatures.add(signature)
-        regular_rows.append(row)
-    return {'focus': focus_rows, 'regular': regular_rows, 'deduplicated': deduplicated}
 
 def _cell(column, row, value, style):
     # inlineStr is always text, so input starting with = is never an Excel formula.
@@ -212,21 +120,11 @@ def _sheet(rows):
 def export(rows, target):
     target = Path(target)
     target.parent.mkdir(parents=True, exist_ok=True)
-    legacy = isinstance(rows, list)
-    four_purposes = isinstance(rows, dict) and 'purposes' in rows
-    if four_purposes:
-        from test_points import PURPOSES, PURPOSE_NAMES
-        names = PURPOSE_NAMES
-        sheets = tuple(rows['purposes'][p] for p in PURPOSES)
-        removed = 0
-    elif legacy:
-        sheets = (rows, [])
-        removed = 0
-        names = SHEETS
-    else:
-        sheets = (rows['focus'], rows['regular'])
-        removed = rows['deduplicated']
-        names = SHEETS
+    from test_points import PURPOSES, PURPOSE_NAMES
+    if not isinstance(rows,dict) or set(rows)!={'purposes'} or not isinstance(rows['purposes'],dict) or set(rows['purposes'])!=set(PURPOSES):
+        raise ValueError('export requires normalized current four-purpose rows')
+    names = PURPOSE_NAMES
+    sheets = tuple(rows['purposes'][p] for p in PURPOSES)
     # x mode: never overwrite user files.
     with zipfile.ZipFile(target, 'x', zipfile.ZIP_DEFLATED) as archive:
         archive.writestr('[Content_Types].xml', '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -263,43 +161,30 @@ def export(rows, target):
 </styleSheet>''')
         for number, sheet_rows in enumerate(sheets, 1):
             archive.writestr('xl/worksheets/sheet{}.xml'.format(number), _sheet(sheet_rows))
-    if legacy:
-        return len(sheets[0])
-    if four_purposes:
-        result = {purpose: len(rows['purposes'][purpose]) for purpose in PURPOSES}
-        result.update(total=sum(result.values()), deduplicated=0)
-        return result
-    return {'focus': len(sheets[0]), 'regular': len(sheets[1]),
-            'total': len(sheets[0])+len(sheets[1]), 'deduplicated': removed}
+    result = {purpose: len(rows['purposes'][purpose]) for purpose in PURPOSES}
+    result['total'] = sum(result.values())
+    return result
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--input', required=True, help='JSON with reviewed test cases')
     parser.add_argument('--output', required=True, help='New .xlsx output path')
-    parser.add_argument('--analysis', help='New analysis.json for strict evidence/coverage validation')
-    parser.add_argument('--review', help='Source review dispositions for --analysis')
+    parser.add_argument('--analysis', required=True, help='本次当前版本生成的 analysis.json')
+    parser.add_argument('--review', required=True, help='本次源码补查与处置记录')
     args = parser.parse_args(argv)
     try:
         if Path(args.output).suffix.lower() != '.xlsx':
             raise ValueError('output must end with .xlsx')
-        if bool(args.analysis)!=bool(args.review):
-            raise ValueError('--analysis and --review must be provided together')
-        if args.analysis:
-            from validate_analysis import validate_files
-            errors,_=validate_files(args.analysis,args.review,args.input)
-            if errors:
-                raise ValueError('Coverage validation failed: '+'; '.join(errors[:8]))
+        from validate_analysis import validate_files
+        errors,_=validate_files(args.analysis,args.review,args.input)
+        if errors:
+            raise ValueError('Coverage validation failed: '+'; '.join(errors[:8]))
         rows = normalize(json.loads(Path(args.input).read_text(encoding='utf-8-sig')))
         count = export(rows, args.output)
-        if isinstance(count, dict) and 'acceptance' in count:
-            from test_points import PURPOSES, PURPOSE_NAMES
-            print('EXPORTED: ' + ', '.join('{}={}'.format(name, count[p]) for p, name in zip(PURPOSES, PURPOSE_NAMES))
-                  + ', total={} -> {}'.format(count['total'], Path(args.output).resolve()))
-        elif isinstance(count, dict):
-            print('EXPORTED: focus={focus}, regular={regular}, total={total}, duplicate regular removed={deduplicated} -> {path}'.format(path=Path(args.output).resolve(), **count))
-        else:
-            print('EXPORTED: {} cases -> {}'.format(count, Path(args.output).resolve()))
+        from test_points import PURPOSES, PURPOSE_NAMES
+        print('EXPORTED: ' + ', '.join('{}={}'.format(name, count[p]) for p, name in zip(PURPOSES, PURPOSE_NAMES))
+              + ', total={} -> {}'.format(count['total'], Path(args.output).resolve()))
         return 0
     except (ValueError, OSError, KeyError, TypeError, IndexError, json.JSONDecodeError, zipfile.BadZipFile) as exc:
         print('ERROR: ' + str(exc), file=sys.stderr)

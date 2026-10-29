@@ -179,7 +179,7 @@ class AnalysisTest(unittest.TestCase):
     def test_file_limit_is_explicit_and_cannot_silently_pass(self):
         result,context=self.analyze([self.after],limits={'files':1})
         self.assertTrue(result['projects'][0]['boundaries'])
-        errors,_=validate(result,context,dict(analysis_id=result['analysis_id'],dispositions=[]),dict(focus_cases=[],regular_cases=[]))
+        errors,_=validate(result,context,dict(analysis_id=result['analysis_id'],dispositions=[]),self.empty_cases(result))
         self.assertTrue(errors)
 
     def test_non_utf8_file_is_reported(self):
@@ -215,7 +215,7 @@ class AnalysisTest(unittest.TestCase):
         facts=[f for f in result['projects'][0]['facts'] if f['kind']=='configuration_file_change']
         self.assertTrue(any(f['data']['key']=='feature' for f in facts))
         self.assertNotIn('SENSITIVE_VALUE',json.dumps(context))
-        errors,_=validate(result,context,dict(analysis_id=result['analysis_id'],dispositions=[]),dict(focus_cases=[],regular_cases=[]))
+        errors,_=validate(result,context,dict(analysis_id=result['analysis_id'],dispositions=[]),self.empty_cases(result))
         self.assertTrue(any('unhandled obligation' in e for e in errors))
 
     def test_export_is_blocked_before_creating_excel(self):
@@ -224,7 +224,7 @@ class AnalysisTest(unittest.TestCase):
         (directory/'analysis.json').write_text(json.dumps(self.analysis),encoding='utf-8')
         (directory/'context.jsonl').write_text('\n'.join(json.dumps(r) for r in self.context),encoding='utf-8')
         cases,review=self.closed_cases()
-        cases['focus_cases'][0]['coverage_links']=[]
+        self.all_cases(cases)[0]['coverage_links']=[]
         (directory/'cases.json').write_text(json.dumps(cases),encoding='utf-8')
         (directory/'review.json').write_text(json.dumps(review),encoding='utf-8')
         target=directory/'blocked.xlsx'
@@ -256,44 +256,29 @@ class AnalysisTest(unittest.TestCase):
         for project in result['projects']:
             self.assertEqual(project['snapshots']['result'],git(self.source,'rev-parse',self.after+'^{tree}'))
 
-    def closed_cases(self):
+    @staticmethod
+    def all_cases(data):
+        from test_points import PURPOSES
+        return [case for purpose in PURPOSES for case in data['purpose_cases'][purpose]]
+
+    @staticmethod
+    def empty_cases(analysis):
+        from test_points import compile_plan,PURPOSES
+        catalog=compile_plan(dict(version=1,analysis_id=analysis['analysis_id'],requirements=[],rules=[],impacts=[],candidates=[]),analysis)
+        return dict(schema_version=2,test_point_catalog=catalog,purpose_cases={p:[] for p in PURPOSES})
+
+    def closed_cases(self,exclude=()):
+        from test_points import compile_plan,PURPOSES
         from coverage_constraints import source_contract
         project=self.analysis['projects'][0]
         facts={f['id']:f for f in project['facts']}
-        cases=[]
-        for i,item in enumerate(project['obligations']):
-            messages=item['assertion'].get('errors',[])
-            expected='核对指定交易字段和调用次数'+('；'+ '；'.join(messages) if messages else '')
-            alternatives,constraint=source_contract(item,facts)
-            cases.append(dict(case_id='C'+str(i),coverage_key=item['id'],title='检查覆盖项'+str(i),
-                preconditions='已准备覆盖项中的触发数据',steps=['触发对应分支并检查结果'],expected=[expected],
-                observable_evidence=[dict(surface='接口',target='交易响应及实际调用次数',assertion=expected,
-                    constraint=constraint or dict(kind='equals',value=item['assertion']))],
-                coverage_links=[dict(obligation_id=item['id'],condition=item['condition'],assertion=item['assertion'],
-                    fact_ids=item['fact_ids'],evidence_ids=item['evidence_ids'],observable_evidence_indices=[0],
-                    trigger_conditions=alternatives[0] if alternatives else [])]))
-        return dict(focus_cases=cases,regular_cases=[]),dict(analysis_id=self.analysis['analysis_id'],dispositions=[])
-
-    def test_strict_coverage_and_source_integrity(self):
-        cases,review=self.closed_cases()
-        errors,_=validate(self.analysis,self.context,review,cases)
-        self.assertEqual(errors,[])
-        cases['focus_cases'][0]['coverage_links']=[]
-        errors,_=validate(self.analysis,self.context,review,cases)
-        self.assertTrue(any('unhandled obligation' in e for e in errors))
-
-    def four_cases(self):
-        from test_points import compile_plan,PURPOSES
-        from coverage_constraints import source_contract
-        old,review=self.closed_cases()
-        name=self.analysis['projects'][0]['name']
-        facts={f['id']:f for f in self.analysis['projects'][0]['facts']}
-        obligations={o['id']:o for o in self.analysis['projects'][0]['obligations']}
         plan=dict(version=1,analysis_id=self.analysis['analysis_id'],requirements=[],rules=[],impacts=[],candidates=[])
-        for i,case in enumerate(old['focus_cases']):
-            link=case['coverage_links'][0];rule_id='rule-'+str(i);purpose=PURPOSES[i%4]
-            plan['rules'].append(dict(id=rule_id,project=name,kind='boundary',subject=link['obligation_id'],
-                operation='fixture.coverage',core=True,fact_ids=link['fact_ids'],evidence_ids=link['evidence_ids']))
+        case_rows=[]
+        for i,item in enumerate(project['obligations']):
+            if item['id'] in exclude:continue
+            rule_id='rule-'+str(i);purpose=PURPOSES[i%4]
+            plan['rules'].append(dict(id=rule_id,project=project['name'],kind='boundary',subject=item['id'],
+                operation='fixture.coverage',core=True,fact_ids=item['fact_ids'],evidence_ids=item['evidence_ids']))
             basis=dict(kind=purpose)
             if purpose=='acceptance':
                 basis['requirement_id']='req-'+str(i)
@@ -301,38 +286,66 @@ class AnalysisTest(unittest.TestCase):
                     source=dict(kind='confirmed_constraint',reference='离线夹具验证规则',statement='验证结构关联完整保留')))
             elif purpose in ('core_regression','related_regression'):
                 basis['impact_id']='impact-'+str(i)
-                plan['impacts'].append(dict(id=basis['impact_id'],project=name,rule_ids=[rule_id],
-                    fact_ids=link['fact_ids'],evidence_ids=link['evidence_ids'],description='离线夹具的源码义务关联'))
-            alternatives,expected=source_contract(obligations[link['obligation_id']],facts)
+                plan['impacts'].append(dict(id=basis['impact_id'],project=project['name'],rule_ids=[rule_id],
+                    fact_ids=item['fact_ids'],evidence_ids=item['evidence_ids'],description='离线夹具的源码义务关联'))
+            alternatives,constraint=source_contract(item,facts)
             plan['candidates'].append(dict(id='candidate-'+str(i),rule_id=rule_id,
-                entry=dict(kind='method',target='fixture.coverage'),
-                conditions=alternatives[0] if alternatives else [],
+                entry=dict(kind='method',target='fixture.coverage'),conditions=alternatives[0] if alternatives else [],
                 observation=dict(surface='接口',target='交易响应及实际调用次数'),
-                expected=expected or dict(kind='equals',value=link['assertion']),purposes=[basis],obligation_ids=[link['obligation_id']]))
+                expected=constraint or dict(kind='equals',value=item['assertion']),purposes=[basis],obligation_ids=[item['id']]))
+            messages=item['assertion'].get('errors',[])
+            expected='核对指定交易字段和调用次数'+('；'+'；'.join(messages) if messages else '')
+            case_rows.append((i,dict(case_id='C'+str(i),title='检查覆盖项'+str(i),
+                preconditions='已准备覆盖项中的触发数据',steps=['触发对应分支并检查结果'],expected=[expected],
+                observable_evidence=[dict(surface='接口',target='交易响应及实际调用次数',assertion=expected)],
+                coverage_links=[dict(obligation_id=item['id'],condition=item['condition'],assertion=item['assertion'],
+                    fact_ids=item['fact_ids'],evidence_ids=item['evidence_ids'],observable_evidence_indices=[0])])) )
         catalog=compile_plan(plan,self.analysis)
         points={p['candidate_ids'][0]:p for p in catalog['points']}
         groups={purpose:[] for purpose in PURPOSES}
-        for i,case in enumerate(old['focus_cases']):
+        for i,case in case_rows:
             point=points['candidate-'+str(i)]
             case['observable_evidence'][0]['constraint']=point['expected']
             case['test_point_links']=[dict(point_id=point['id'],conditions=point['conditions'],
                 expected=point['expected'],data_group_ids=[],observable_evidence_indices=[0])]
             groups[point['purpose']].append(case)
         data=json.loads(json.dumps(dict(schema_version=2,test_point_catalog=catalog,purpose_cases=groups)))
-        return data,review
+        return data,dict(analysis_id=self.analysis['analysis_id'],dispositions=[])
+
+    def test_strict_coverage_and_source_integrity(self):
+        cases,review=self.closed_cases()
+        errors,_=validate(self.analysis,self.context,review,cases)
+        self.assertEqual(errors,[])
+        self.all_cases(cases)[0]['coverage_links']=[]
+        errors,_=validate(self.analysis,self.context,review,cases)
+        self.assertTrue(any('lost source coverage links' in e for e in errors))
 
     def test_four_purpose_catalog_integrates_with_fixed_source_coverage(self):
         from export_test_cases import normalize,main as export_main
-        data,review=self.four_cases()
+        data,review=self.closed_cases()
         errors,_=validate(self.analysis,self.context,review,data)
         self.assertEqual(errors,[])
-        self.assertEqual(sum(len(rows) for rows in normalize(data)['purposes'].values()),len(self.closed_cases()[0]['focus_cases']))
+        self.assertEqual(sum(len(rows) for rows in normalize(data)['purposes'].values()),len(self.all_cases(self.closed_cases()[0])))
         out=self.base/'four-purpose-delivery';out.mkdir()
         for filename,value in [('analysis.json',self.analysis),('review.json',review),('cases.json',data)]:
             (out/filename).write_text(json.dumps(value,ensure_ascii=False),encoding='utf-8')
         (out/'context.jsonl').write_text('\n'.join(json.dumps(r,ensure_ascii=False) for r in self.context),encoding='utf-8')
         self.assertEqual(export_main(['--input',str(out/'cases.json'),'--output',str(out/'cases.xlsx'),
             '--analysis',str(out/'analysis.json'),'--review',str(out/'review.json')]),0)
+        from test_points import PURPOSES,PURPOSE_NAMES
+        from validate_report import main as report_main
+        counts=[len(data['purpose_cases'][purpose]) for purpose in PURPOSES]
+        summary='Excel：cases.xlsx；'+'；'.join(name+'用例数量：'+str(count) for name,count in zip(PURPOSE_NAMES,counts))
+        summary+='；总用例数量：'+str(sum(counts))
+        content={'## 1. 分析范围':self.analysis['projects'][0]['name']+' '+self.after,
+                 '## 5. 测试用例导出':summary,'## 6. 验证情况':'仅完成静态分析与用例设计。'}
+        lines=[]
+        for line in (ROOT/'assets/diff-list-template.md').read_text(encoding='utf-8').splitlines():
+            lines.append(line)
+            if line.startswith('#'):lines.extend(['',content.get(line,'无')])
+        report=out/'report.md';report.write_text('\n'.join(lines),encoding='utf-8')
+        self.assertEqual(report_main([str(report),'--analysis',str(out/'analysis.json'),
+            '--review',str(out/'review.json'),'--cases',str(out/'cases.json')]),0)
         data['purpose_cases']['acceptance'].pop()
         errors,_=validate(self.analysis,self.context,review,data)
         self.assertTrue(any('uncovered test points' in e for e in errors))
@@ -340,7 +353,7 @@ class AnalysisTest(unittest.TestCase):
     def test_wrong_executable_condition_is_rejected_even_with_original_coverage_links(self):
         from test_points import compile_plan
         from export_test_cases import normalize,main as export_main
-        data,review=self.four_cases()
+        data,review=self.closed_cases()
         plan=copy.deepcopy(data['test_point_catalog']['plan'])
         obligations={o['id']:o for o in self.analysis['projects'][0]['obligations']}
         candidate=next(c for c in plan['candidates'] if any(obligations[o]['dimension']=='cardinality' and
@@ -364,20 +377,14 @@ class AnalysisTest(unittest.TestCase):
              '--analysis',str(out/'analysis.json'),'--review',str(out/'review.json')]),2)
         self.assertFalse((out/'cases.xlsx').exists())
 
-    def test_legacy_analysis_links_cannot_bypass_source_conditions(self):
-        cases,review=self.closed_cases()
-        obligations={o['id']:o for o in self.analysis['projects'][0]['obligations']}
-        case=next(c for c in cases['focus_cases'] if obligations[c['coverage_links'][0]['obligation_id']]['dimension']=='cardinality'
-                  and obligations[c['coverage_links'][0]['obligation_id']]['condition']['count']=='zero')
-        case['coverage_links'][0]['trigger_conditions']=[dict(subject='records.count',operator='eq',value=5)]
-        errors,_=validate(self.analysis,self.context,review,cases)
-        self.assertTrue(any('test conditions do not cover source obligation' in e for e in errors),errors)
-        case['coverage_links'][0].pop('trigger_conditions')
-        errors,_=validate(self.analysis,self.context,review,cases)
-        self.assertTrue(any('test conditions do not cover source obligation' in e for e in errors),errors)
+    def test_old_case_formats_are_rejected_by_analysis_validation(self):
+        review=dict(analysis_id=self.analysis['analysis_id'],dispositions=[])
+        for cases in ({'cases':[]},{'focus_cases':[],'regular_cases':[]}):
+            errors,_=validate(self.analysis,self.context,review,cases)
+            self.assertTrue(any('current four-purpose cases' in e for e in errors),errors)
 
     def test_coverage_cannot_point_to_another_observation(self):
-        data,review=self.four_cases()
+        data,review=self.closed_cases()
         case=next(c for rows in data['purpose_cases'].values() for c in rows)
         case['observable_evidence'].append(dict(surface='其他',target='无关字段',assertion='该观察与当前测试点无关联'))
         case['coverage_links'][0]['observable_evidence_indices']=[1]
@@ -387,7 +394,7 @@ class AnalysisTest(unittest.TestCase):
     def test_wrong_fact_condition_and_result_are_rejected(self):
         for field,bad in [('fact_ids',['not-a-fact']),('condition',{'value':'wrong'}),('assertion',{'errors':['wrong']})]:
             cases,review=self.closed_cases()
-            cases['focus_cases'][0]['coverage_links'][0][field]=bad
+            self.all_cases(cases)[0]['coverage_links'][0][field]=bad
             errors,_=validate(self.analysis,self.context,review,cases)
             self.assertTrue(any('mismatch' in e for e in errors),field)
 
@@ -418,9 +425,9 @@ class AnalysisTest(unittest.TestCase):
 
     def test_exception_requires_evidence_and_retains_model_provenance(self):
         cases,review=self.closed_cases()
-        case=next(c for c in cases['focus_cases'] if c['coverage_links'][0]['assertion']['kind']=='review_binding')
+        case=next(c for c in self.all_cases(cases) if c['coverage_links'][0]['assertion']['kind']=='review_binding')
         link=case['coverage_links'][0]
-        cases['focus_cases'].remove(case)
+        cases,review=self.closed_cases(exclude={link['obligation_id']})
         disposition=dict(obligation_id=link['obligation_id'],status='reviewed_boundary',
             conclusion='已读取接口声明，目标服务未在本次输入仓库中提供。',
             limitations='仅核实静态接口调用，未验证服务发现和运行时路由。',

@@ -16,7 +16,8 @@ import validate_report
 
 
 def analysis():
-    return {'analysis_id': 'fixed-analysis', 'projects': [{'name': 'sample',
+    from analysis_engine import VERSION
+    return {'schema_version':1,'analyzer_version':VERSION,'analysis_id': 'fixed-analysis', 'projects': [{'name': 'sample',
         'facts': [{'id': 'fact-1', 'evidence_ids': ['evidence-1']}],
         'obligations': [{'id': 'obligation-1', 'fact_ids': ['fact-1']}]}]}
 
@@ -50,7 +51,8 @@ def cases(catalog):
             'expected': ['所选交易的订单号来自原记录'],
             'observable_evidence': [dict(point['observation'], assertion='选中交易的订单号等于原记录订单号',
                 constraint=point['expected'])],
-            'coverage_links': [{'obligation_id': o} for o in point['obligation_ids']],
+            'coverage_links': [dict(obligation_id=o,condition={},assertion={},fact_ids=['fact-1'],
+                evidence_ids=['evidence-1'],observable_evidence_indices=[0]) for o in point['obligation_ids']],
             'test_point_links': [{'point_id': point['id'], 'conditions': point['conditions'],
                 'expected': point['expected'], 'data_group_ids': [g['id'] for g in point['data_groups']],
                 'observable_evidence_indices': [0]}]})
@@ -250,6 +252,23 @@ class TestPointTest(unittest.TestCase):
         raw = plan(); raw['rules'][0]['project'] = 'outside'
         with self.assertRaises(ValueError): self.compile(raw)
 
+    def test_old_or_malformed_versions_require_fresh_material(self):
+        for change in ({'analyzer_version':'1.1.0'},{'schema_version':True},{'schema_version':0}):
+            source=analysis();source.update(change)
+            with self.assertRaisesRegex(ValueError,'regenerated with the current analyzer'):
+                tp.compile_plan(plan(),source)
+        catalog=self.compile();catalog['compiler_version']='1.1.0'
+        with self.assertRaisesRegex(ValueError,'unsupported test point catalog'):
+            exporter.normalize(cases(catalog))
+
+    def test_renderer_rejects_old_normalized_rows_before_creating_excel(self):
+        for rows in ([],{'focus':[],'regular':[],'deduplicated':0}):
+            with tempfile.TemporaryDirectory() as folder:
+                target=Path(folder)/'cases.xlsx'
+                with self.assertRaisesRegex(ValueError,'current four-purpose rows'):
+                    exporter.export(rows,target)
+                self.assertFalse(target.exists())
+
     def test_unrelated_source_obligation_and_orphan_case_link_fail(self):
         source = analysis()
         source['projects'][0]['facts'].append({'id': 'fact-2', 'evidence_ids': ['evidence-2']})
@@ -257,7 +276,9 @@ class TestPointTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'unrelated to the registered rule'):
             tp.compile_plan(plan(), source)
         data = cases(self.compile())
-        data['purpose_cases']['acceptance'][0]['coverage_links'].append({'obligation_id': 'another-obligation'})
+        other=copy.deepcopy(data['purpose_cases']['acceptance'][0]['coverage_links'][0])
+        other['obligation_id']='another-obligation'
+        data['purpose_cases']['acceptance'][0]['coverage_links'].append(other)
         with self.assertRaisesRegex(ValueError, 'must match the case test points'):
             exporter.normalize(data)
 
