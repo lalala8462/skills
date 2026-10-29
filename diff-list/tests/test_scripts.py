@@ -321,6 +321,53 @@ class DiffListTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     writer.append(report,[str(evidence)],[])
 
+    def test_range_long_paths_capture_java_and_config(self):
+        collector = module('collect_git')
+        with tempfile.TemporaryDirectory() as td:
+            parent = Path(td).resolve()
+            root = parent / ('repo-' + 'x' * max(1, 140 - len(str(parent)) - 6))
+            root.mkdir()
+
+            def git(*args, stdin=None):
+                return subprocess.check_output(
+                    ['git', '-c', 'core.longpaths=true', '-C', str(root), *args],
+                    input=stdin.encode('utf-8') if stdin is not None else None
+                ).decode('utf-8').strip()
+
+            git('init', '-q')
+            git('config', 'user.name', 'Test')
+            git('config', 'user.email', 'test@example.com')
+            git('config', 'core.longpaths', 'false')
+            java_path = 'src/test/java/' + 'nested/' * 12 + 'LongPathRegression.java'
+            config_path = 'src/main/resources/' + 'nested/' * 12 + 'application.properties'
+            before = {java_path: 'class LongPathRegression { int value = 1; }\n',
+                      config_path: 'enabled=false\n'}
+            after = {java_path: 'class LongPathRegression { int value = 2; }\n',
+                     config_path: 'enabled=true\n'}
+
+            def commit_sources(sources, parent_sha=None):
+                # 仅写入 Git 对象和索引，避免测试依赖 Windows 工作树的长路径写入支持。
+                for name, content in sources.items():
+                    blob = git('hash-object', '-w', '--stdin', stdin=content)
+                    git('update-index', '--add', '--cacheinfo', '100644,' + blob + ',' + name)
+                tree = git('write-tree')
+                args = ('-p', parent_sha) if parent_sha else ()
+                return git('commit-tree', tree, *args, stdin='fixture\n')
+
+            base = commit_sources(before)
+            head = commit_sources(after, base)
+            self.assertGreater(len(str(root / (head + ':' + java_path))), 260)
+            result = collector.collect(
+                {'name': 'demo', 'path': str(root), 'isolated_no_checkout': True,
+                 'range': {'base': base, 'head': head}},
+                capture_java=True, capture_config=True)['net_effect']
+            self.assertEqual(result['java_skipped'], [])
+            self.assertEqual(result['config_skipped'], [])
+            self.assertEqual(result['java_sources'], [
+                {'path': java_path, 'before': before[java_path], 'after': after[java_path]}])
+            self.assertEqual(result['config_sources'], [
+                {'path': config_path, 'before': before[config_path], 'after': after[config_path]}])
+
     def test_range_blob_read_failure_is_skipped_not_empty_source(self):
         collector=module('collect_git')
         with tempfile.TemporaryDirectory() as td:

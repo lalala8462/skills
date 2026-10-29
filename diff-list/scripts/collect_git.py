@@ -31,7 +31,8 @@ def paths(root, a, b):
 
 def read_blob(root, rev, filename):
     """Read one Git blob as bytes; return an error instead of treating failure as empty."""
-    p = subprocess.run(['git', '-C', str(root), 'show', rev + ':' + filename],
+    p = subprocess.run(['git', '-C', str(root), '-c', 'core.longpaths=true',
+                        'show', rev + ':' + filename],
                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
     if p.returncode:
         return None, p.stderr.decode('utf-8', 'replace').strip()[:300]
