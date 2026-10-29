@@ -41,7 +41,7 @@
 
 ## 用例覆盖关联
 
-标准用例先按 [测试点契约](test-point-contract.md) 编译结构化目录，使用 schema_version=2、test_point_catalog 和 purpose_cases 四类数组；每条有 test_point_links 及以下 coverage_links。五列内容保持。单条用例的覆盖关联片段：
+标准用例先按 [测试点契约](test-point-contract.md) 编译结构化目录，使用 schema_version=2、test_point_catalog 和 purpose_cases 四类数组；需求验收覆盖本次功能的正常流程，异常和边界单列。没有单独需求材料时，可登记 reviewed_change 来源，但每条关联规则必须引用本次固定 analysis 的事实和证据；归类不代表正式需求已确认或业务测试已执行。每条有 test_point_links 及以下 coverage_links。五列内容保持。单条用例的覆盖关联片段：
 
 ```json
 {

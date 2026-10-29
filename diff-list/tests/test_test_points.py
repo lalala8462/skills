@@ -238,6 +238,28 @@ class TestPointTest(unittest.TestCase):
         raw = plan(); raw['candidates'] = []
         with self.assertRaisesRegex(ValueError, 'lacks acceptance coverage'): self.compile(raw)
 
+    def test_reviewed_change_accepts_normal_flow_without_formal_requirement(self):
+        raw = plan()
+        raw['requirements'][0]['source'] = dict(kind='reviewed_change',
+            reference='本次固定修订中已复核的退款选单变更', statement='正常请求使用已定位记录的订单号选择交易')
+        candidate = raw['candidates'][0]
+        candidate['conditions'][0]['operator'] = 'eq'
+        candidate['data_groups'] = [{'request.orderNo': 'A', 'record.orderNo': 'A'}]
+        catalog = self.compile(raw)
+        self.assertEqual(catalog['points'][0]['purpose'], 'acceptance')
+        self.assertEqual(catalog['plan']['requirements'][0]['source']['kind'], 'reviewed_change')
+        tp.validate_cases(cases(catalog), analysis())
+
+    def test_reviewed_change_requires_current_analysis_and_evidenced_rules(self):
+        raw = plan(); raw['requirements'][0]['source']['kind'] = 'reviewed_change'
+        with self.assertRaisesRegex(ValueError, 'requires current analysis'):
+            tp.compile_plan(raw)
+        raw['rules'][0]['fact_ids'] = []; raw['rules'][0]['evidence_ids'] = []
+        with self.assertRaisesRegex(ValueError, 'requires evidenced rules'): self.compile(raw)
+        raw = plan(); raw['requirements'][0]['source']['kind'] = 'reviewed_change'
+        raw['rules'][0]['evidence_ids'] = ['outside-evidence']
+        with self.assertRaisesRegex(ValueError, 'evidence must belong'): self.compile(raw)
+
     def test_regression_needs_impact_and_core_registration(self):
         raw = plan(); raw['requirements'] = []
         raw['candidates'][0]['purposes'] = [{'kind': 'core_regression', 'impact_id': 'impact-1'}]

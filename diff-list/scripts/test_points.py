@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from coverage_constraints import check_source_coverage
 
-VERSION = '1.2.0'
+VERSION = '1.3.0'
 PURPOSES = ('acceptance', 'core_regression', 'related_regression', 'boundary')
 PURPOSE_NAMES = ('需求验收', '既有核心流程回归', '关联回归', '业务规则与边界验证')
 RULE_KINDS = {'behavior', 'source', 'selection', 'configuration', 'contract',
@@ -203,13 +203,18 @@ def compile_plan(raw, analysis=None):
         fields(req, ('id', 'source', 'rule_ids'), ('id', 'source', 'rule_ids'), 'requirement')
         source = req['source']
         fields(source, ('kind', 'reference', 'statement'), ('kind', 'reference', 'statement'), 'requirement.source')
-        if source['kind'] not in ('user_input', 'protocol', 'confirmed_constraint'):
+        if source['kind'] not in ('user_input', 'protocol', 'confirmed_constraint', 'reviewed_change'):
             raise ValueError('source code or commit message alone cannot establish acceptance requirements')
         for field in ('reference', 'statement'):
             source[field] = text(source[field], 'requirement.source.' + field)
         req['rule_ids'] = strings(req['rule_ids'], 'requirement.rule_ids', True)
         if any(r not in rules for r in req['rule_ids']):
             raise ValueError('unknown requirement rule')
+        if source['kind'] == 'reviewed_change':
+            if analysis is None:
+                raise ValueError('reviewed change requires current analysis')
+            if any(not rules[r]['fact_ids'] or not rules[r]['evidence_ids'] for r in req['rule_ids']):
+                raise ValueError('reviewed change requires evidenced rules')
     for impact in impacts.values():
         fields(impact, ('id', 'project', 'rule_ids', 'fact_ids', 'evidence_ids', 'description'),
                ('id', 'project', 'rule_ids', 'description'), 'impact')

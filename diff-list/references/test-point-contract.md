@@ -6,12 +6,14 @@
 
 固定顺序为 `acceptance`（需求验收）> `core_regression`（既有核心流程回归）> `related_regression`（关联回归）> `boundary`（业务规则与边界验证）。顺序只决定唯一存放位置，不代表风险等级或执行顺序。每类可为空，不凑数量。
 
-- 需求验收：直接验证已确认的本次业务目标、规则或兼容承诺，包含决定需求是否成立的正向、反向及边界条件。必须关联用户输入、协议或已确认约束；代码和提交说明不能单独充当需求。
+- 需求验收：验证本次新增或调整功能在正常条件下如何工作，即“这次功能改了什么，对应正常逻辑下如何测试”。可依据用户输入、协议、已确认约束，或本次固定源码复核后的功能变更；不要求另外提供正式需求文档。例如唯一可退款交易成功退款、新开关开启后正常返回原始单号。
 - 既有核心流程回归：已登记为核心的既有规则，且本次存在有证据的影响路径。不能铺开无关的整套资金流程回归。
 - 关联回归：共享方法、配置、数据或上下游契约的既有消费者受到本次影响，有对应事实与证据。
-- 业务规则与边界验证：有提取覆盖义务的剩余规则、状态、数量、空值或数据关系场景。
+- 业务规则与边界验证：有提取覆盖义务的异常输入、空值、临界数量、特殊配置组合、歧义数据及风险复现场景，例如无记录、多条可退记录或分账标记不一致。按场景的主要验证目的判断，不能仅因涉及某个状态或数量就将正常流程移出需求验收。
 
-需求来源、规则语义、核心属性及影响说明仍需人工/模型核实；脚本检查来源类别和引用，不声称理解业务或证明运行时影响。若没有正式需求材料，不得编造需求验收：如实记录静态分析边界；结论依赖缺失需求时在对话中澄清。
+先区分本次新逻辑的正常流程、受影响的既有功能以及异常/边界场景，再按上述顺序确定唯一归属。需求来源、正常场景含义、核心属性及影响说明仍需人工/模型核实；脚本检查来源类别和引用，不声称理解业务或证明运行时影响。
+
+从固定源码归纳正常功能时使用 `requirements[].source.kind=reviewed_change`，reference 说明本次修订及复核的功能变化，statement 描述正常处理规则；所关联的每条规则必须包含本次 analysis 中可核对的 fact_ids 和 evidence_ids。提交说明仅作线索，不能单凭标题生成验收结论，也不能将 `reviewed_change` 写成“用户已确认”。若用户或协议已明确预期，仍优先按该预期设计，不能将已识别的错误实现作为正确预期。只有关键业务预期存在分歧或无法核实时才澄清，不因缺少单独需求文件而自动清空需求验收类。
 
 ## 测试点身份与数据
 
@@ -44,7 +46,7 @@
   "analysis_id": "本次analysis_id",
   "requirements": [{
     "id": "REQ-1",
-    "source": {"kind": "user_input", "reference": "本次用户确认的规则", "statement": "选单时使用原记录订单号"},
+    "source": {"kind": "reviewed_change", "reference": "本次指定修订的退款选单变化，已复核固定源码及下游保存逻辑", "statement": "正常请求中使用已定位原记录的订单号选择交易"},
     "rule_ids": ["select-source"]
   }],
   "rules": [{
@@ -57,20 +59,20 @@
   "candidates": [{
     "id": "candidate-1", "rule_id": "select-source",
     "entry": {"kind": "http", "target": "POST /refund"},
-    "conditions": [{"subject": "request.orderNo", "operator": "ne", "other": "record.orderNo"}],
+    "conditions": [{"subject": "request.orderNo", "operator": "eq", "other": "record.orderNo"}],
     "observation": {"surface": "数据库", "target": "退款选中的交易订单号"},
     "expected": {"kind": "source_is", "value": "record.orderNo"},
     "purposes": [{"kind": "acceptance", "requirement_id": "REQ-1"}],
     "obligation_ids": ["实际覆盖义务编号"],
     "source_bindings": {"req.getOrderNo()": "request.orderNo", "original.getOrderNo()": "record.orderNo"},
-    "data_groups": [{"request.orderNo": "A", "record.orderNo": "B"}]
+    "data_groups": [{"request.orderNo": "A", "record.orderNo": "A"}]
   }]
 }
 ```
 
 规则 kind 支持 behavior/source/selection/configuration/contract/state/amount/idempotency/boundary；entry.kind 支持 http/method/event/job/rpc/ui。断言 kind 支持 equals/not_equals/source_is/in/not_in/exists/absent/unchanged/count/state，均必须给明确 value。
 
-requirements 中的每一条 rule_ids 都必须有需求验收候选。requirements 允许为空，但不能删除已有明确需求来绕过覆盖。
+requirements 中的每一条 rule_ids 都必须有需求验收候选。source.kind 支持 user_input、protocol、confirmed_constraint 和 reviewed_change；后者表示按已复核功能变化登记正常流程验收，必须使用当前 analysis 并关联有事实和证据的规则。requirements 允许为空，但不能删除本次已核实的正常功能主线来绕过覆盖，也不能仅因没有正式需求材料而留空。
 
 impacts 中每项含 id、project、rule_ids、fact_ids、evidence_ids、description。回归目的写 `{"kind":"related_regression","impact_id":"IMPACT-1"}`；核心回归使用 core_regression，并要求规则 core=true。boundary 写 `{"kind":"boundary"}` 且必须有 obligation_ids。一个候选可以有多个目的；合并时保存全部来源，脚本选择最高目的。非需求规则必须有源码事实，影响/等价声明必须同时有事实及所属证据；严格校验拒绝跨项目或不存在的引用。
 
@@ -109,7 +111,7 @@ py -3 .\scripts\test_points.py --input G:\tmp\point-plan.json --analysis G:\tmp\
   "purpose_cases": {
     "acceptance": [{
       "case_id": "AC-001",
-      "title": "请求与原记录订单号不一致时按原记录选单",
+      "title": "正常请求按原记录订单号选择交易",
       "preconditions": "准备归属和状态符合规则的原始记录及实际交易",
       "steps": ["逐组使用测试数据申请退款", "检查选中交易"],
       "expected": ["选中交易的订单号来自原记录"],
@@ -120,7 +122,7 @@ py -3 .\scripts\test_points.py --input G:\tmp\point-plan.json --analysis G:\tmp\
       }],
       "test_point_links": [{
         "point_id": "编译出的TP编号",
-        "conditions": [{"subject": "record.orderNo", "operator": "ne", "other": "request.orderNo"}],
+        "conditions": [{"subject": "record.orderNo", "operator": "eq", "other": "request.orderNo"}],
         "expected": {"kind": "source_is", "value": "record.orderNo"},
         "data_group_ids": ["该点全部DATA编号"],
         "observable_evidence_indices": [0]
