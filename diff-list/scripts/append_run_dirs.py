@@ -33,8 +33,8 @@ def input_clones(source):
         return [payload['analysis_clone']]
     projects = payload.get('projects')
     if isinstance(projects, list):
-        return [entry['repository'] for entry in projects
-                if isinstance(entry, dict) and isinstance(entry.get('repository'), str)]
+        return [entry.get('analysis_clone',entry.get('repository')) for entry in projects
+                if isinstance(entry, dict) and isinstance(entry.get('analysis_clone',entry.get('repository')), str)]
     raise ValueError('Evidence JSON has no analysis clone: ' + str(source))
 
 

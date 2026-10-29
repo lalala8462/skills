@@ -17,7 +17,8 @@ def _run(cmd, *, stdin=None):
 
 
 def compose(repo, selected, capture_java=False, capture_config=False,
-            max_java_files=80, max_java_bytes=300000, max_config_files=100, max_config_bytes=300000):
+            max_java_files=80, max_java_bytes=300000, max_config_files=100, max_config_bytes=300000,
+            persist_snapshot=False):
     """selected: ordered [{sha, parent}]. Strictly apply their patches only.
 
     Uses a temporary shared clone with an isolated index. No checked-out source
@@ -33,14 +34,21 @@ def compose(repo, selected, capture_java=False, capture_config=False,
               'last_selected': head, 'changed_files': [], 'net_diff': '',
               'applied_commits': [], 'reason': ''}
     with tempfile.TemporaryDirectory(prefix='diff-list-net-') as tempdir:
-        target = Path(tempdir) / 'isolated'
-        code, _, msg = _run(['git', '-c', 'core.longpaths=true', 'clone', '--quiet', '--shared',
-                             '--no-checkout', str(repo), str(target)])
-        if code:
-            result['reason'] = 'isolated clone failed: ' + msg
-            return result
+        if persist_snapshot:
+            # 持久快照仅允许写入本次创建、尚未检出的分析仓库。
+            if not (repo / '.git').is_dir() or any(p.name != '.git' for p in repo.iterdir()):
+                raise ValueError('persistent snapshot requires an empty no-checkout analysis clone')
+            target = repo
+        else:
+            target = Path(tempdir) / 'isolated'
+            code, _, msg = _run(['git', '-c', 'core.longpaths=true', 'clone', '--quiet', '--shared',
+                                 '--no-checkout', str(repo), str(target)])
+            if code:
+                result['reason'] = 'isolated clone failed: ' + msg
+                return result
         env = os.environ.copy()
         env['GIT_OPTIONAL_LOCKS'] = '0'
+        env['GIT_INDEX_FILE'] = str(Path(tempdir) / 'snapshot-index')
         def git(*args, stdin=None):
             return subprocess.run(['git', '-c', 'core.longpaths=true', '-c', 'core.quotePath=false', '-C', str(target), *args], input=stdin,
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -78,6 +86,17 @@ def compose(repo, selected, capture_java=False, capture_config=False,
         result['changed_files'] = [line for line in
                                    names.stdout.decode('utf-8', 'replace').splitlines() if line]
         result['status'] = 'composed' if result['changed_files'] else 'no_net_change'
+        if persist_snapshot:
+            tree = git('write-tree')
+            if tree.returncode:
+                result.update(status='review_required', reason='cannot persist composed source tree')
+                return result
+            result['result_tree'] = tree.stdout.decode('ascii').strip()
+            result['baseline_tree'] = git('rev-parse', baseline + '^{tree}').stdout.decode('ascii').strip()
+            pin = git('update-ref', 'refs/diff-list/snapshots/' + result['result_tree'], result['result_tree'])
+            if pin.returncode:
+                result.update(status='review_required', reason='cannot pin composed source tree')
+                return result
         rename = git('diff', '--cached', '--name-status', '--find-renames', baseline)
         rename_map, change_kinds = {}, {}
         if rename.returncode == 0:

@@ -97,7 +97,7 @@ def _range_commit_review(root, base, head, net_status, max_commits=300,
     return evidence
 
 
-def collect(project, capture_java=False, capture_config=False):
+def collect(project, capture_java=False, capture_config=False, persist_snapshot=False):
     if not isinstance(project, dict) or not project.get('path') or not project.get('name'):
         raise ValueError('Each project requires name and path')
     root = Path(git(project['path'], 'rev-parse', '--show-toplevel').strip()).resolve()
@@ -122,6 +122,9 @@ def collect(project, capture_java=False, capture_config=False):
                                 'baseline': a, 'last_selected': b,
                                 'changed_files': changed, 'net_diff': diff,
                                 'applied_commits': [], 'reason': ''}
+        if persist_snapshot:
+            result['net_effect']['baseline_tree'] = git(root, 'rev-parse', a + '^{tree}').strip()
+            result['net_effect']['result_tree'] = git(root, 'rev-parse', b + '^{tree}').strip()
         if capture_java or capture_config:
             rename_output = git(root, 'diff', '--name-status', '--find-renames', a, b)
             rename_map, change_kinds = {}, {}
@@ -252,7 +255,8 @@ def collect(project, capture_java=False, capture_config=False):
             overlap = sorted(changed & all_paths)
             if overlap:
                 result['unselected_overlaps'].append({'sha':sha,'files':overlap})
-    result['net_effect'] = compose(root, entries, capture_java=capture_java, capture_config=capture_config)
+    result['net_effect'] = compose(root, entries, capture_java=capture_java, capture_config=capture_config,
+                                   persist_snapshot=persist_snapshot)
     selected_history = []
     for e, item in zip(entries, result['selection']):
         selected_history.append({'sha': e['sha'], 'parent': e['parent'],

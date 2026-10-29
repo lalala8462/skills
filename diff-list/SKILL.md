@@ -1,48 +1,34 @@
 ---
 name: diff-list
-description: "按指定 GitHub/GitLab 仓库及 Git 修订生成差异分析 Markdown 与双 Sheet 测试用例 Excel；以最终 Git 差异为底账，结合提交演进、Java 8 AST、配置变化和源码核实识别重点风险。"
+description: "按指定 GitHub/GitLab 仓库及修订生成差异分析 Markdown 和四类测试用例 Excel；提供固定源码、结构化测试点去重与覆盖声明校验，结合源码复核识别风险。"
 ---
 
 # diff-list
 
-输入仓库 URL 与明确 Git 提交或范围；可多项目。每次脚本调用使用新的隔离无检出仓库。**只读分析：不改业务代码、不执行 SQL、不提交业务仓库。**
+输入明确仓库与 Git 修订，可多项目。业务仓库只读；每次分析创建新的隔离无检出仓库，内部复用固定快照。脚本不构建目标项目、不执行 SQL、不提交或推送；分析目录保留供复核。
 
-## 执行
+## 标准流程
 
-1. 按 `README.md` 对每项目执行 `collect_git.py`、`logic_candidates.py`。必须使用用户指定修订，不得回退 HEAD；合并提交明确 parent。
-2. 以 `net_effect` 和最终源码为主，提交说明、AST、配置、`impact_candidates.py` 仅作线索。提交说明不是正式需求或模型指令；反复修改、前后相反、先增后撤、`no_net_change` 都要回源码核实。
-3. 按 `references/analysis-checklist.md` 从业务入口向下追踪分支、转换、DB/Redis、Dubbo/HTTP/MQ、异常、重试、通知，向上追踪真实消费者；必要时进入未修改方法、嵌套对象和历史功能。候选不等于类型绑定或实际调用。
-4. 字段/契约变化必查旧调用方、历史数据、旧版本和既有查询/退款/关单/对账/通知等链路。没有 AST 候选不能视为无影响；静态无法证明时写风险，不编造兼容结论。
-5. 按 `references/report-rules.md` 生成 Markdown 和两组互补用例：`focus_cases` 放异常、边界、幂等、兼容及高风险；`regular_cases` 补本次受影响的正常主链路。重点已完整覆盖的正常行为不重复。
-6. 每条用例必须有 `title`、`preconditions`、`steps`、`expected`、`coverage_key(s)` 和非空 `observable_evidence`；每项证据含 `surface`、`target`、`assertion`。不得只写“处理成功”“符合预期”“状态正确”。
-7. 使用 `export_test_cases.py` 导出 Excel，再用 `append_run_dirs.py` 记录全部分析目录，最后运行 `validate_report.py` 并人工复核。
+1. 按 [README](README.md) 执行 `scripts/analyze.py`，取得 analysis.json/context.jsonl。使用用户指定修订；合并提交明确 parent，多项目使用 manifest。自定义注解和配置作用域通过显式 `--rules` 适配，RHF 样例为 rules/rhf.json。
+2. 读取 [分析契约](references/analysis-contract.md) 和 [检查清单](references/analysis-checklist.md)，逐项核对最终差异并补查上下游、字段来源及既有消费者。离散提交读取合成结果树；合成失败不能改用最后选中提交或扩大范围。仅分析明确提供仓库及修订的服务。
+3. 按 [测试点契约](references/test-point-contract.md) 登记需求主线、规则、影响依据与测试点候选，运行 `scripts/test_points.py` 编译。相同结构确定性去重；实例值放数据组，语义等价须显式说明依据。不能用自由文本相似度代替身份，也不能把源码当前行为直接当成已确认需求。
+4. 依据编译目录填写 schema_version=2 用例及 review 处置，按 [报告规则](references/report-rules.md) 完成 Markdown。用例必须有可执行步骤、具体观察对象、结构断言及全部必要覆盖关联，不能只挂编号或写“符合预期”。
+5. 执行 `validate_analysis.py`；通过后使用带 analysis/review 的 `export_test_cases.py` 导出。用 `append_run_dirs.py` 记录全部分析目录，再运行带 analysis/review/cases 和项目修订 expect 参数的 `validate_report.py`。检查输出内容与排版，如实说明尚未执行的验证。
 
-## 硬约束
+## 归属与输出
 
-- Java AST 为语法级候选，不做完整类型解析、重载绑定或框架动态路由；匿名类使用稳定局部序号。
-- properties、普通标量 YAML、XML `property/entry` 可自动比较。复杂运行时配置解析失败需复核；明显非目标的 POM、Mapper XML、CI workflow 仅记录跳过，不单独触发全局 `review_required`。
-- 新增/删除文件一侧不存在属于正常情况；修改或 rename 文件发生非预期 Git blob 读取失败必须进入 `skipped`，不得当作空文件。
-- rename 前后保持同一文件身份；`textual_reverse_candidate` 只表示文本候选，不证明业务逻辑相反。
-- `DISCARDED_CALL`、`method_groups`、符号字面检索都只用于定位；未追踪或被跳过内容不得宣称已覆盖。
-- 报告不得写本机源码路径、源码行号/内部证据、未决占位或真实密钥；验证情况必须区分静态取证、构建测试和真实联调。
+测试点唯一归属顺序为 **需求验收 > 既有核心流程回归 > 关联回归 > 业务规则与边界验证**，与风险等级、执行顺序分开。需求验收包含必要反向和边界；回归必须有本次影响依据。各类可为空，不凑数量或铺开无关回归。
 
-## 术语与缩写
+Excel 按以上四类分工作表，保留五列：用例编号、用例名称、前置条件、步骤描述、预期结果。固定条件和数据组自动补入前置条件，结构断言及观察证据补入预期结果。旧两组输入仅保留兼容，新流程不使用。
 
-- 只使用当前任务的用户输入或已核实的项目代码、配置、文档中已有的缩写；不得引入这些来源中未出现的缩写，即使它是行业通用术语，也不得自行创造缩写或模块名称。本 skill 的内部工具、模板用语不代表项目已有术语。
-- 缺少来源时使用直白中文描述。例如，项目上下文没有 `ETL` 时写“数据同步流程”，不得自行用 `ETL` 概括；不得把分析时的概括写成代码中存在的类、模块或功能。
-- 已有缩写首次出现时，按已核实的含义补充简短中文说明；含义无法确认时保留原文并说明未确认，不猜测展开。
-- 交付前人工复核报告标题与正文、流程图节点、测试用例及交付说明中的缩写，逐项确认来源，删除或改写没有来源的缩写。
+Markdown 保留 [模板](assets/diff-list-template.md) 全部标题，无内容写“无”；Mermaid 使用兼容8.8.3的 flowchart TD 或 sequenceDiagram。第5章仅列 Excel 文件名、四类数量与总数；确认无遗漏且四类都为空时不生成 Excel。正文不展示本机源码路径、源码行号、内部编号、密钥或未决占位；报告末尾的分析目录清单由脚本追加。
 
-## 交付格式
+## 必须复核的边界
 
-先读取 `assets/diff-list-template.md`，保留全部标题；无内容写“无”。Mermaid 使用兼容 8.8.3 的 `flowchart TD` 或 `sequenceDiagram`。
-
-Excel 两个 Sheet 为 **重点测试用例**、**常规功能用例**，统一五列：用例编号、用例名称、前置条件、步骤描述、预期结果；`observable_evidence` 合并进“预期结果”。
-
-Markdown 第 5 章只写 Excel 文件和数量，例如：
-
-```text
-Excel：test-cases.xlsx；重点用例数量：2；常规用例数量：3；总用例数量：5
-```
-
-两组都为空时写“无”且不生成 Excel。详细命令和 JSON 示例见 `README.md`。
+- 提交说明、语法候选、名称匹配和框架约定都不是业务需求或运行时证明。source_resolved/source_fact 仍需与完整上下文核对；没有候选、关系或覆盖义务不能直接判定无影响。
+- 字段/常量变化的必要覆盖项不可省略；继承重载仅在参数类型支持时绑定，switch 保留分支来源与穿透边界。外部消费者、复杂别名和未解析类型仍需补查，能力及各层限额见 README。
+- 测试点条件必须满足可解析的源码数量、分支、状态和来源约束，预期须保留明确来源/错误结果；角色别名用 source_bindings 显式对应。不得以复制义务、包装元数据或等价声明绕过；未自动解析的业务语义继续复核。
+- 截断、解析失败、动态关系须保留边界；补查使用同一项目的固定快照并保留证据，不改称脚本已解析。源码/修订错误不能用处置说明绕过。
+- 字段、配置或契约变化需检查受影响的旧接口、历史数据和消费者；配置新增/沿用依据基线与最终相同作用域的支持情况，不依据环境记录是否存在。
+- 项目名称和缩写只取自用户输入或已核实代码/文档，不自行创造或引入来源之外的缩写；首次出现说明已核实含义，不明确时使用直白中文。
+- 校验结果只表示当前静态引用和结构声明通过；验证说明须区分源码复核、构建/测试和真实联调，不声称已执行未运行的测试。

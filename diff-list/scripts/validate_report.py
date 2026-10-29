@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Static report validator: structure and hygiene, not semantic/Mermaid parsing."""
 import argparse
+import json
 import re
 import sys
 from pathlib import Path, PureWindowsPath
@@ -142,17 +143,21 @@ def validate(text,template,expected):
         if not re.search(r'\S+\.xlsx\b',export_section,re.I):
             errors.append('测试用例导出章节缺少 Excel 文件名')
         counts = {}
-        for label in ('重点用例数量', '常规用例数量', '总用例数量'):
+        purpose_labels=('需求验收用例数量','既有核心流程回归用例数量','关联回归用例数量','业务规则与边界验证用例数量')
+        labels=purpose_labels if any(label in export_section for label in purpose_labels) else ('重点用例数量','常规用例数量')
+        if labels==purpose_labels and any(label in export_section for label in ('重点用例数量','常规用例数量')):
+            errors.append('测试用例导出章节不能混用四类和旧两类数量')
+        for label in labels+('总用例数量',):
             found = re.search(re.escape(label) + r'\s*[:：]\s*(0|[1-9]\d*)(?!\d)', export_section)
             if not found:
                 errors.append('测试用例导出章节缺少有效' + label)
             else:
                 counts[label] = int(found.group(1))
-        if len(counts) == 3:
+        if len(counts) == len(labels)+1:
             if counts['总用例数量'] < 1:
-                errors.append('总用例数量必须大于 0；两组均无用例时填写无')
-            elif counts['重点用例数量'] + counts['常规用例数量'] != counts['总用例数量']:
-                errors.append('重点、常规用例数量之和与总用例数量不一致')
+                errors.append('总用例数量必须大于 0；所有组均无用例时填写无')
+            elif sum(counts[label] for label in labels) != counts['总用例数量']:
+                errors.append('各类用例数量之和与总用例数量不一致')
         if re.search(r'(?:\*\*)?(?:测试点|测试前提|步骤描述|预期结果)[:：]',export_section):
             errors.append('Excel 测试用例不得重复写入 Markdown 报告')
     special=body.get('## 4. 特殊逻辑与测试关注点','')
@@ -176,19 +181,58 @@ def main(argv=None):
     p.add_argument('report')
     p.add_argument('--template',default=str(Path(__file__).resolve().parents[1]/'assets'/'diff-list-template.md'))
     p.add_argument('--expect',action='append',default=[],help='项目名=40位SHA; repeatable')
+    p.add_argument('--analysis',help='固定取证及覆盖分析结果')
+    p.add_argument('--review',help='模型源码补查与处置记录')
+    p.add_argument('--cases',help='带结构化覆盖关联的用例JSON')
     a=p.parse_args(argv)
     try:
         raw=Path(a.report).read_bytes()
         text=raw.decode('utf-8-sig')
         template=Path(a.template).read_text(encoding='utf-8-sig')
         errors,warnings=validate(text,template,a.expect)
-    except (OSError,UnicodeError) as exc:
+        if any((a.analysis,a.review,a.cases)):
+            if not all((a.analysis,a.review,a.cases)):
+                errors.append('--analysis、--review、--cases 必须一起提供')
+            else:
+                from validate_analysis import validate_files
+                coverage_errors,coverage_warnings=validate_files(a.analysis,a.review,a.cases)
+                errors.extend(coverage_errors);warnings.extend(coverage_warnings)
+                if not coverage_errors:
+                    case_data=json.loads(Path(a.cases).read_text(encoding='utf-8-sig'))
+                    errors.extend(validate_case_counts(text,case_data))
+                    warnings.append('覆盖声明校验通过，不代表业务测试已执行')
+    except (OSError,UnicodeError,ValueError,KeyError,TypeError,IndexError) as exc:
         print('ERROR: '+str(exc),file=sys.stderr)
         return 2
     for msg in errors: print('ERROR: '+msg)
     for msg in warnings: print('NOTE: '+msg)
     print('RESULT: '+('FAIL' if errors else 'PASS'))
     return 1 if errors else 0
+
+
+def validate_case_counts(text,cases):
+    """有用例材料时，报告数量必须与实际导出结果一致。"""
+    from export_test_cases import normalize
+    if cases.get('schema_version')==2:
+        from test_points import PURPOSES,PURPOSE_NAMES,validate_cases
+        validate_cases(cases)
+        counts={name+'用例数量':len(cases['purpose_cases'][p]) for p,name in zip(PURPOSES,PURPOSE_NAMES)}
+    elif not cases.get('focus_cases') and not cases.get('regular_cases'):
+        counts={'重点用例数量':0,'常规用例数量':0}
+    else:
+        rows=normalize(cases)
+        counts={'重点用例数量':len(rows['focus']),'常规用例数量':len(rows['regular'])}
+    section=sections(text,[]).get('## 5. 测试用例导出','')
+    total=sum(counts.values())
+    if total==0:
+        return [] if section=='无' else ['没有用例时导出章节必须填写无']
+    counts['总用例数量']=total
+    errors=[]
+    for label,value in counts.items():
+        match=re.search(re.escape(label)+r'\s*[:：]\s*(0|[1-9]\d*)(?!\d)',section)
+        if not match or int(match.group(1))!=value:
+            errors.append('报告数量与用例材料不一致: '+label)
+    return errors
 
 
 if __name__=='__main__':

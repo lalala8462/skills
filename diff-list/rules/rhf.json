@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "config_annotations": ["ParamKey"],
+  "config_scopes": {
+    "com.fingard.rh.rhf.webapi.model.dto.cfg.EntConfig": "enterprise",
+    "com.fingard.rh.rhf.webapi.model.dto.cfg.MchConfig": "merchant_or_organization",
+    "com.fingard.rh.rhf.webapi.model.dto.cfg.SysConfig": "system"
+  }
+}
