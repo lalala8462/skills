@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""Deterministic config-key diff candidates. No runtime overrides are inferred."""
-import hashlib
+"""Deterministic configuration-key change extraction."""
 import re
 import xml.etree.ElementTree as ET
 
@@ -23,7 +22,6 @@ def _likely_runtime_yaml(path):
         return True
     return False
 SENSITIVE = re.compile(r'(password|secret|token|api.?key|private.?key|credential|cert|sign)', re.I)
-HIGH_RISK = re.compile(r'(pay|refund|trade|amount|money|retry|timeout|lock|switch|enable|callback|idempot|route|transaction|channel)', re.I)
 
 
 def properties(text):
@@ -133,8 +131,8 @@ def parse(path, content):
     raise ValueError('unsupported config format')
 
 
-def extract_config_candidates(pairs):
-    findings, skipped = [], []
+def extract_config_changes(pairs):
+    changes, issues = [], []
     for pair in pairs:
         path = pair['path']
         before = after = None
@@ -159,7 +157,7 @@ def extract_config_candidates(pairs):
             elif after_error == no_xml_mapping and before_error is None:
                 after, after_error = {}, None
             elif before_error == no_xml_mapping and after_error == no_xml_mapping:
-                skipped.append({'path': path, 'reason': no_xml_mapping,
+                issues.append({'path': path, 'reason': no_xml_mapping,
                                 'kind': 'not_config_mapping',
                                 'review_required': False})
                 continue
@@ -174,7 +172,7 @@ def extract_config_candidates(pairs):
                 # global review flag unless the path looks like runtime config.
                 review_required = False
                 kind = 'non_runtime_yaml'
-            skipped.append({'path': path, 'reason': error, 'kind': kind,
+            issues.append({'path': path, 'reason': error, 'kind': kind,
                             'review_required': review_required})
             continue
         for key in sorted(set(before) | set(after)):
@@ -182,7 +180,6 @@ def extract_config_candidates(pairs):
             if old == new:
                 continue
             operation = 'added' if old is None else ('removed' if new is None else 'modified')
-            score = 85 if HIGH_RISK.search(key) else 65
             def show(value):
                 if value is None:
                     return None
@@ -191,11 +188,6 @@ def extract_config_candidates(pairs):
                 if re.fullmatch(r'(?:true|false|yes|no|on|off|null|\d{1,9})', value, re.I):
                     return value
                 return '<value>'
-            findings.append({'path': path, 'method': '<config>', 'category': 'CONFIG',
-                             'change': operation, 'description': 'config key ' + key,
-                             'key': key, 'before': show(old), 'after': show(new),
-                             'priority': 'high' if score >= 75 else 'medium',
-                             'priority_score': score,
-                             'risk_hint': '核对配置作用域、覆盖顺序、默认值及对应业务分支',
-                             'actual_behavior_verified': False, 'binding_verified': False})
-    return findings, skipped
+            changes.append({'path': path, 'change': operation, 'key': key,
+                            'before': show(old), 'after': show(new)})
+    return changes, issues

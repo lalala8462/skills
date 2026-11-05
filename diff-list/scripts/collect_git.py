@@ -97,7 +97,7 @@ def _range_commit_review(root, base, head, net_status, max_commits=300,
     return evidence
 
 
-def collect(project, capture_java=False, capture_config=False, persist_snapshot=False):
+def collect(project, capture_config=False, persist_snapshot=False):
     if not isinstance(project, dict) or not project.get('path') or not project.get('name'):
         raise ValueError('Each project requires name and path')
     root = Path(git(project['path'], 'rev-parse', '--show-toplevel').strip()).resolve()
@@ -125,7 +125,7 @@ def collect(project, capture_java=False, capture_config=False, persist_snapshot=
         if persist_snapshot:
             result['net_effect']['baseline_tree'] = git(root, 'rev-parse', a + '^{tree}').strip()
             result['net_effect']['result_tree'] = git(root, 'rev-parse', b + '^{tree}').strip()
-        if capture_java or capture_config:
+        if capture_config:
             rename_output = git(root, 'diff', '--name-status', '--find-renames', a, b)
             rename_map, change_kinds = {}, {}
             for line in rename_output.splitlines():
@@ -137,36 +137,8 @@ def collect(project, capture_java=False, capture_config=False, persist_snapshot=
                 change_kinds[target] = kind
                 if len(columns) == 3 and kind == 'R':
                     rename_map[target] = columns[1]
-        if capture_java:
-            result['net_effect']['java_sources'] = []
-            result['net_effect']['java_skipped'] = []
-            selected_java = [name for name in changed if name.endswith('.java')]
-            for name in selected_java[80:]:
-                result['net_effect']['java_skipped'].append({'path': name, 'reason': 'file count limit'})
-            for name in selected_java[:80]:
-                kind = change_kinds.get(name, 'M')
-                before, before_error = read_blob(root, a, rename_map.get(name, name))
-                after, after_error = read_blob(root, b, name)
-                if before_error and kind != 'A':
-                    result['net_effect']['java_skipped'].append(
-                        {'path': name, 'reason': 'cannot read baseline blob: ' + before_error})
-                    continue
-                if after_error and kind != 'D':
-                    result['net_effect']['java_skipped'].append(
-                        {'path': name, 'reason': 'cannot read target blob: ' + after_error})
-                    continue
-                before = b'' if before_error else before
-                after = b'' if after_error else after
-                if max(len(before), len(after)) > 300000:
-                    result['net_effect']['java_skipped'].append({'path':name,'reason':'file size limit'})
-                    continue
-                try:
-                    result['net_effect']['java_sources'].append({'path':name,
-                        'before':before.decode('utf-8'),'after':after.decode('utf-8')})
-                except UnicodeDecodeError:
-                    result['net_effect']['java_skipped'].append({'path':name,'reason':'non-UTF-8 source'})
         if capture_config:
-            from config_candidates import SUPPORTED_EXTENSIONS
+            from config_changes import SUPPORTED_EXTENSIONS
             result['net_effect']['config_sources'] = []
             result['net_effect']['config_skipped'] = []
             selected = [name for name in changed if name.lower().endswith(SUPPORTED_EXTENSIONS)]
@@ -255,7 +227,7 @@ def collect(project, capture_java=False, capture_config=False, persist_snapshot=
             overlap = sorted(changed & all_paths)
             if overlap:
                 result['unselected_overlaps'].append({'sha':sha,'files':overlap})
-    result['net_effect'] = compose(root, entries, capture_java=capture_java, capture_config=capture_config,
+    result['net_effect'] = compose(root, entries, capture_config=capture_config,
                                    persist_snapshot=persist_snapshot)
     selected_history = []
     for e, item in zip(entries, result['selection']):
@@ -280,7 +252,6 @@ def main(argv=None):
     p.add_argument('--rev', action='append', help='Commit SHA or SHA:parentIndex; repeat to select multiple commits')
     p.add_argument('--base', help='Base for explicit range, used together with --head')
     p.add_argument('--head', help='Head for explicit range, used together with --base')
-    p.add_argument('--cache-dir', help='Deprecated; custom cache directories are not supported')
     p.add_argument('--output', required=True, help='Local JSON evidence path (sensitive)')
     p.add_argument('--max-diff-bytes', type=int, default=20000000,
                    help='Abort if combined diffs exceed this many UTF-8 bytes')
@@ -292,7 +263,7 @@ def main(argv=None):
             raise ValueError('Range requires both --base and --head')
         if args.max_diff_bytes < 1:
             raise ValueError('--max-diff-bytes must be positive')
-        root, name = prepare_repo(args.repo, args.cache_dir)
+        root, name = prepare_repo(args.repo)
         selection = {'name': name, 'path': str(root), 'isolated_no_checkout': True}
         if args.rev:
             selection['revisions'] = [({'rev': v.rsplit(':', 1)[0], 'parent': int(v.rsplit(':', 1)[1])}

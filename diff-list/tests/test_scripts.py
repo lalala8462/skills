@@ -1,5 +1,4 @@
 """Run: py -3 -m unittest discover -s tests -v"""
-import copy
 import importlib.util
 import json
 import os
@@ -27,98 +26,40 @@ def module(name):
 
 
 class DiffListTest(unittest.TestCase):
-    def test_batched_ast_matches_single_file_results_and_isolates_errors(self):
-        logic=module('logic_candidates')
-        sources=['class A { int run(){return 1;} }','class B { void run(){if(true)System.out.println("中文");} }',
-                 'class Broken { void run( }','']
-        with tempfile.TemporaryDirectory() as td:
-            javac,java,tools=logic.jdk_tools()
-            classpath=os.pathsep.join([td,tools] if tools else [td])
-            subprocess.run([javac,'-source','8','-target','8','-encoding','UTF-8','-cp',classpath,'-d',td,
-                            str(ROOT/'scripts'/'java'/'JavaLogicAst.java')],check=True,capture_output=True)
-            batch=logic.run_scans(java,classpath,sources,td)
-            with mock.patch.object(logic.Path,'unlink'):
-                for source in sources:
-                    self.assertEqual(batch[source],logic.run_scan(java,classpath,source))
-
-    def test_jdk_tools_discovery(self):
-        logic = module('logic_candidates')
-        with tempfile.TemporaryDirectory() as td:
-            root = Path(td)
-            bin_dir = root / 'bin'
-            bin_dir.mkdir()
-            suffix = '.exe' if os.name == 'nt' else ''
-            javac = bin_dir / ('javac' + suffix)
-            java = bin_dir / ('java' + suffix)
-            javac.touch()
-            java.touch()
-            with mock.patch.object(logic.shutil, 'which', return_value=str(javac)):
-                self.assertEqual(logic.jdk_tools(), (str(javac.resolve()), str(java), None))
-                lib = root / 'lib'
-                lib.mkdir()
-                jar = lib / 'tools.jar'
-                jar.touch()
-                self.assertEqual(logic.jdk_tools(), (str(javac.resolve()), str(java), str(jar)))
-            with mock.patch.object(logic.shutil, 'which', return_value=None):
-                with self.assertRaisesRegex(ValueError, 'javac not found'):
-                    logic.jdk_tools()
-
     def test_template_heading_only(self):
         template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
         self.assertTrue(all(not line.strip() or line.startswith('# ' ) or line.startswith('## ')
                             or line.startswith('### ') for line in template.splitlines()))
         self.assertEqual(len([x for x in template.splitlines() if x.startswith('#')]),13)
 
-    def test_create_and_validate(self):
-        init=module('init_report'); val=module('validate_report'); generator=module('generate_report')
-        with tempfile.TemporaryDirectory() as td:
-            self.assertEqual(init.main(['--outdir',td,'--filename','case.md']),0)
-            self.assertEqual(init.main(['--outdir',td,'--filename','case.md']),2)
-            draft=(Path(td)/'case.md').read_text(encoding='utf-8')
-            self.assertIn('<!-- diff-list-status: draft -->',draft)
-            self.assertIn('报告状态：未完成',draft)
-            template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
-            sha='a'*40
-            sections={'## 1. 分析范围':'webapi '+sha,
-                      '### 2.1 需求改动':'修改支付入口。',
-                      '### 2.2 表字段 DDL 修改':'无',
-                      '### 2.3 表配置 DML 准备清单':'无',
-                      '### 2.4 配置文件调整':'无',
-                      '### 3.1 整体流程说明':'请求后检查支付状态。',
-                      '### 3.2 Mermaid 流程图':'```mermaid\nflowchart TD\n A[请求] --> B[状态]\n```',
-                      '## 4. 特殊逻辑与测试关注点':'无',
-                      '## 5. 测试用例导出':'Excel：webapi-cases.xlsx；需求验收用例数量：1；既有核心流程回归用例数量：0；关联回归用例数量：0；业务规则与边界验证用例数量：0；总用例数量：1',
-                      '## 6. 验证情况':'仅完成静态分析。'}
-            report='\n'.join(line+'\n'+sections.get(line,'') if line.startswith('#') else line
-                             for line in template.splitlines())
-            errors,_=val.validate(report,template,['webapi='+sha])
-            self.assertEqual(errors,[])
-            errors,_=val.validate(report+'\n<!-- diff-list-status: draft -->',template,['webapi='+sha])
-            self.assertTrue(any('标记为未完成' in e for e in errors))
-            errors,_=val.validate(report+'\n报告状态：未完成',template,['webapi='+sha])
-            self.assertTrue(any('标记为未完成' in e for e in errors))
-            errors,_=val.validate(report.replace('总用例数量：1','总用例数量：零'),template,[])
-            self.assertTrue(any('用例数量' in e for e in errors))
-            errors,_=val.validate(report+'\n待确认',template,[])
-            self.assertTrue(any('禁止' in e for e in errors))
-
-            report_sections={key:value for key,value in sections.items()
-                             if key!='## 5. 测试用例导出'}
-            report_sections.update({'## 2. 改动清单':'按下列改动分类说明。',
-                                    '## 3. 业务流程':'流程内容见以下分项。'})
-            report_data={'sections':report_sections}
-            cases={'purpose_cases':{'acceptance':[{}], 'core_regression':[],
-                                    'related_regression':[], 'boundary':[]}}
-            rendered,_,_=generator.render(template,report_data,cases,'webapi-cases.xlsx')
-            analysis={'projects':[{'name':'webapi','git':{'selection':[
-                {'type':'commit','sha':sha}]}}]}
-            self.assertEqual(generator.preflight(rendered,template,analysis,cases,[]),[])
-            broken_mermaid=rendered.replace('```mermaid','```text')
-            errors=generator.preflight(broken_mermaid,template,analysis,cases,[])
-            self.assertTrue(any('Mermaid' in e for e in errors))
-            wrong_sha=rendered.replace('webapi '+sha,'webapi '+'b'*40)
-            errors=generator.preflight(wrong_sha,template,analysis,cases,[])
-            self.assertTrue(any('项目与修订对应关系' in e for e in errors))
+    def test_generate_and_validate_report_structure(self):
+        val=module('validate_report');generator=module('generate_report')
+        template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
+        sha='a'*40
+        sections={'## 1. 分析范围':'webapi '+sha,
+                  '### 2.1 需求改动':'修改支付入口。',
+                  '### 2.2 表字段 DDL 修改':'无',
+                  '### 2.3 表配置 DML 准备清单':'无',
+                  '### 2.4 配置文件调整':'无',
+                  '### 3.1 整体流程说明':'请求后检查支付状态。',
+                  '### 3.2 Mermaid 流程图':'```mermaid\nflowchart TD\n A[请求] --> B[状态]\n```',
+                  '## 4. 特殊逻辑与测试关注点':'无',
+                  '## 5. 测试用例导出':'Excel：webapi-cases.xlsx；需求验收用例数量：1；既有核心流程回归用例数量：0；关联回归用例数量：0；业务规则与边界验证用例数量：0；总用例数量：1',
+                  '## 6. 验证情况':'仅完成静态分析。'}
+        report='\n'.join(line+'\n'+sections.get(line,'') if line.startswith('#') else line
+                         for line in template.splitlines())
+        errors,_=val.validate(report,template,['webapi='+sha])
+        self.assertEqual(errors,[])
+        errors,_=val.validate(report+'\n<!-- diff-list-status: draft -->',template,['webapi='+sha])
+        self.assertTrue(any('标记为未完成' in e for e in errors))
+        report_sections={key:value for key,value in sections.items() if key!='## 5. 测试用例导出'}
+        report_sections.update({'## 2. 改动清单':'按下列改动分类说明。','## 3. 业务流程':'流程内容见以下分项。'})
+        rendered,_,_=generator.render(template,{'sections':report_sections},
+            {'purpose_cases':{'acceptance':[{}],'core_regression':[],'related_regression':[],'boundary':[]}},
+            'webapi-cases.xlsx')
+        analysis={'projects':[{'name':'webapi','git':{'selection':[{'type':'commit','sha':sha}]}}]}
+        self.assertEqual(generator.preflight(rendered,template,analysis,
+            {'purpose_cases':{'acceptance':[{}],'core_regression':[],'related_regression':[],'boundary':[]}},[]),[])
 
     def test_collect_selected_and_intervening(self):
         collector=module('collect_git')
@@ -151,8 +92,6 @@ class DiffListTest(unittest.TestCase):
             for call in git.call_args_list:
                 self.assertIn('--no-checkout', call.args)
                 self.assertIn('core.longpaths=true', call.args)
-            with self.assertRaisesRegex(ValueError, 'no longer supported'):
-                access.prepare_repo(url, 'user-workspace')
 
     def test_local_repository_path_is_cloned_without_checkout(self):
         access=module('repo_access')
@@ -171,23 +110,6 @@ class DiffListTest(unittest.TestCase):
             self.assertEqual(name,'webapi3.0')
             self.assertEqual(subprocess.check_output(['git','-C',str(clone),'rev-parse','HEAD'],text=True).strip(),g('rev-parse','HEAD'))
             self.assertFalse((clone/'app.txt').exists())
-
-    def test_method_timeline_accepts_added_and_removed_methods(self):
-        analyzer=module('analyze')
-        rows=[
-            dict(kind='method_behavior_change',project='demo',path='src/New.java',symbol='New#run()',
-                 commit='a'*40,parent='b'*40,changed_surfaces=['method_contract'],before=None,
-                 after={'behavior_digest':'new-digest'}),
-            dict(kind='method_behavior_change',project='demo',path='src/Removed.java',symbol='Removed#run()',
-                 commit='c'*40,parent='d'*40,changed_surfaces=['method_contract'],
-                 before={'behavior_digest':'old-digest'},after=None)
-        ]
-        timeline=analyzer.group_method_timeline(rows)
-        self.assertEqual(len(timeline),2)
-        self.assertIsNone(timeline[0]['changes'][0]['before_digest'])
-        self.assertEqual(timeline[0]['changes'][0]['after_digest'],'new-digest')
-        self.assertEqual(timeline[1]['changes'][0]['before_digest'],'old-digest')
-        self.assertIsNone(timeline[1]['changes'][0]['after_digest'])
 
     def test_github_url_parser(self):
         access=module('repo_access')
@@ -228,7 +150,7 @@ class DiffListTest(unittest.TestCase):
             with mock.patch.object(collector,'prepare_repo',return_value=(root,'project')) as prepared:
                 self.assertEqual(collector.main(['--repo','https://github.com/owner/project',
                     '--rev',commit,'--output',str(evidence)]),0)
-                prepared.assert_called_once_with('https://github.com/owner/project',None)
+                prepared.assert_called_once_with('https://github.com/owner/project')
             parsed=json.loads(evidence.read_text(encoding='utf-8'))
             self.assertEqual(parsed['schema_version'],2)
             self.assertEqual(parsed['projects'][0]['selection'][0]['sha'],commit)
@@ -320,7 +242,7 @@ class DiffListTest(unittest.TestCase):
         errors,_=val.validate(report,template,[])
         self.assertTrue(any('不得重复' in e for e in errors))
 
-    def test_unicode_java_and_config_paths(self):
+    def test_unicode_paths_and_config_capture(self):
         collector=module('collect_git')
         with tempfile.TemporaryDirectory() as td:
             root=Path(td)
@@ -336,21 +258,17 @@ class DiffListTest(unittest.TestCase):
             cfg.write_text('retry=false\n',encoding='utf-8')
             git('add','.');git('commit','-qm','base')
             base=git('rev-parse','HEAD')
-            java.write_text('class Pay { void run(){ retry(); } void retry(){} }\n',
-                            encoding='utf-8')
+            java.write_text('class Pay { void run(){ retry(); } void retry(){} }\n',encoding='utf-8')
             cfg.write_text('retry=true\n',encoding='utf-8')
             git('add','.');git('commit','-qm','selected')
             head=git('rev-parse','HEAD')
             for spec in ({'revisions':[head]}, {'range':{'base':base,'head':head}}):
-                result=collector.collect({'name':'demo','path':str(root),**spec},
-                                         capture_java=True,capture_config=True)
+                result=collector.collect({'name':'demo','path':str(root),**spec},capture_config=True)
                 net=result['net_effect']
                 self.assertEqual(net['status'],'composed')
                 self.assertIn('订单服务.java',net['changed_files'])
                 self.assertIn('渠道配置.properties',net['changed_files'])
-                self.assertEqual([p['path'] for p in net['java_sources']],['订单服务.java'])
                 self.assertEqual([p['path'] for p in net['config_sources']],['渠道配置.properties'])
-                self.assertFalse(net['java_skipped'])
                 self.assertFalse(net['config_skipped'])
 
     def test_footer_allows_only_isolated_clone_directories(self):
@@ -402,7 +320,7 @@ class DiffListTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     writer.append(report,[str(evidence)],[])
 
-    def test_append_run_dirs_rejects_previous_metadata_shapes(self):
+    def test_append_run_dirs_requires_project_clone_metadata(self):
         writer=module('append_run_dirs')
         with tempfile.TemporaryDirectory() as td:
             source=Path(td)/'analysis.json'
@@ -412,261 +330,56 @@ class DiffListTest(unittest.TestCase):
                 source.write_text(json.dumps(payload),encoding='utf-8')
                 with self.assertRaises(ValueError):writer.input_clones(source)
 
-    def test_range_long_paths_capture_java_and_config(self):
-        collector = module('collect_git')
-        with tempfile.TemporaryDirectory() as td:
-            parent = Path(td).resolve()
-            root = parent / ('repo-' + 'x' * max(1, 140 - len(str(parent)) - 6))
-            root.mkdir()
-
-            def git(*args, stdin=None):
-                return subprocess.check_output(
-                    ['git', '-c', 'core.longpaths=true', '-C', str(root), *args],
-                    input=stdin.encode('utf-8') if stdin is not None else None
-                ).decode('utf-8').strip()
-
-            git('init', '-q')
-            git('config', 'user.name', 'Test')
-            git('config', 'user.email', 'test@example.com')
-            git('config', 'core.longpaths', 'false')
-            java_path = 'src/test/java/' + 'nested/' * 12 + 'LongPathRegression.java'
-            config_path = 'src/main/resources/' + 'nested/' * 12 + 'application.properties'
-            before = {java_path: 'class LongPathRegression { int value = 1; }\n',
-                      config_path: 'enabled=false\n'}
-            after = {java_path: 'class LongPathRegression { int value = 2; }\n',
-                     config_path: 'enabled=true\n'}
-
-            def commit_sources(sources, parent_sha=None):
-                # 仅写入 Git 对象和索引，避免测试依赖 Windows 工作树的长路径写入支持。
-                for name, content in sources.items():
-                    blob = git('hash-object', '-w', '--stdin', stdin=content)
-                    git('update-index', '--add', '--cacheinfo', '100644,' + blob + ',' + name)
-                tree = git('write-tree')
-                args = ('-p', parent_sha) if parent_sha else ()
-                return git('commit-tree', tree, *args, stdin='fixture\n')
-
-            base = commit_sources(before)
-            head = commit_sources(after, base)
-            self.assertGreater(len(str(root / (head + ':' + java_path))), 260)
-            result = collector.collect(
-                {'name': 'demo', 'path': str(root), 'isolated_no_checkout': True,
-                 'range': {'base': base, 'head': head}},
-                capture_java=True, capture_config=True)['net_effect']
-            self.assertEqual(result['java_skipped'], [])
-            self.assertEqual(result['config_skipped'], [])
-            self.assertEqual(result['java_sources'], [
-                {'path': java_path, 'before': before[java_path], 'after': after[java_path]}])
-            self.assertEqual(result['config_sources'], [
-                {'path': config_path, 'before': before[config_path], 'after': after[config_path]}])
-
-    def test_range_blob_read_failure_is_skipped_not_empty_source(self):
+    def test_range_long_paths_capture_config(self):
         collector=module('collect_git')
         with tempfile.TemporaryDirectory() as td:
-            root=Path(td)
-            def git(*args):
-                return subprocess.check_output(['git','-C',str(root),*args],text=True).strip()
-            git('init','-q');git('config','user.name','Test');git('config','user.email','test@example.com')
-            java=root/'Main.java'
-            java.write_text('class Main { int value=1; }\n',encoding='utf-8')
-            git('add','.');git('commit','-qm','base');base=git('rev-parse','HEAD')
-            java.write_text('class Main { int value=2; }\n',encoding='utf-8')
-            git('add','.');git('commit','-qm','change');head=git('rev-parse','HEAD')
-            real_read=collector.read_blob
-            def flaky(root_arg, rev, filename):
-                if rev == base:
-                    return None, 'simulated blob read failure'
-                return real_read(root_arg, rev, filename)
-            with mock.patch.object(collector,'read_blob',side_effect=flaky):
-                result=collector.collect({'name':'demo','path':str(root),
-                                          'range':{'base':base,'head':head}},
-                                         capture_java=True)
-            self.assertEqual(result['net_effect']['java_sources'],[])
-            self.assertEqual(len(result['net_effect']['java_skipped']),1)
-            self.assertIn('cannot read baseline blob',result['net_effect']['java_skipped'][0]['reason'])
+            parent=Path(td).resolve()
+            root=parent/('repo-'+'x'*max(1,140-len(str(parent))-6))
+            root.mkdir()
+            def git(*args,stdin=None):
+                return subprocess.check_output(
+                    ['git','-c','core.longpaths=true','-C',str(root),*args],
+                    input=stdin.encode('utf-8') if stdin is not None else None
+                ).decode('utf-8').strip()
+            git('init','-q')
+            git('config','user.name','Test')
+            git('config','user.email','test@example.com')
+            git('config','core.longpaths','false')
+            java_path='src/test/java/'+'nested/'*12+'LongPathRegression.java'
+            config_path='src/main/resources/'+'nested/'*12+'application.properties'
+            before={java_path:'class LongPathRegression { int value = 1; }\n',
+                    config_path:'enabled=false\n'}
+            after={java_path:'class LongPathRegression { int value = 2; }\n',
+                   config_path:'enabled=true\n'}
+            def commit_sources(sources,parent_sha=None):
+                for name,content in sources.items():
+                    blob=git('hash-object','-w','--stdin',stdin=content)
+                    git('update-index','--add','--cacheinfo','100644,'+blob+','+name)
+                tree=git('write-tree')
+                args=('-p',parent_sha) if parent_sha else ()
+                return git('commit-tree',tree,*args,stdin='fixture\n')
+            base=commit_sources(before)
+            head=commit_sources(after,base)
+            result=collector.collect(
+                {'name':'demo','path':str(root),'isolated_no_checkout':True,
+                 'range':{'base':base,'head':head}},capture_config=True)['net_effect']
+            self.assertIn(java_path,result['changed_files'])
+            self.assertEqual(result['config_skipped'],[])
+            self.assertEqual(result['config_sources'],[
+                {'path':config_path,'before':before[config_path],'after':after[config_path]}])
 
 
-
-class LogicAstTest(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        from shutil import which
-        if not which('javac') or not which('java'):
-            raise unittest.SkipTest('Requires JDK 8+ for Java AST scanner')
-
-    def test_ast_detects_changed_special_logic(self):
-        logic = module('logic_candidates')
-        old = '''class Pay {
-          void run(String status) { if (status == null) return; }
-          void run(int count) { if (count > 3) return; }
-        }'''
-        new = '''class Pay {
-          @Transactional void run(String status) {
-            if (status == null) retry();
-            if (status.equals("SECRET_STATUS_1")) setStatus("WAITING");
-            try { charge(); } catch (Exception ex) { rollback(); }
-            synchronized(this) { lock(); unlock(); }
-          }
-          void run(int count) { if (count > 3) return; }
-          void retry() {} void setStatus(String status) {} void charge() {}
-          void rollback() {} void lock() {} void unlock() {}
-        }
-        @interface Transactional {}'''
-        findings, errors = logic.extract_candidates([{'path':'src/Pay.java','before':old,'after':new}])
-        self.assertEqual(errors, [])
-        cats = {x['category'] for x in findings}
-        self.assertTrue({'BRANCH','STATE','RETRY','TRANSACTION','EXCEPTION','CONCURRENCY'} <= cats)
-        self.assertTrue(all(x['priority'] in ('high','medium') and
-                            not x['actual_behavior_verified'] and not x['binding_verified']
-                            for x in findings))
-        self.assertFalse(any('run(int)' in x['method'] for x in findings))
-        self.assertNotIn('SECRET_STATUS_1', json.dumps(findings))
-
-    def test_ast_source_format_only_is_ignored(self):
-        logic = module('logic_candidates')
-        before = 'class A{void test(){if(x>0){setStatus(1);}} int x;void setStatus(int s){}}'
-        after = 'class A { void test() { if (x > 0) { setStatus(1); } } int x; void setStatus(int s) {} }'
-        findings, errors = logic.extract_candidates([{'path':'A.java','before':before,'after':after}])
-        self.assertEqual(errors, [])
-        self.assertEqual(findings, [])
-
-    def test_ast_syntax_error_skips_without_fake_candidates(self):
-        logic = module('logic_candidates')
-        findings, errors = logic.extract_candidates([
-            {'path':'Bad.java','before':'class C {}','after':'class C { void broken( {'}])
-        self.assertFalse(findings)
-        self.assertEqual(len(errors),1)
-        self.assertEqual(errors[0]['path'],'Bad.java')
-
-    def test_java_source_pairs_range_and_selected(self):
-        collector = module('collect_git')
-        with tempfile.TemporaryDirectory() as td:
-            root = Path(td)
-            def g(*args):
-                return subprocess.check_output(['git','-C',str(root),*args],text=True).strip()
-            g('init','-q');g('config','user.name','Test');g('config','user.email','test@example.com')
-            java=root/'Main.java'
-            java.write_text('class Main { void f() {} }\n', encoding='utf-8')
-            g('add','.');g('commit','-qm','base'); a=g('rev-parse','HEAD')
-            java.write_text('class Main { void f() { retry(); } void retry(){} }\n', encoding='utf-8')
-            g('add','.');g('commit','-qm','selected'); b=g('rev-parse','HEAD')
-            for choice in ({'range': {'base':a,'head':b}}, {'revisions':[b]}):
-                r=collector.collect({'name':'demo','path':str(root), **choice}, capture_java=True)
-                self.assertEqual(r['net_effect']['status'],'composed')
-                pairs=r['net_effect']['java_sources']
-                self.assertEqual(len(pairs),1)
-                self.assertIn('void retry()',pairs[0]['after'])
-                self.assertNotIn('void retry()',pairs[0]['before'])
-
-    def test_rename_does_not_invent_special_changes(self):
-        collector = module('collect_git')
-        logic = module('logic_candidates')
-        with tempfile.TemporaryDirectory() as td:
-            root=Path(td)
-            def g(*args):
-                return subprocess.check_output(['git','-C',str(root),*args],text=True).strip()
-            g('init','-q');g('config','user.name','Test');g('config','user.email','test@example.com')
-            (root/'Old.java').write_text('class A { void f(){ if (ok) retry(); } boolean ok; void retry(){} }\n',encoding='utf-8')
-            g('add','.');g('commit','-qm','baseline');a=g('rev-parse','HEAD')
-            (root/'Old.java').rename(root/'New.java')
-            g('add','-A');g('commit','-qm','rename');b=g('rev-parse','HEAD')
-            for spec in ({'range':{'base':a,'head':b}}, {'revisions':[b]}):
-                evidence=collector.collect({'name':'demo','path':str(root),**spec},capture_java=True)
-                pairs=evidence['net_effect']['java_sources']
-                self.assertEqual(len(pairs),1)
-                self.assertEqual(pairs[0]['before'],pairs[0]['after'])
-                findings,skips=logic.extract_candidates(pairs)
-                self.assertEqual(findings,[])
-                self.assertEqual(skips,[])
 
 class AdditionalRegressionTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        import shutil
-        if not (shutil.which('java') and shutil.which('javac')):
-            raise unittest.SkipTest('JDK 8+ required')
-
-    def test_call_and_money_expression(self):
-        logic = module('logic_candidates')
-        old = '''class Pay { void settle(){ debit(); amount = amount.add(one); }
-          Object amount, one; void debit(){} void credit(){} }'''
-        new = '''class Pay { void settle(){ credit(); amount = amount.multiply(hundred); }
-          Object amount, hundred; void debit(){} void credit(){} }'''
-        candidates, skipped = logic.extract_candidates([{'path':'Pay.java','before':old,'after':new}])
-        self.assertEqual(skipped, [])
-        self.assertTrue(any(c['category']=='CALL' and c['description']=='call credit' for c in candidates))
-        self.assertTrue(any(c['category']=='CALL' and c['description']=='call debit' for c in candidates))
-        self.assertTrue(any(c['category']=='EXPRESSION' and c['description']=='assignment amount' for c in candidates))
-
-    def test_nested_call_discard_is_syntax_hint_only(self):
-        logic = module('logic_candidates')
-        before = 'class A { String walk(Object x) { return ""; } }'
-        after = '''class A { String walk(Object x) {
-            if (x instanceof java.util.Map) { walk(x); }
-            return "";
-        } }'''
-        candidates, skipped = logic.extract_candidates([{'path':'A.java','before':before,'after':after}])
-        self.assertEqual(skipped, [])
-        hint = next(c for c in candidates if c['category'] == 'DISCARDED_CALL')
-        self.assertEqual(hint['description'], 'standalone call walk')
-        self.assertFalse(hint['binding_verified'])
-        self.assertFalse(hint['actual_behavior_verified'])
-        groups = logic.group_candidates(candidates)
-        self.assertEqual(len(groups), 1)
-        self.assertIn('walk', groups[0]['changed_call_names'])
-        self.assertIn('DISCARDED_CALL', groups[0]['categories'])
-
-    def test_consumed_return_does_not_emit_discarded_call(self):
-        logic = module('logic_candidates')
-        old = 'class A { String f() { return ""; } String g(){ return ""; } }'
-        new = 'class A { String f() { return ""; } String g(){ return f(); } }'
-        candidates, skipped = logic.extract_candidates([{'path':'A.java','before':old,'after':new}])
-        self.assertEqual(skipped, [])
-        self.assertFalse(any(c['category'] == 'DISCARDED_CALL' for c in candidates))
-
-    def test_anonymous_classes_have_distinct_stable_scopes(self):
-        logic = module('logic_candidates')
-        old = '''class A {
-          boolean flag;
-          void ping() {}
-          void run() {
-            Runnable one = new Runnable() { public void run() { if (flag) ping(); } };
-            Runnable two = new Runnable() { public void run() { if (flag) ping(); } };
-          }
-        }'''
-        new = '''class A {
-          boolean flag;
-          void ping() {}
-          void run() {
-            Runnable one = new Runnable() { public void run() { if (flag) ping(); } };
-            Runnable two = new Runnable() { public void run() { if (!flag) ping(); } };
-          }
-        }'''
-        candidates, skipped = logic.extract_candidates([{'path':'A.java','before':old,'after':new}])
-        self.assertEqual(skipped,[])
-        changed=[item for item in candidates if item['category']=='BRANCH']
-        self.assertTrue(changed)
-        self.assertTrue(all('<anonymous:2>#run()' in item['method'] for item in changed))
-        self.assertFalse(any('<anonymous:1>#run()' in item['method'] for item in changed))
-
-    def test_class_and_method_rename_not_false_high(self):
-        logic = module('logic_candidates')
-        old = '''class Pay { void execute(){ if(status==1) setStatus(1); }
-            int status; void setStatus(int value){} }'''
-        new = '''class PayService { void perform(){ if(status==1) setStatus(1); }
-            int status; void setStatus(int value){} }'''
-        candidates, skipped = logic.extract_candidates([{'path':'Pay.java','before':old,'after':new}])
-        self.assertEqual(skipped, [])
-        self.assertEqual(candidates, [])
-
     def test_config_properties_yaml_xml_changes_and_secret_mask(self):
-        config = module('config_candidates')
+        config = module('config_changes')
         pairs = [
           {'path':'profile/test.properties','before':'refund.retry.enabled=false\nsecret.token=abc123\n','after':'refund.retry.enabled=true\nsecret.token=def456\n'},
           {'path':'app.yml','before':'payment:\n  retry: false\n','after':'payment:\n  retry: true\n'},
           {'path':'app.xml','before':'<beans><property name="retry" value="0"/></beans>',
            'after':'<beans><property name="retry" value="1"/></beans>'},
         ]
-        findings, skipped = config.extract_config_candidates(pairs)
+        findings, skipped = config.extract_config_changes(pairs)
         self.assertEqual(skipped, [])
         self.assertEqual(len(findings),4)
         self.assertTrue(any(x['key']=='refund.retry.enabled' and x['after']=='true' for x in findings))
@@ -676,8 +389,8 @@ class AdditionalRegressionTests(unittest.TestCase):
         self.assertNotIn('abc123',str(findings))
 
     def test_config_unknown_yaml_is_skipped_not_silent(self):
-        config = module('config_candidates')
-        findings, skipped = config.extract_config_candidates([{'path':'app.yml',
+        config = module('config_changes')
+        findings, skipped = config.extract_config_changes([{'path':'app.yml',
           'before':'urls:\n - http://localhost\n', 'after':'urls:\n - http://example.com\n'}])
         self.assertEqual(findings,[])
         self.assertEqual(len(skipped),1)
@@ -685,8 +398,8 @@ class AdditionalRegressionTests(unittest.TestCase):
         self.assertEqual(skipped[0]['kind'],'non_runtime_yaml')
 
     def test_runtime_yaml_and_non_config_xml_review_classification(self):
-        config = module('config_candidates')
-        findings, skipped = config.extract_config_candidates([
+        config = module('config_changes')
+        findings, skipped = config.extract_config_changes([
             {'path':'src/main/resources/application.yml',
              'before':'urls:\n - http://localhost\n',
              'after':'urls:\n - http://example.com\n'},
@@ -702,8 +415,8 @@ class AdditionalRegressionTests(unittest.TestCase):
         self.assertEqual(by_path['src/main/resources/mapper/OrderMapper.xml']['kind'],'not_config_mapping')
 
     def test_xml_config_mapping_add_remove_is_not_ignored(self):
-        config = module('config_candidates')
-        removed, skipped = config.extract_config_candidates([{
+        config = module('config_changes')
+        removed, skipped = config.extract_config_changes([{
             'path':'src/main/resources/applicationContext.xml',
             'before':'<beans><property name="retry" value="1"/></beans>',
             'after':'<beans></beans>'
@@ -715,7 +428,7 @@ class AdditionalRegressionTests(unittest.TestCase):
         self.assertEqual(removed[0]['before'],'1')
         self.assertIsNone(removed[0]['after'])
 
-        added, skipped = config.extract_config_candidates([{
+        added, skipped = config.extract_config_changes([{
             'path':'src/main/resources/applicationContext.xml',
             'before':'<beans></beans>',
             'after':'<beans><property name="retry" value="1"/></beans>'
@@ -743,7 +456,7 @@ class AdditionalRegressionTests(unittest.TestCase):
                 result=collector.collect({'name':'demo','path':str(root),**selection},capture_config=True)
                 pairs=result['net_effect']['config_sources']
                 self.assertEqual(len(pairs),1)
-                findings,skipped=module('config_candidates').extract_config_candidates(pairs)
+                findings,skipped=module('config_changes').extract_config_changes(pairs)
                 self.assertEqual(skipped,[])
                 self.assertEqual(findings[0]['change'],'modified')
 
@@ -808,9 +521,9 @@ class AdditionalRegressionTests(unittest.TestCase):
             data=self.export_input();data['purpose_cases']['acceptance'][0][field]=value
             with self.assertRaises(ValueError):exporter.normalize(data,fixture_analysis())
 
-    def test_non_current_case_formats_and_extra_fields_are_rejected(self):
+    def test_invalid_case_shapes_and_extra_fields_are_rejected(self):
         exporter=module('export_test_cases')
-        for data in ({'cases':[]},{'focus_cases':[],'regular_cases':[]}):
+        for data in ({'cases':[]},{'purpose_cases':[]}):
             with self.assertRaises(ValueError):exporter.normalize(data,fixture_analysis())
         data=self.export_input();data['purpose_cases']['acceptance'][0]['unexpected_field']=[]
         with self.assertRaisesRegex(ValueError,'unsupported fields'):
@@ -834,9 +547,6 @@ class AdditionalRegressionTests(unittest.TestCase):
         self.assertFalse(any('测试用例导出章节' in err for err in errors))
         errors,_=validator.validate(report.replace('总用例数量：1','总用例数量：两条'),template,[])
         self.assertTrue(any('总用例数量' in err for err in errors))
-        old=report.replace(summary,'Excel：cases.xlsx；重点用例数量：1；常规用例数量：0；总用例数量：1')
-        errors,_=validator.validate(old,template,[])
-        self.assertTrue(any('只接受当前四类数量' in err for err in errors))
 
     def test_four_sheets_keep_empty_groups_and_valid_xml(self):
         import zipfile

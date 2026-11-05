@@ -30,7 +30,7 @@ def fast10_view(analysis):
     primary_kinds={
         'method_change','field_change','class_binding_change','configuration',
         'configuration_file_change','configuration_parse_boundary',
-        'argument_source_change','history_boundary'
+        'argument_source_change'
     }
     supporting_kinds={
         'branch','switch_branch','membership_filter','return_sources','return_override',

@@ -1,4 +1,4 @@
-"""有界源码关联与覆盖义务；静态事实不等于运行验证。"""
+"""有界源码关联与静态事实提取；静态事实不等于运行验证。"""
 import collections
 import copy
 import json
@@ -6,7 +6,7 @@ import re
 from functools import lru_cache
 from source_index import stable, source_lines
 
-VERSION = '2.0.0'
+VERSION = '2.1.0'
 COMMON_RULES = dict(version=1, config_annotations=['Value', 'ConfigurationProperties'],
                     config_scopes={}, aliases=['JSONField', 'JsonProperty'],
                     relation_review_tokens=[], limits={})
@@ -76,7 +76,7 @@ def relation_affects_review_scope(edge, graph, custom_tokens=()):
     builder_chain=(name in ('builder','newbuilder','tobuilder') or
                    'builder' in (edge.get('receiver_type') or '').casefold() or
                    bool(re.search(r'\.(?:new)?builder\s*\(',raw_receiver,re.I)))
-    # Builder 属性写入由 field_source 事实覆盖；不再逐个复核 Lombok/DTO 构造器绑定。
+    # Builder 属性写入由 field_source 事实表达。
     if builder_chain and name not in ('build',):
         return False
     def critical_sink(candidate):
@@ -153,7 +153,7 @@ def relation_affects_review_scope(edge, graph, custom_tokens=()):
             ('getby','find','query','select','count','exists','list','load','read'))
         qcm_accessor=custom_target and any(token in receiver for token in ('uniquecontrolapi','fgqrcodehelper'))
         return state_context or state_branch or sink_flow or database_query or qcm_accessor
-    # DTO 字段填充由字段来源事实覆盖；不把每个 setter 或 builder 链拆成绑定义务。
+    # DTO 字段填充由字段来源事实表达。
     if name.startswith('set'):
         database_target=any(token in receiver for token in ('mapper','dao','repository','jdbc','database','recordindex','store'))
         return database_target and any(token in name[3:] for token in ('refund','status','state'))
