@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 """当前四类测试用例契约。"""
-import json
-
 PURPOSES=('acceptance','core_regression','related_regression','boundary')
 PURPOSE_NAMES=('需求验收','既有核心流程回归','关联回归','业务规则与边界验证')
 
@@ -79,6 +77,3 @@ def validate_cases(data,analysis=None):
             result.append(case)
     return result
 
-
-def canonical(value):
-    return json.dumps(value,ensure_ascii=False,sort_keys=True,separators=(',',':'),allow_nan=False)
