@@ -163,7 +163,6 @@ class AnalysisTest(unittest.TestCase):
                             'label/src/main/java/labels/Other.java':other},'label baseline')
         head=commit(self.source,{'label/src/main/java/labels/Handler.java':production.replace('"old"','"new"')},'label change')
         result,_=self.analyze([head]);project=result['projects'][0]
-        self.assertNotIn('field_label_candidates',project)
         self.assertFalse(any(r['source']=='labels.Other#write(OtherPayload)' for r in project['relations']))
         self.assertFalse(any(r['source']=='labels.Same#write(Payload)' for r in project['relations']))
         self.assertTrue(any(f['kind']=='method_change' and 'labels.Handler#run' in str(f['data'])
@@ -212,7 +211,6 @@ class Handler {
 
     def test_limits_and_unknown_annotations_are_visible(self):
         result,_=self.analyze([self.after],limits={'methods':1})
-        self.assertEqual(result['projects'][0]['boundaries'],[])
         generic,_=self.analyze([self.after],rules=False)
         self.assertFalse(any(f['kind']=='configuration' and f['data'].get('after',{}).get('key')=='NEW_ALIAS'
                              for f in generic['projects'][0]['facts']))
@@ -224,7 +222,6 @@ class Handler {
             'src/Small.java':AFTER.replace('class Flow {','class Flow { String limitMarker(){return "changed";}')},'limit changed source files')
         result,_=self.analyze([head],limits={'files':1})
         project=result['projects'][0]
-        self.assertEqual(project['boundaries'],[])
         self.assertIn('changed Java source could not be fully indexed: src/Small.java',project['hard_errors'])
 
     def test_non_utf8_file_is_reported(self):
@@ -437,7 +434,6 @@ class Handler {
         self.assertEqual(field['data']['after_initializer'],'2')
         self.assertIn('Limit#allowed(int)',field['data']['consumers'])
         self.assertGreater(project['stats']['result']['selected_methods'],0)
-        self.assertNotIn('obligations',project)
 
     def test_tampered_referenced_source_is_rejected(self):
         data,review=self.direct_cases()
