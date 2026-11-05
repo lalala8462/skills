@@ -7,11 +7,11 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from analysis_engine import COMMON_RULES, VERSION, ProjectAnalysis, clean, compact, redact
+from analysis_engine import COMMON_RULES, VERSION, ProjectAnalysis, clean, compact, redact, test_source
 from collect_git import collect, read_blob
 from logic_candidates import extract_candidates
 from config_candidates import extract_config_candidates
-from repo_access import prepare_repo
+from repo_access import prepare_repo, repository_name
 from source_index import DEFAULT_LIMITS, JavaParser, build_index, git_bytes, stable, source_lines
 
 
@@ -26,13 +26,15 @@ def load_rules(filename=None):
                 if not isinstance(value,dict):
                     raise ValueError('Rule '+key+' must be an object')
                 rules[key].update(value)
-            elif key in ('config_annotations','aliases'):
+            elif key in ('config_annotations','aliases','relation_review_tokens'):
                 if not isinstance(value,list) or any(not isinstance(v,str) or not v for v in value):
-                    raise ValueError('Annotation rules must be nonempty strings')
+                    raise ValueError('List rules must be nonempty strings')
                 rules[key]=sorted(set(rules[key]+value))
     limits=dict(DEFAULT_LIMITS,**rules['limits'])
     if set(limits)!=set(DEFAULT_LIMITS) or any(type(v)!=int or v<1 for v in limits.values()):
         raise ValueError('Unknown limits or nonpositive limit')
+    limits['depth']=min(limits['depth'],2)
+    limits['methods']=min(limits['methods'],100)
     if any(not isinstance(k,str) or not isinstance(v,str) for k,v in rules['config_scopes'].items()):
         raise ValueError('Config scope rules must map class names to scope strings')
     return rules,limits
@@ -58,6 +60,62 @@ def validate_project(spec):
         raise ValueError('revisions must be an array')
     if 'range' in spec and (not isinstance(spec['range'],dict) or not spec['range'].get('base') or not spec['range'].get('head')):
         raise ValueError('range requires base and head')
+
+
+HISTORY_BEHAVIOR_FIELDS = {
+    'branch': ('condition', 'then', 'else', 'guards'),
+    'switch': ('expression', 'cases'),
+    'call': ('name', 'receiver', 'arguments', 'expression', 'guards', 'usage'),
+    'construct': ('type', 'arguments', 'expression', 'guards'),
+    'assignment': ('target', 'expression', 'guards'),
+    'field_read': ('name', 'receiver', 'expression', 'guards'),
+    'return': ('expression', 'guards'),
+    'throw': ('expression', 'guards'),
+    'boundary': ('reason', 'expression')
+}
+
+
+def _normalize_history_value(value):
+    if isinstance(value, str):
+        return compact(value)
+    if isinstance(value, list):
+        return [_normalize_history_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _normalize_history_value(item) for key, item in sorted(value.items())}
+    return value
+
+
+def _method_behavior_projection(method, events, symbol):
+    contract_fields = ('name', 'parameters', 'return_type', 'annotations', 'modifiers', 'has_body')
+    contract = ({key: _normalize_history_value(method.get(key)) for key in contract_fields}
+                if method else None)
+    behavior = []
+    for event in events:
+        kind = event.get('kind')
+        if event.get('method') != symbol or kind not in HISTORY_BEHAVIOR_FIELDS:
+            continue
+        row = {'kind': kind}
+        for key in HISTORY_BEHAVIOR_FIELDS[kind]:
+            if key in event:
+                row[key] = _normalize_history_value(event[key])
+        behavior.append(row)
+    return {'contract': contract, 'events': behavior}
+
+
+def group_method_timeline(history_rows):
+    """Group only AST-visible behavior-change candidates by method in commit order."""
+    grouped = {}
+    for index, row in enumerate(history_rows):
+        if row.get('kind') != 'method_behavior_change':
+            continue
+        key = (row.get('project'), row.get('path'), row.get('symbol'))
+        group = grouped.setdefault(key, dict(project=key[0], path=key[1], symbol=key[2], changes=[]))
+        before = row.get('before') or {}
+        after = row.get('after') or {}
+        group['changes'].append(dict(commit=row['commit'], parent=row['parent'], history_index=index,
+            changed_surfaces=row['changed_surfaces'], before_digest=before.get('behavior_digest'),
+            after_digest=after.get('behavior_digest')))
+    return sorted(grouped.values(), key=lambda row: (row['project'], row['path'], row['symbol']))
 
 
 def history(project,evidence,root,parser,cache,limits):
@@ -107,20 +165,37 @@ def history(project,evidence,root,parser,cache,limits):
         cache.update(parser.parse(sources))
         for path in sorted({path for path,_ in versions}):
             if path in failed_files:continue
-            records=[]
+            records=[];event_records=[]
             bad=False
             for label in ('before','after'):
                 parsed=cache.get(versions.get((path,label)),{})
                 if parsed.get('error'):
                     timeline.append(dict(kind='history_boundary',commit=entry['sha'],path=path,side=label,reason=parsed['error']))
                     bad=True
-                records.append({r['method']:r for r in parsed.get('events',[]) if r['kind']=='method'})
+                events=parsed.get('events',[])
+                event_records.append(events)
+                records.append({r['method']:r for r in events if r['kind']=='method'})
             if bad:continue
             for symbol in sorted(set(records[0])|set(records[1])):
                 a,b=records[0].get(symbol),records[1].get(symbol)
+                if a is None and b is not None and test_source(path):
+                    continue
                 if compact(a.get('source') if a else '')!=compact(b.get('source') if b else ''):
-                    def summary(row):
-                        return dict(body_digest=stable(compact(row['body'])),source=clean(row['source'])) if row else None
+                    before_projection=_method_behavior_projection(a,event_records[0],symbol)
+                    after_projection=_method_behavior_projection(b,event_records[1],symbol)
+                    if stable(before_projection)==stable(after_projection):
+                        continue
+                    changed_surfaces=[]
+                    if before_projection['contract']!=after_projection['contract']:
+                        changed_surfaces.append('method_contract')
+                    for kind in HISTORY_BEHAVIOR_FIELDS:
+                        before_events=[row for row in before_projection['events'] if row['kind']==kind]
+                        after_events=[row for row in after_projection['events'] if row['kind']==kind]
+                        if before_events!=after_events:
+                            changed_surfaces.append(kind)
+                    def summary(row,projection):
+                        return dict(body_digest=stable(compact(row['body'])),
+                                    behavior_digest=stable(projection),source=clean(row['source'])) if row else None
                     call_groups=[]
                     for label in ('before','after'):
                         events=cache.get(versions.get((path,label)),{}).get('events',[])
@@ -136,8 +211,9 @@ def history(project,evidence,root,parser,cache,limits):
                             for i,(previous,current) in enumerate(zip(old['arguments'],new['arguments'])):
                                 if compact(previous)!=compact(current):
                                     changes.append(dict(call=key[0],argument_index=i,before=previous,after=current))
-                    timeline.append(dict(project=project,commit=entry['sha'],parent=parent,path=path,symbol=symbol,
-                                         before=summary(a),after=summary(b),argument_changes=changes))
+                    timeline.append(dict(kind='method_behavior_change',project=project,commit=entry['sha'],
+                        parent=parent,path=path,symbol=symbol,changed_surfaces=changed_surfaces,
+                        before=summary(a,before_projection),after=summary(b,after_projection),argument_changes=changes))
     return timeline
 
 
@@ -156,22 +232,33 @@ def analyze_project(spec,rules,limits,parser,cache):
     skipped=effect.pop('java_skipped',[])+effect.pop('config_skipped',[])
     timeline=history(name,evidence,root,parser,cache,limits)
     base=dict(name=name,repository=spec['repo'],analysis_clone=str(root),git=clean(evidence),
-              history=timeline,analyzer_version=VERSION)
+              history=timeline,method_timeline=group_method_timeline(timeline),analyzer_version=VERSION)
     if effect['status']=='review_required':
-        base.update(snapshots={},facts=[],relations=[],obligations=[],boundaries=[],
+        base.update(snapshots={},facts=[],relations=[],obligations=[],boundaries=[],field_label_candidates=[],
                     hard_errors=[effect['reason']],stats={})
         return base,[],None
     before=build_index(root,effect['baseline_tree'],limits,parser,cache)
     after=build_index(root,effect['result_tree'],limits,parser,cache)
+    changed_paths=set(effect.get('changed_files',[]))
+    changed_java_paths={path for path in changed_paths if path.lower().endswith('.java')}
     engine=ProjectAnalysis(name,root,before,after,rules,limits)
     result,context=engine.run()
-    findings,ast_errors=extract_candidates(pairs)
+    # 测试目录的补充语法提示不作为生产业务依据；既有测试变更仍由主索引记录。
+    findings,ast_errors=extract_candidates([pair for pair in pairs if not test_source(pair['path'])])
     configs,config_errors=extract_config_candidates(config_pairs)
     result.update(base)
     result['candidates']=findings+configs
     result['candidate_skipped']=skipped+ast_errors+config_errors
-    result['hard_errors']=[row['reason'] for index in (before,after) for row in index['issues']
-                           if 'missing source blob' in row['reason']]
+    scope_errors=result.pop('scope_errors',[])
+    evidence_omissions=result.pop('critical_evidence_omissions',[])
+    changed_source_issues={row['path'] for index in (before,after) for row in index['issues']
+                           if row['path'] in changed_java_paths}
+    result['hard_errors']=sorted(set(
+        [row['reason'] for index in (before,after) for row in index['issues']
+         if 'missing source blob' in row['reason']]
+        +['changed Java source could not be fully indexed: '+path for path in changed_source_issues]
+        +['critical changed evidence exceeded analysis context limits: '+marker for marker in evidence_omissions]
+        +scope_errors))
     # 配置文件候选同样接入证据和覆盖闭环，不能只保留旧提示。
     relevant=configs+[r for r in config_errors+skipped if r.get('review_required',True)
                       and r['path'].lower().endswith(('.properties','.yaml','.yml','.xml'))]
@@ -264,7 +351,7 @@ def run(specs,outdir,rules_file=None):
     rules,limits=load_rules(rules_file)
     for spec in specs:
         validate_project(spec)
-    names=[s.get('name',re.sub(r'\.git$','',s['repo'].rstrip('/').rsplit('/',1)[-1])) for s in specs]
+    names=[s['name'] if 'name' in s else repository_name(s['repo']) for s in specs]
     if any(not isinstance(n,str) or not n for n in names) or len(set(names))!=len(names):
         raise ValueError('Project names must be unique nonempty strings')
     specs=[dict(s,name=n) for s,n in zip(specs,names)]
@@ -296,7 +383,7 @@ def run(specs,outdir,rules_file=None):
 
 def main(argv=None):
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--repo');p.add_argument('--rev',action='append');p.add_argument('--base');p.add_argument('--head')
+    p.add_argument('--repo',help='GitHub/GitLab HTTP(S) URL or local Git worktree path');p.add_argument('--rev',action='append');p.add_argument('--base');p.add_argument('--head')
     p.add_argument('--manifest');p.add_argument('--outdir',required=True);p.add_argument('--rules')
     args=p.parse_args(argv)
     try:

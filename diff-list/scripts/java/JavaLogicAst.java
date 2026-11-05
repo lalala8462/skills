@@ -5,6 +5,8 @@ import com.sun.source.util.TreePathScanner;
 import com.sun.source.util.Trees;
 import javax.tools.*;
 import java.io.File;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.*;
@@ -185,28 +187,41 @@ public final class JavaLogicAst {
             return super.visitAnnotation(node, unused);
         }
     }
-    public static void main(String[] args) throws Exception {
-        if (args.length != 1) {
-            System.err.println("Expected one Java source file");
-            System.exit(2);
-        }
+    private static boolean scanFile(String filename, boolean batch) throws Exception {
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
         if (compiler == null) throw new IllegalStateException("A JDK, not a JRE, is required");
         DiagnosticCollector<JavaFileObject> diag = new DiagnosticCollector<JavaFileObject>();
         StandardJavaFileManager manager = compiler.getStandardFileManager(diag, Locale.ROOT, StandardCharsets.UTF_8);
         try {
-            Iterable<? extends JavaFileObject> files = manager.getJavaFileObjects(new File(args[0]));
+            Iterable<? extends JavaFileObject> files = manager.getJavaFileObjects(new File(filename));
             JavacTask task = (JavacTask) compiler.getTask(null, manager, diag,
                 Arrays.asList("-source", "8", "-proc:none"), null, files);
             Iterable<? extends CompilationUnitTree> units = task.parse();
             for (Diagnostic<? extends JavaFileObject> d : diag.getDiagnostics()) {
                 if (d.getKind() == Diagnostic.Kind.ERROR) {
-                    System.err.println("Source parse failed at line " + d.getLineNumber());
-                    System.exit(3);
+                    String error = "Source parse failed at line " + d.getLineNumber();
+                    if (batch) System.out.println("ERROR\t" + encoded(error));
+                    else System.err.println(error);
+                    return false;
                 }
             }
             Trees trees = Trees.instance(task);
             for (CompilationUnitTree unit : units) new Scan(unit, trees).scan(unit, null);
         } finally { manager.close(); }
+        return true;
+    }
+    public static void main(String[] args) throws Exception {
+        if (args.length == 1) {
+            if (!scanFile(args[0], false)) System.exit(3);
+        } else if (args.length == 2 && "--manifest".equals(args[0])) {
+            for (String filename : Files.readAllLines(Paths.get(args[1]), StandardCharsets.UTF_8)) {
+                if (filename.isEmpty()) continue;
+                System.out.println("FILE\t" + encoded(filename));
+                scanFile(filename, true);
+            }
+        } else {
+            System.err.println("Expected a Java source file or --manifest FILE");
+            System.exit(2);
+        }
     }
 }

@@ -2,6 +2,7 @@
 """Java 8 AST-based change candidates: syntax/risk hints, never verified semantics."""
 import argparse
 import base64
+import hashlib
 from collections import Counter, defaultdict
 import json
 import os
@@ -134,6 +135,41 @@ def align_scopes(before, after):
     return mapped, method_map
 
 
+def run_scans(java, classpath, sources, directory):
+    """一个 JVM 扫描去重后的源码，保留每个文件独立的解析错误。"""
+    result={source:([],None) for source in sources if not source.strip()}
+    files={}
+    for source in sorted(sources):
+        if not source.strip(): continue
+        name=str(Path(directory)/('source-'+hashlib.sha256(source.encode('utf-8')).hexdigest()+'.java'))
+        with Path(name).open('w',encoding='utf-8',newline='') as out: out.write(source)
+        files[name]=source
+    if not files: return result
+    manifest=Path(directory)/'logic-files.txt'
+    manifest.write_text('\n'.join(files),encoding='utf-8')
+    run=subprocess.run([java,'-cp',classpath,'JavaLogicAst','--manifest',str(manifest)],
+                       capture_output=True,text=True,encoding='utf-8',errors='replace',check=False)
+    if run.returncode:
+        return dict(result,**{source:(None,('AST parser failed: '+run.stderr.strip())[:350]) for source in files.values()})
+    active=None; parsed={}
+    for line in run.stdout.splitlines():
+        fields=line.split('\t')
+        if fields[0]=='FILE' and len(fields)==2:
+            active=base64.b64decode(fields[1]).decode('utf-8')
+            if active not in files or active in parsed: raise ValueError('Invalid AST file record')
+            parsed[active]=([],None)
+        elif active is not None and fields[0]=='ERROR' and len(fields)==2:
+            parsed[active]=(None,'AST parser failed: '+base64.b64decode(fields[1]).decode('utf-8'))
+        elif active is not None and len(fields)==5 and parsed[active][1] is None:
+            method,category,detail,fingerprint,line_number=fields
+            parsed[active][0].append(dict(method=base64.b64decode(method).decode('utf-8'),category=category,
+                detail=safe_detail(base64.b64decode(detail).decode('utf-8')),hash=fingerprint,line=int(line_number)))
+        else: raise ValueError('Invalid AST record format')
+    for name,source in files.items():
+        result[source]=parsed.get(name,(None,'AST parser did not return file'))
+    return result
+
+
 def compare_records(path, before, after):
     """AST multiset diff with conservative class/method rename normalization."""
     class_map, method_map = align_scopes(before, after)
@@ -187,9 +223,10 @@ def extract_candidates(pairs):
         if compile_run.returncode:
             raise ValueError('JDK compiler unavailable or AST compilation failed: ' + compile_run.stderr[:600])
         findings, skipped = [], []
+        scans=run_scans(java,classpath,set(pair[side] for pair in pairs for side in ('before','after')),tmp)
         for pair in pairs:
-            old, old_error = run_scan(java, classpath, pair['before'])
-            new, new_error = run_scan(java, classpath, pair['after'])
+            old, old_error = scans[pair['before']]
+            new, new_error = scans[pair['after']]
             if old_error or new_error:
                 skipped.append({'path': pair['path'], 'reason': old_error or new_error})
                 continue

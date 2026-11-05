@@ -9,7 +9,7 @@ from pathlib import Path
 from logic_candidates import jdk_tools
 
 DEFAULT_LIMITS = dict(files=10000, file_bytes=1048576, total_bytes=134217728,
-                      depth=4, methods=400, context_bytes=8388608)
+                      depth=2, methods=100, context_bytes=8388608)
 
 
 def source_lines(text):

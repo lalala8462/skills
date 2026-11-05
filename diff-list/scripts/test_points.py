@@ -434,21 +434,25 @@ def case_material(data, case):
     """把固定条件、全部数据组和结构断言写入可读用例，不输出内部编号。"""
     points = {p['id']: p for p in data['test_point_catalog']['points']}
     selected = [points[l['point_id']] for l in case['test_point_links']]
-    variants = unique([c for p in selected for c in p['condition_variants']])
-    triggers = ['；'.join(render_condition(c) for c in variant) if variant else '无附加条件' for variant in variants]
-    datasets = unique([g for p in selected for g in p['data_groups']])
-    preparation = '固定触发条件：\n' + '\n'.join('{}. {}'.format(n, c) for n, c in enumerate(triggers, 1))
-    if datasets:
-        preparation += '\n测试数据（逐组执行）：\n' + '\n'.join(
-            '{}. {}；触发条件：{}'.format(n, '；'.join('{}={}'.format(k, canonical(v)) for k, v in sorted(g['values'].items())),
-                                      '；'.join(render_condition(c) for c in g['conditions']) or '无附加条件')
-            for n, g in enumerate(datasets, 1))
     names = {'equals': '等于', 'not_equals': '不等于', 'source_is': '来源为', 'in': '属于集合',
              'not_in': '不属于集合', 'exists': '存在性为', 'absent': '缺省约束为',
              'unchanged': '保持', 'count': '数量为', 'state': '状态为'}
-    assertions = unique(['{}｜{}：{} {}'.format(p['observation']['surface'], p['observation']['target'],
-        names[p['expected']['kind']], canonical(p['expected']['value'])) for p in selected])
-    return preparation, '固定观察断言：\n' + '\n'.join(assertions)
+    groups=[]
+    for point in selected:
+        datasets=point['data_groups'] or [dict(values={},conditions=c) for c in point['condition_variants']]
+        for dataset in datasets:
+            groups.append(dict(values=dataset['values'],conditions=dataset['conditions'],
+                               observation=point['observation'],expected=point['expected']))
+    # 输入和预期共用组号；相同输入但不同观察结果必须分别保留。
+    preparation=[]; assertions=[]
+    for n,group in enumerate(unique(groups),1):
+        values='；'.join('{}={}'.format(k,canonical(v)) for k,v in sorted(group['values'].items()))
+        condition='；'.join(render_condition(c) for c in group['conditions']) or '无附加条件'
+        preparation.append('第{}组：{}触发条件：{}'.format(n,values+'；' if values else '',condition))
+        observed=group['observation']; expected=group['expected']
+        assertions.append('第{}组：{}｜{}：{} {}'.format(n,observed['surface'],observed['target'],
+                          names[expected['kind']],canonical(expected['value'])))
+    return '固定触发条件与测试数据（逐组执行）：\n'+'\n'.join(preparation), '固定观察断言（与前置条件组号对应）：\n'+'\n'.join(assertions)
 
 
 def main(argv=None):

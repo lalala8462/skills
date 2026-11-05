@@ -5,13 +5,140 @@ import json
 import re
 import sys
 from pathlib import Path
-from analysis_engine import VERSION, redact
-from export_test_cases import normalize
+from analysis_engine import VERSION, redact, relation_review_signature
+from export_test_cases import _normalize_validated
 from source_index import batch_blobs, git_bytes, stable, source_lines
 
 
 def nonempty(value):
     return isinstance(value,str) and len(value.strip())>=8 and value.strip() not in ('已检查完成','符合预期，无影响')
+
+
+def standalone_diagnostic_log_fact(fact):
+    if fact.get('kind')!='unresolved_relation':return False
+    call=fact.get('data',{}).get('call',{})
+    if call.get('usage')!='EXPRESSION_STATEMENT' or call.get('name','').casefold() not in (
+            'trace','debug','info','warn','error'):
+        return False
+    receiver=(call.get('receiver') or '').strip().rsplit('.',1)[-1].casefold()
+    return receiver in ('log','logger')
+
+
+def boundary_source_matches(condition, record, project):
+    if record.get('project')!=project or record.get('side')!=condition.get('side'):
+        return False
+    location=condition.get('source_location')
+    if location:
+        return (record.get('path')==location['path'] and
+                record.get('start_line',0)<=location['start_line']<=record.get('end_line',0))
+    path=record.get('path','').replace('\\','/')
+    if condition.get('path') and path==condition['path'].replace('\\','/'):
+        return True
+    for symbol in (condition.get('parent'),condition.get('symbol')):
+        if not symbol or '#' not in symbol: continue
+        owner,method=symbol.split('#',1); method=method.split('(',1)[0]
+        if method=='<init>': method=owner.split('.')[-1].split('$')[-1]
+        if (path.endswith(owner.split('$',1)[0].replace('.','/')+'.java') and
+                re.search(r'\b'+re.escape(method)+r'\s*\(',record.get('snippet',''))):
+            return True
+    return False
+
+
+def expand_boundary_batches(review, obligations, evidence, obligation_projects=None):
+    """展开明确逐项关联证据的前后快照边界；不推断等价。"""
+    expanded=[]
+    batches=review.get('boundary_batches',[])
+    if not isinstance(batches,list):
+        raise ValueError('boundary_batches must be an array')
+    for batch in batches:
+        if not isinstance(batch,dict) or set(batch)!={'status','review_kind','conclusion','limitations','members'}:
+            raise ValueError('invalid boundary batch fields')
+        members=batch['members']
+        if not isinstance(members,list) or len(members)!=2:
+            raise ValueError('boundary batch requires two snapshot members')
+        identity=None; batch_project=None; sides=set(); identifiers=set()
+        for member in members:
+            if not isinstance(member,dict) or set(member)!={'obligation_id','evidence_ids'}:
+                raise ValueError('invalid boundary batch member')
+            identifier=member['obligation_id']; item=obligations.get(identifier)
+            if (not item or item['dimension']!='review_analysis_boundary' or
+                    not item.get('required',True) or identifier in identifiers):
+                raise ValueError('invalid or duplicate boundary batch obligation')
+            identifiers.add(identifier)
+            condition=item['condition']; side=condition.get('side')
+            coordinates={k:v for k,v in condition.items() if k not in ('side','source_location')}
+            if not coordinates.get('reason') or not any(coordinates.get(k) for k in ('parent','symbol','path')):
+                raise ValueError('boundary batch needs a specific source location')
+            if identity is None: identity=coordinates
+            if identity!=coordinates or side not in ('baseline','result') or side in sides:
+                raise ValueError('boundary batch members must match location and reason across snapshots')
+            sides.add(side)
+            refs=member['evidence_ids']
+            if not isinstance(refs,list) or not refs or any(ref not in evidence for ref in refs):
+                raise ValueError('boundary batch member needs valid evidence')
+            original=[evidence[ref] for ref in item['evidence_ids'] if ref in evidence]
+            projects=({obligation_projects[identifier]} if obligation_projects else {row.get('project') for row in original})
+            if len(projects)!=1 or (item['evidence_ids'] and not set(item['evidence_ids']) & set(refs)):
+                raise ValueError('boundary batch member must retain original evidence')
+            project=next(iter(projects))
+            if batch_project is None: batch_project=project
+            if batch_project!=project:
+                raise ValueError('boundary batch members must belong to the same project')
+            if any(evidence[ref].get('project')!=project or evidence[ref].get('side')!=side for ref in refs):
+                raise ValueError('boundary batch evidence must match the project and snapshot')
+            if not any(boundary_source_matches(condition,evidence[ref],project) for ref in refs):
+                raise ValueError('boundary batch member needs relevant same-snapshot source evidence')
+            expanded.append(dict(obligation_id=identifier,evidence_ids=refs,status=batch['status'],
+                review_kind=batch['review_kind'],conclusion=batch['conclusion'],limitations=batch['limitations']))
+    return expanded
+
+
+def expand_relation_batches(review, obligations, facts, evidence, obligation_projects=None):
+    """仅合并绑定问题完全一致的关系义务；展开时保留每个调用点和证据引用。"""
+    expanded=[]
+    batches=review.get('relation_batches',[])
+    if not isinstance(batches,list):
+        raise ValueError('relation_batches must be an array')
+    for batch in batches:
+        if not isinstance(batch,dict) or set(batch)!={'status','review_kind','conclusion','limitations','members'}:
+            raise ValueError('invalid relation batch fields')
+        members=batch['members']
+        if not isinstance(members,list) or len(members)<2:
+            raise ValueError('relation batch requires at least two members')
+        signature=None; batch_project=None; identifiers=set()
+        for member in members:
+            if not isinstance(member,dict) or set(member)!={'obligation_id','evidence_ids'}:
+                raise ValueError('invalid relation batch member')
+            identifier=member['obligation_id']; item=obligations.get(identifier)
+            if not item or item['dimension']!='review_relation' or not item.get('required',True) or identifier in identifiers:
+                raise ValueError('invalid or duplicate relation batch obligation')
+            identifiers.add(identifier)
+            source_facts=[facts[f] for f in item['fact_ids'] if f in facts]
+            if len(source_facts)!=1 or source_facts[0].get('kind')!='unresolved_relation':
+                raise ValueError('relation batch needs one unresolved relation fact per member')
+            current=relation_review_signature(source_facts[0])
+            if signature is None:signature=current
+            if current!=signature:
+                raise ValueError('relation batch members must have the same binding question')
+            refs=member['evidence_ids']
+            if not isinstance(refs,list) or not refs or any(ref not in evidence for ref in refs):
+                raise ValueError('relation batch member needs valid evidence')
+            if item['evidence_ids'] and not set(item['evidence_ids'])&set(refs):
+                raise ValueError('relation batch member must retain original evidence')
+            projects=({obligation_projects[identifier]} if obligation_projects else
+                      {evidence[ref].get('project') for ref in item['evidence_ids'] if ref in evidence})
+            if len(projects)!=1:
+                raise ValueError('relation batch member must belong to one project')
+            project=next(iter(projects))
+            if batch_project is None:batch_project=project
+            if project!=batch_project:
+                raise ValueError('relation batch members must belong to the same project')
+            sides={evidence[ref].get('side') for ref in refs}
+            if any(evidence[ref].get('project')!=project for ref in refs) or sides!={'result'}:
+                raise ValueError('relation batch evidence must match the result snapshot and project')
+            expanded.append(dict(obligation_id=identifier,evidence_ids=refs,status=batch['status'],
+                review_kind=batch['review_kind'],conclusion=batch['conclusion'],limitations=batch['limitations']))
+    return expanded
 
 
 def verify_evidence(project, records):
@@ -78,7 +205,7 @@ def validate(analysis,context,review,cases,verify_sources=True):
     for row in evidence.values():
         if row.get('project') not in owners:
             errors.append('unknown evidence project: '+str(row.get('id')))
-    facts={};obligations={}
+    facts={};obligations={};obligation_projects={}
     for project in projects:
         errors += ['snapshot failure: '+e for e in project.get('hard_errors',[])]
         if set(project.get('snapshots',{}))!={'baseline','result'}:
@@ -93,7 +220,8 @@ def validate(analysis,context,review,cases,verify_sources=True):
             if fact['id']!=expected or fact['id'] in facts:
                 errors.append('fact identity mismatch: '+fact['id'])
             facts[fact['id']]=fact
-            if not fact['evidence_ids'] or any(e not in evidence or evidence[e]['project']!=project['name']
+            metadata_only=(fact['kind']=='analysis_boundary' and fact.get('evidence_status')=='unavailable')
+            if (not fact['evidence_ids'] and not metadata_only) or any(e not in evidence or evidence[e]['project']!=project['name']
                                               for e in fact['evidence_ids']):
                 errors.append('missing or wrong-project fact evidence: '+fact['id'])
         for item in project['obligations']:
@@ -101,6 +229,23 @@ def validate(analysis,context,review,cases,verify_sources=True):
             if item['id']!=expected or item['id'] in obligations:
                 errors.append('obligation identity mismatch: '+item['id'])
             obligations[item['id']]=item
+            obligation_projects[item['id']]=project['name']
+            required=item.get('required',True)
+            if type(required)!=bool:
+                errors.append('invalid obligation priority: '+item['id'])
+            if not required:
+                if item['dimension']=='review_analysis_boundary':
+                    if (item.get('optional_reason')!='summarized_unexpanded_scope' or
+                            item['condition'].get('review_required') is not False or
+                            item['condition'].get('coverage_class')!='unexpanded_scope'):
+                        errors.append('invalid summarized boundary classification: '+item['id'])
+                elif item['dimension']=='review_relation':
+                    source_facts=[facts[f] for f in item['fact_ids'] if f in facts]
+                    if (item.get('optional_reason')!='standalone_diagnostic_log' or
+                            not any(standalone_diagnostic_log_fact(f) for f in source_facts)):
+                        errors.append('invalid low-priority relation classification: '+item['id'])
+                else:
+                    errors.append('unsupported non-required obligation: '+item['id'])
             if any(f not in facts for f in item['fact_ids']):
                 errors.append('unknown obligation fact: '+item['id'])
             refs=set(e for f in item['fact_ids'] if f in facts for e in facts[f]['evidence_ids'])
@@ -108,7 +253,7 @@ def validate(analysis,context,review,cases,verify_sources=True):
                 errors.append('obligation evidence mismatch: '+item['id'])
         represented={stable(f['data']) for f in project['facts'] if f['kind']=='analysis_boundary'}
         if any(stable(row) not in represented for row in project.get('boundaries',[])):
-            errors.append('analysis limits or parse failures lack evidence-backed boundary dispositions: '+project['name'])
+            errors.append('analysis limits or parse failures lack evidence-backed coverage records: '+project['name'])
     from test_points import PURPOSES, validate_cases
     try:
         validate_cases(cases,analysis)
@@ -117,7 +262,7 @@ def validate(analysis,context,review,cases,verify_sources=True):
     groups=[cases['purpose_cases'][purpose] for purpose in PURPOSES]
     if any(groups):
         try:
-            normalized=normalize(cases)
+            normalized=_normalize_validated(cases)
             rows=sum(normalized['purposes'].values(),[])
             surviving={r[0] for r in rows}
         except (ValueError,TypeError,KeyError) as exc:
@@ -152,7 +297,12 @@ def validate(analysis,context,review,cases,verify_sources=True):
                 errors.append('case omits or contradicts extracted error result: '+identifier);continue
             covered.add(identifier)
     disposed=set()
-    for disposition in review.get('dispositions',[]):
+    try:
+        batch_dispositions=expand_boundary_batches(review,obligations,evidence,obligation_projects)
+        batch_dispositions+=expand_relation_batches(review,obligations,facts,evidence,obligation_projects)
+    except (ValueError,TypeError,KeyError) as exc:
+        return errors+['invalid boundary batch: '+str(exc)],warnings
+    for disposition in review.get('dispositions',[])+batch_dispositions:
         identifier=disposition.get('obligation_id')
         item=obligations.get(identifier)
         if not item or identifier in disposed or identifier in covered:
@@ -166,13 +316,20 @@ def validate(analysis,context,review,cases,verify_sources=True):
         if not nonempty(disposition.get('conclusion')) or not nonempty(disposition.get('limitations')):
             errors.append('review needs a concrete conclusion and limitations: '+identifier);continue
         refs=disposition.get('evidence_ids',[])
-        if not refs or any(e not in evidence for e in refs) or not set(item['evidence_ids'])&set(refs):
+        if not refs or any(e not in evidence for e in refs) or (item['evidence_ids'] and not set(item['evidence_ids'])&set(refs)):
             errors.append('review evidence missing or unrelated: '+identifier);continue
+        if item['dimension']=='review_analysis_boundary' and not any(
+                boundary_source_matches(item['condition'],evidence[ref],obligation_projects[identifier]) for ref in refs):
+            errors.append('boundary review needs relevant same-snapshot evidence: '+identifier);continue
         if disposition.get('review_kind')!='model_source_review':
             errors.append('review must preserve model source-review provenance: '+identifier);continue
         disposed.add(identifier)
     missing=sorted(i for i,o in obligations.items() if o.get('required',True) and i not in covered|disposed)
     errors+=['unhandled obligation: '+identifier for identifier in missing]
+    summarized=sum(1 for o in obligations.values() if o['dimension']=='review_analysis_boundary' and not o.get('required',True))
+    deferred_relations=sum(1 for o in obligations.values() if o['dimension']=='review_relation' and not o.get('required',True))
+    if summarized or deferred_relations:
+        warnings.append('Non-blocking items remain grouped as documented limitations: {} analysis boundaries, {} standalone diagnostic calls; they are not business behavior validations.'.format(summarized,deferred_relations))
     warnings.append('Static evidence and structured coverage checks do not prove test execution, runtime binding or business correctness.')
     return errors,warnings
 
@@ -199,7 +356,9 @@ def main(argv=None):
         print('ERROR: '+str(exc));return 2
     for error in errors:print('ERROR: '+error)
     for warning in warnings:print('NOTE: '+warning)
-    print('COVERAGE: '+('FAIL' if errors else 'PASS (static declarations only)'))
+    summarized=any('Non-blocking items remain grouped' in warning for warning in warnings)
+    status='FAIL' if errors else ('PASS (static declarations only; grouped limitations reported)' if summarized else 'PASS (static declarations only)')
+    print('COVERAGE: '+status)
     return 1 if errors else 0
 
 

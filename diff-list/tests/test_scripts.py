@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from test_test_points import analysis as fixture_analysis
 from unittest import mock
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -22,6 +23,20 @@ def module(name):
 
 
 class DiffListTest(unittest.TestCase):
+    def test_batched_ast_matches_single_file_results_and_isolates_errors(self):
+        logic=module('logic_candidates')
+        sources=['class A { int run(){return 1;} }','class B { void run(){if(true)System.out.println("中文");} }',
+                 'class Broken { void run( }','']
+        with tempfile.TemporaryDirectory() as td:
+            javac,java,tools=logic.jdk_tools()
+            classpath=os.pathsep.join([td,tools] if tools else [td])
+            subprocess.run([javac,'-source','8','-target','8','-encoding','UTF-8','-cp',classpath,'-d',td,
+                            str(ROOT/'scripts'/'java'/'JavaLogicAst.java')],check=True,capture_output=True)
+            batch=logic.run_scans(java,classpath,sources,td)
+            with mock.patch.object(logic.Path,'unlink'):
+                for source in sources:
+                    self.assertEqual(batch[source],logic.run_scan(java,classpath,source))
+
     def test_jdk_tools_discovery(self):
         logic = module('logic_candidates')
         with tempfile.TemporaryDirectory() as td:
@@ -51,10 +66,13 @@ class DiffListTest(unittest.TestCase):
         self.assertEqual(len([x for x in template.splitlines() if x.startswith('#')]),13)
 
     def test_create_and_validate(self):
-        init=module('init_report'); val=module('validate_report')
+        init=module('init_report'); val=module('validate_report'); generator=module('generate_report')
         with tempfile.TemporaryDirectory() as td:
             self.assertEqual(init.main(['--outdir',td,'--filename','case.md']),0)
             self.assertEqual(init.main(['--outdir',td,'--filename','case.md']),2)
+            draft=(Path(td)/'case.md').read_text(encoding='utf-8')
+            self.assertIn('<!-- diff-list-status: draft -->',draft)
+            self.assertIn('报告状态：未完成',draft)
             template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
             sha='a'*40
             sections={'## 1. 分析范围':'webapi '+sha,
@@ -71,10 +89,32 @@ class DiffListTest(unittest.TestCase):
                              for line in template.splitlines())
             errors,_=val.validate(report,template,['webapi='+sha])
             self.assertEqual(errors,[])
+            errors,_=val.validate(report+'\n<!-- diff-list-status: draft -->',template,['webapi='+sha])
+            self.assertTrue(any('标记为未完成' in e for e in errors))
+            errors,_=val.validate(report+'\n报告状态：未完成',template,['webapi='+sha])
+            self.assertTrue(any('标记为未完成' in e for e in errors))
             errors,_=val.validate(report.replace('总用例数量：1','总用例数量：零'),template,[])
             self.assertTrue(any('用例数量' in e for e in errors))
             errors,_=val.validate(report+'\n待确认',template,[])
             self.assertTrue(any('禁止' in e for e in errors))
+
+            report_sections={key:value for key,value in sections.items()
+                             if key!='## 5. 测试用例导出'}
+            report_sections.update({'## 2. 改动清单':'按下列改动分类说明。',
+                                    '## 3. 业务流程':'流程内容见以下分项。'})
+            report_data={'sections':report_sections}
+            cases={'purpose_cases':{'acceptance':[{}], 'core_regression':[],
+                                    'related_regression':[], 'boundary':[]}}
+            rendered,_,_=generator.render(template,report_data,cases,'webapi-cases.xlsx')
+            analysis={'projects':[{'name':'webapi','git':{'selection':[
+                {'type':'commit','sha':sha}]},'obligations':[]}]}
+            self.assertEqual(generator.preflight(rendered,template,analysis,cases,[]),[])
+            broken_mermaid=rendered.replace('```mermaid','```text')
+            errors=generator.preflight(broken_mermaid,template,analysis,cases,[])
+            self.assertTrue(any('Mermaid' in e for e in errors))
+            wrong_sha=rendered.replace('webapi '+sha,'webapi '+'b'*40)
+            errors=generator.preflight(wrong_sha,template,analysis,cases,[])
+            self.assertTrue(any('项目与修订对应关系' in e for e in errors))
 
     def test_collect_selected_and_intervening(self):
         collector=module('collect_git')
@@ -109,6 +149,41 @@ class DiffListTest(unittest.TestCase):
                 self.assertIn('core.longpaths=true', call.args)
             with self.assertRaisesRegex(ValueError, 'no longer supported'):
                 access.prepare_repo(url, 'user-workspace')
+
+    def test_local_repository_path_is_cloned_without_checkout(self):
+        access=module('repo_access')
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td);source=root/'workspace';source.mkdir()
+            def g(*args):
+                return subprocess.check_output(['git','-C',str(source),*args],text=True).strip()
+            g('init','-q');g('config','user.name','Test');g('config','user.email','test@example.com')
+            (source/'app.txt').write_text('committed\n',encoding='utf-8')
+            g('add','.');g('commit','-qm','base')
+            g('remote','add','origin','https://gitlab.example/group/webapi3.0.git')
+            local_appdata=root/'local-appdata'
+            self.assertEqual(access.repository_name(str(source)),'webapi3.0')
+            with mock.patch.dict(os.environ,{'LOCALAPPDATA':str(local_appdata)}):
+                clone,name=access.prepare_repo(str(source))
+            self.assertEqual(name,'webapi3.0')
+            self.assertEqual(subprocess.check_output(['git','-C',str(clone),'rev-parse','HEAD'],text=True).strip(),g('rev-parse','HEAD'))
+            self.assertFalse((clone/'app.txt').exists())
+
+    def test_method_timeline_accepts_added_and_removed_methods(self):
+        analyzer=module('analyze')
+        rows=[
+            dict(kind='method_behavior_change',project='demo',path='src/New.java',symbol='New#run()',
+                 commit='a'*40,parent='b'*40,changed_surfaces=['method_contract'],before=None,
+                 after={'behavior_digest':'new-digest'}),
+            dict(kind='method_behavior_change',project='demo',path='src/Removed.java',symbol='Removed#run()',
+                 commit='c'*40,parent='d'*40,changed_surfaces=['method_contract'],
+                 before={'behavior_digest':'old-digest'},after=None)
+        ]
+        timeline=analyzer.group_method_timeline(rows)
+        self.assertEqual(len(timeline),2)
+        self.assertIsNone(timeline[0]['changes'][0]['before_digest'])
+        self.assertEqual(timeline[0]['changes'][0]['after_digest'],'new-digest')
+        self.assertEqual(timeline[1]['changes'][0]['before_digest'],'old-digest')
+        self.assertIsNone(timeline[1]['changes'][0]['after_digest'])
 
     def test_github_url_parser(self):
         access=module('repo_access')
@@ -702,7 +777,7 @@ class AdditionalRegressionTests(unittest.TestCase):
         data=self.export_input(raw)
         cases=data['purpose_cases']['acceptance']
         cases[0]['steps']=['发起请求','检查响应'];cases[1]['steps']='=1+2'
-        exporter=module('export_test_cases');rows=exporter.normalize(data)
+        exporter=module('export_test_cases');rows=exporter.normalize(data, fixture_analysis())
         self.assertEqual(rows['purposes']['acceptance'][0][3],'1. 发起请求\n2. 检查响应')
         with tempfile.TemporaryDirectory() as td:
             target=Path(td)/'cases.xlsx'
@@ -722,17 +797,17 @@ class AdditionalRegressionTests(unittest.TestCase):
         exporter=module('export_test_cases')
         for field,value in [('case_id',''),('steps',[]),('preconditions',''),('expected',[])]:
             data=self.export_input();data['purpose_cases']['acceptance'][0][field]=value
-            with self.assertRaises(ValueError):exporter.normalize(data)
+            with self.assertRaises(ValueError):exporter.normalize(data, fixture_analysis())
 
     def test_old_case_formats_and_coverage_fields_are_rejected(self):
         exporter=module('export_test_cases')
         for data in ({'cases':[]},{'focus_cases':[],'regular_cases':[]}):
-            with self.assertRaisesRegex(ValueError,'current four-purpose cases'):exporter.normalize(data)
+            with self.assertRaisesRegex(ValueError,'current four-purpose cases'):exporter.normalize(data, fixture_analysis())
         for field in ('coverage_key','coverage_keys'):
             data=self.export_input();data['purpose_cases']['acceptance'][0][field]='unused'
-            with self.assertRaisesRegex(ValueError,'unsupported fields'):exporter.normalize(data)
+            with self.assertRaisesRegex(ValueError,'unsupported fields'):exporter.normalize(data, fixture_analysis())
         data=self.export_input();data['purpose_cases']['acceptance'][0]['coverage_links'][0]['trigger_conditions']=[]
-        with self.assertRaisesRegex(ValueError,'unsupported fields'):exporter.normalize(data)
+        with self.assertRaisesRegex(ValueError,'unsupported fields'):exporter.normalize(data, fixture_analysis())
 
     def test_delivery_commands_require_current_analysis_material(self):
         with tempfile.TemporaryDirectory() as td:
@@ -760,7 +835,7 @@ class AdditionalRegressionTests(unittest.TestCase):
         import zipfile
         from xml.etree import ElementTree as ET
         from test_points import PURPOSE_NAMES
-        exporter=module('export_test_cases');rows=exporter.normalize(self.export_input())
+        exporter=module('export_test_cases');rows=exporter.normalize(self.export_input(), fixture_analysis())
         with tempfile.TemporaryDirectory() as td:
             target=Path(td)/'cases.xlsx';counts=exporter.export(rows,target)
             self.assertEqual((counts['acceptance'],counts['core_regression'],counts['total']),(1,0,1))
@@ -780,26 +855,26 @@ class AdditionalRegressionTests(unittest.TestCase):
         other['entry']['target']='POST /refund/check';raw['candidates'].append(other)
         data=self.export_input(raw);rows=data['purpose_cases']['acceptance']
         rows[1]['case_id']=rows[0]['case_id']
-        with self.assertRaisesRegex(ValueError,'duplicate or multiline case_id'):module('export_test_cases').normalize(data)
+        with self.assertRaisesRegex(ValueError,'duplicate or multiline case_id'):module('export_test_cases').normalize(data, fixture_analysis())
 
     def test_observable_evidence_required_for_current_cases(self):
         exporter=module('export_test_cases')
         for incomplete in ([],[{}],[{'surface':'接口','target':'返回体'}],[{'surface':'数据库','assertion':'status=SUCCESS'}]):
             data=self.export_input();data['purpose_cases']['acceptance'][0]['observable_evidence']=incomplete
-            with self.assertRaises(ValueError):exporter.normalize(data)
+            with self.assertRaises(ValueError):exporter.normalize(data, fixture_analysis())
 
     def test_vague_assertions_rejected(self):
         exporter=module('export_test_cases')
         for phrase in ('符合预期','处理成功','系统正常','接口成功','退款成功','状态正确'):
             data=self.export_input();data['purpose_cases']['acceptance'][0]['observable_evidence'][0]['assertion']=phrase
-            with self.assertRaisesRegex(ValueError,'not an observable'):exporter.normalize(data)
+            with self.assertRaisesRegex(ValueError,'not an observable'):exporter.normalize(data, fixture_analysis())
 
     def test_evidence_channels_visible_in_xlsx_expected_column(self):
         import zipfile
         exporter=module('export_test_cases');channels=('页面','接口','日志','数据库','文件','下游行为','缓存')
         data=self.export_input();case=data['purpose_cases']['acceptance'][0]
         case['observable_evidence'] += [dict(surface=surface,target='订单状态字段',assertion='status=SUCCESS') for surface in channels]
-        records=exporter.normalize(data)
+        records=exporter.normalize(data, fixture_analysis())
         for surface in channels:self.assertIn(surface+'｜订单状态字段：status=SUCCESS',records['purposes']['acceptance'][0][4])
         with tempfile.TemporaryDirectory() as td:
             out=Path(td)/'test.xlsx';exporter.export(records,out)

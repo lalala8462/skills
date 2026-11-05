@@ -220,6 +220,11 @@ public final class JavaSourceIndex {
             m.putAll(map("expression",n.getExpression()==null?"":n.getExpression().toString(),"guards",guards(n))); out(m);
             return super.visitReturn(n,p);
         }
+        @Override public Void visitThrow(ThrowTree n, Void p) {
+            Map<String,Object> m = event("throw",n);
+            m.putAll(map("expression",n.getExpression().toString(),"guards",guards(n))); out(m);
+            return super.visitThrow(n,p);
+        }
         @Override public Void visitIf(IfTree n, Void p) {
             Map<String,Object> m = event("branch",n);
             m.putAll(map("condition",n.getCondition().toString(),"then",n.getThenStatement().toString(),

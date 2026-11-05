@@ -63,6 +63,89 @@ class TestPointTest(unittest.TestCase):
     def compile(self, value=None):
         return tp.compile_plan(value or plan(), analysis())
 
+    def test_grouped_case_pairs_each_input_with_its_expected_result(self):
+        raw=plan(); first=raw['candidates'][0]
+        first['conditions'].append(dict(subject='channel',operator='eq',value='A'))
+        first['data_groups'][0]['channel']='A';first['expected']=dict(kind='equals',value='result-A')
+        second=copy.deepcopy(first);second['id']='second';second['conditions'][-1]['value']='B'
+        second['data_groups'][0]['channel']='B';second['expected']['value']='result-B'
+        raw['candidates'].append(second); catalog=self.compile(raw); data=cases(catalog)
+        left,right=data['purpose_cases']['acceptance']
+        left['observable_evidence'].extend(right['observable_evidence'])
+        right['test_point_links'][0]['observable_evidence_indices']=[1]
+        left['test_point_links'].extend(right['test_point_links'])
+        left['coverage_links'][0]['observable_evidence_indices']=[0,1]
+        data['purpose_cases']['acceptance']=[left]
+        exporter.normalize(data,analysis())
+        preparation,expected=tp.case_material(data,left)
+        for n,point in enumerate(catalog['points'],1):
+            self.assertIn('第{}组：'.format(n),preparation)
+            line=next(line for line in expected.splitlines() if line.startswith('第{}组：'.format(n)))
+            self.assertIn(point['expected']['value'],line)
+        with tempfile.TemporaryDirectory() as td:
+            target=Path(td)/'grouped.xlsx'
+            exporter.export(exporter.normalize(data,analysis()),target)
+            with zipfile.ZipFile(target) as book:
+                sheet=ET.fromstring(book.read('xl/worksheets/sheet1.xml'))
+                text='\n'.join(node.text or '' for node in sheet.iter() if node.tag.endswith('}t'))
+                self.assertIn(preparation,text)
+                self.assertIn(expected,text)
+
+    def test_workbench_keeps_links_but_skeleton_is_not_a_completed_case(self):
+        import review_workbench
+        source=analysis()
+        source['projects'][0]['obligations'][0].update(condition={},assertion={},evidence_ids=['evidence-1'])
+        catalog=tp.compile_plan(plan(),source)
+        draft=review_workbench.case_skeleton(source,catalog)
+        case=draft['purpose_cases']['acceptance'][0]
+        self.assertEqual(case['coverage_links'][0]['obligation_id'],'obligation-1')
+        self.assertEqual(case['test_point_links'][0]['data_group_ids'],[catalog['points'][0]['data_groups'][0]['id']])
+        self.assertEqual(case['steps'],[])
+        with self.assertRaises(ValueError):
+            exporter.normalize(draft, analysis())
+
+    def test_grouped_review_keeps_all_obligations_and_incoming_calls(self):
+        import review_workbench
+        source=analysis(); project=source['projects'][0]
+        project['facts'][0]['data']={'symbol':'A#run()'}
+        project['obligations'][0].update(dimension='branch',condition={'value':True},assertion={},evidence_ids=['evidence-1'])
+        project['relations']=[dict(source='B#call()',side='result',status='source_resolved',targets=['A#run()'],
+                                   reason='resolved',site={},evidence_ids=['evidence-1'])]
+        project['field_label_candidates']=[]
+        project['boundaries']=[dict(parent='A#run()',symbol='C#next()',reason='relation_budget')]
+        result=review_workbench.grouped(source); group=result['projects'][0]['groups'][0]
+        self.assertEqual([o['id'] for o in group['obligations']],['obligation-1'])
+        self.assertEqual(group['incoming'][0]['source'],'B#call()')
+        self.assertEqual(group['boundaries'][0]['symbol'],'C#next()')
+        source['analyzer_version']='old'
+        with self.assertRaises(ValueError):
+            review_workbench.grouped(source)
+
+    def test_boundary_batches_preserve_sides_reasons_and_individual_obligations(self):
+        import review_workbench
+        source=analysis(); project=source['projects'][0]
+        project['field_label_candidates']=[]; project['relations']=[]; project['boundaries']=[]
+        project['facts'][0]['data']={'symbol':'A#run()'}
+        original=project['obligations'][0]
+        original.update(id='before',dimension='review_analysis_boundary',
+                        condition=dict(side='baseline',parent='A#run()',symbol='B#next()',reason='relation_budget'),
+                        assertion={},evidence_ids=['before-evidence'])
+        after=copy.deepcopy(original); after['id']='after';after['condition']['side']='result'
+        after['evidence_ids']=['after-evidence']
+        unrelated=copy.deepcopy(after); unrelated['id']='other';unrelated['condition']['parent']='C#run()'
+        project['obligations'].extend([after,unrelated])
+        result=review_workbench.grouped(source)['projects'][0]
+        self.assertEqual(len(result['boundary_review_batches']),1)
+        batch=result['boundary_review_batches'][0]
+        self.assertEqual(batch['condition']['parent'],'A#run()')
+        self.assertEqual({o['obligation_id'] for o in batch['members']},{'before','after'})
+        self.assertEqual({tuple(o['evidence_ids']) for o in batch['members']},
+                         {('before-evidence',),('after-evidence',)})
+        self.assertEqual({o['obligation_id'] for group in result['unpaired_boundaries'] for o in group['members']},
+                         {'other'})
+        self.assertEqual({o['id'] for group in result['groups'] for o in group['obligations']},
+                         {'before','after','other'})
+
     def test_instance_substitution_keeps_identity_but_retains_all_data(self):
         raw = plan(); other = copy.deepcopy(raw['candidates'][0]); other['id'] = 'candidate-2'
         other['data_groups'] = [{'request.orderNo': 'C', 'record.orderNo': 'D'}]
@@ -250,6 +333,15 @@ class TestPointTest(unittest.TestCase):
         self.assertEqual(catalog['plan']['requirements'][0]['source']['kind'], 'reviewed_change')
         tp.validate_cases(cases(catalog), analysis())
 
+    def test_wrapped_chinese_text_increases_export_row_height(self):
+        short=exporter._sheet([('A','标题','短前提','短步骤','短预期')])
+        long=exporter._sheet([('A','标题','长前提'*80,'短步骤','短预期')])
+        ns={'s':'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+        short_row=ET.fromstring(short).findall('.//s:sheetData/s:row',ns)[1]
+        long_row=ET.fromstring(long).findall('.//s:sheetData/s:row',ns)[1]
+        self.assertGreater(float(long_row.attrib['ht']),float(short_row.attrib['ht']))
+        self.assertLessEqual(float(long_row.attrib['ht']),409)
+
     def test_reviewed_change_requires_current_analysis_and_evidenced_rules(self):
         raw = plan(); raw['requirements'][0]['source']['kind'] = 'reviewed_change'
         with self.assertRaisesRegex(ValueError, 'requires current analysis'):
@@ -281,7 +373,7 @@ class TestPointTest(unittest.TestCase):
                 tp.compile_plan(plan(),source)
         catalog=self.compile();catalog['compiler_version']='1.1.0'
         with self.assertRaisesRegex(ValueError,'unsupported test point catalog'):
-            exporter.normalize(cases(catalog))
+            exporter.normalize(cases(catalog), analysis())
 
     def test_renderer_rejects_old_normalized_rows_before_creating_excel(self):
         for rows in ([],{'focus':[],'regular':[],'deduplicated':0}):
@@ -302,21 +394,21 @@ class TestPointTest(unittest.TestCase):
         other['obligation_id']='another-obligation'
         data['purpose_cases']['acceptance'][0]['coverage_links'].append(other)
         with self.assertRaisesRegex(ValueError, 'must match the case test points'):
-            exporter.normalize(data)
+            exporter.normalize(data, analysis())
 
     def test_catalog_tampering_is_rejected(self):
         catalog = self.compile(); catalog['points'][0]['purpose'] = 'boundary'
         with self.assertRaisesRegex(ValueError, 'deterministic compilation'):
-            exporter.normalize(cases(catalog))
+            exporter.normalize(cases(catalog), analysis())
 
     def test_duplicate_point_and_wrong_purpose_fail(self):
         data = cases(self.compile())
         data['purpose_cases']['acceptance'].append(copy.deepcopy(data['purpose_cases']['acceptance'][0]))
-        with self.assertRaisesRegex(ValueError, 'duplicate test point'): exporter.normalize(data)
+        with self.assertRaisesRegex(ValueError, 'duplicate test point'): exporter.normalize(data, analysis())
         data = cases(self.compile())
         data['purpose_cases']['boundary'] = data['purpose_cases']['acceptance']
         data['purpose_cases']['acceptance'] = []
-        with self.assertRaisesRegex(ValueError, 'wrong purpose'): exporter.normalize(data)
+        with self.assertRaisesRegex(ValueError, 'wrong purpose'): exporter.normalize(data, analysis())
 
     def test_deleted_point_data_or_obligation_link_fail(self):
         for change in ('point', 'data', 'obligation', 'assertion'):
@@ -326,10 +418,10 @@ class TestPointTest(unittest.TestCase):
                 if change == 'data': case['test_point_links'][0]['data_group_ids'] = []
                 if change == 'obligation': case['coverage_links'] = []
                 if change == 'assertion': case['observable_evidence'][0]['constraint']['value'] = 'wrong'
-                with self.assertRaises(ValueError): exporter.normalize(data)
+                with self.assertRaises(ValueError): exporter.normalize(data, analysis())
 
     def test_four_sheets_have_five_columns_and_unchanged_observable_evidence(self):
-        rows = exporter.normalize(cases(self.compile()))
+        rows = exporter.normalize(cases(self.compile()), analysis())
         with tempfile.TemporaryDirectory() as folder:
             target = Path(folder) / 'cases.xlsx'; count = exporter.export(rows, target)
             self.assertEqual(count['total'], 1)
@@ -376,14 +468,14 @@ class TestPointTest(unittest.TestCase):
         data = cases(self.compile())
         summary = 'Excel：cases.xlsx；需求验收用例数量：1；既有核心流程回归用例数量：0；关联回归用例数量：0；业务规则与边界验证用例数量：0；总用例数量：1'
         report = '## 5. 测试用例导出\n' + summary
-        self.assertEqual(validate_report.validate_case_counts(report, data), [])
-        errors = validate_report.validate_case_counts(report.replace('需求验收用例数量：1', '需求验收用例数量：2'), data)
+        self.assertEqual(validate_report.validate_case_counts(report, data, analysis()), [])
+        errors = validate_report.validate_case_counts(report.replace('需求验收用例数量：1', '需求验收用例数量：2'), data, analysis())
         self.assertTrue(any('与用例材料不一致' in e for e in errors))
 
     def test_empty_new_input_does_not_export(self):
         raw = plan(); raw['requirements'] = []; raw['candidates'] = []
         with self.assertRaisesRegex(ValueError, 'no test cases'):
-            exporter.normalize(cases(self.compile(raw)))
+            exporter.normalize(cases(self.compile(raw)), analysis())
 
     def test_conflicting_equivalences_cannot_hide_distinct_conditions(self):
         raw = plan()
@@ -398,7 +490,7 @@ class TestPointTest(unittest.TestCase):
 
     def test_export_renders_merged_data_conditions_and_constraints(self):
         raw = plan(); raw['candidates'][0]['data_groups'].append({'request.orderNo': 'C', 'record.orderNo': 'D'})
-        rows = exporter.normalize(cases(self.compile(raw)))['purposes']['acceptance']
+        rows = exporter.normalize(cases(self.compile(raw)), analysis())['purposes']['acceptance']
         self.assertIn('request.orderNo="A"', rows[0][2])
         self.assertIn('request.orderNo="C"', rows[0][2])
         self.assertIn('不等于', rows[0][2])

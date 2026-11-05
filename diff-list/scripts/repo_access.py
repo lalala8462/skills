@@ -49,17 +49,56 @@ def run_git(*args):
     return process.stdout.strip()
 
 
+def local_repo_path(value):
+    """Resolve an existing local Git worktree without reading or changing its worktree files."""
+    candidate = Path(value).expanduser()
+    if not candidate.exists():
+        return None
+    try:
+        root = run_git('-C', candidate, 'rev-parse', '--show-toplevel')
+    except ValueError as exc:
+        raise ValueError('Local repository path is not a Git worktree: ' + str(candidate)) from exc
+    return Path(root).resolve()
+
+
+def _local_repo_name(root):
+    name = root.name
+    try:
+        origin = run_git('-C', root, 'config', '--get', 'remote.origin.url')
+        if origin:
+            try:
+                _, _, name, _ = parse_repo_url(origin)
+            except ValueError:
+                pass
+    except ValueError:
+        pass
+    return name
+
+
+def repository_name(value):
+    """Return a stable project name from a URL or local worktree origin."""
+    local_root = local_repo_path(value)
+    if local_root is not None:
+        return _local_repo_name(local_root)
+    return parse_repo_url(value)[2]
+
+
 def prepare_repo(url, cache_dir=None):
     """Create a fresh isolated clone without checking out repository files."""
     if cache_dir is not None:
         raise ValueError('--cache-dir is no longer supported; isolated runs use the dedicated directory')
-    _, _, repo, canonical = parse_repo_url(url)
+    local_root = local_repo_path(url)
+    if local_root is not None:
+        repo = _local_repo_name(local_root)
+        source = str(local_root)
+    else:
+        _, _, repo, source = parse_repo_url(url)
     base = Path(os.getenv('LOCALAPPDATA') or tempfile.gettempdir()) / 'diff-list' / 'runs'
     base.mkdir(parents=True, exist_ok=True)
     run_dir = Path(tempfile.mkdtemp(prefix='run-', dir=str(base)))
     target = run_dir / 'repo'
     try:
-        run_git('-c', 'core.longpaths=true', 'clone', '--quiet', '--no-checkout', canonical, target)
+        run_git('-c', 'core.longpaths=true', 'clone', '--quiet', '--no-checkout', source, target)
     except ValueError as exc:
         raise ValueError(str(exc) + '\nCreated run directory (delete manually): ' + str(run_dir)) from exc
     return target, repo

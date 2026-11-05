@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create a report skeleton from the immutable heading-only template (Python 3.8+)."""
+"""Create an explicitly unfinished report from the heading-only template (Python 3.8+)."""
 import argparse
 import datetime
 import re
@@ -24,8 +24,12 @@ def main(argv=None):
         outdir=Path(a.outdir)
         outdir.mkdir(parents=True,exist_ok=True)
         target=outdir/filename
+        lines=template.rstrip().splitlines()
+        lines.insert(1, '\n<!-- diff-list-status: draft -->\n'
+                        '**报告状态：未完成。** 以下内容随分析逐步补充；'
+                        '尚未完成覆盖校验和测试用例导出。\n')
         with target.open('x',encoding='utf-8',newline='\n') as f:
-            f.write(template.rstrip()+'\n')
+            f.write('\n'.join(lines)+'\n')
         print(str(target.resolve()))
         return 0
     except (OSError,ValueError) as exc:

@@ -6,9 +6,10 @@ import re
 from functools import lru_cache
 from source_index import stable, source_lines
 
-VERSION = '1.2.0'
+VERSION = '1.8.2'
 COMMON_RULES = dict(version=1, config_annotations=['Value', 'ConfigurationProperties'],
-                    config_scopes={}, aliases=['JSONField', 'JsonProperty'], limits={})
+                    config_scopes={}, aliases=['JSONField', 'JsonProperty'],
+                    relation_review_tokens=[], limits={})
 STANDARD_TYPES = set('String Object Boolean Integer Long Double Float Short Byte Character Math System '
                      'List ArrayList LinkedList Map HashMap Set HashSet Collection Collections Arrays '
                      'Objects Optional Comparator BigDecimal StringUtils CollectionUtils Assert Date '
@@ -17,6 +18,168 @@ STANDARD_TYPES = set('String Object Boolean Integer Long Double Float Short Byte
 
 def compact(text):
     return re.sub(r'"(?:\\.|[^"\\])*"|\s+', lambda m: m[0] if m[0].startswith('"') else '', text or '')
+
+
+def test_source(path):
+    return '/src/test/' in '/'+(path or '').replace('\\','/')
+
+
+def standalone_diagnostic_log(site):
+    if site.get('usage')!='EXPRESSION_STATEMENT' or site.get('name','').casefold() not in (
+            'trace','debug','info','warn','error'):
+        return False
+    receiver=(site.get('receiver') or '').strip().rsplit('.',1)[-1].casefold()
+    return receiver in ('log','logger')
+
+
+def relation_receiver_hint(site):
+    """只保留简单接收者，避免把复杂链式调用的参数文本当成接收者名称。"""
+    receiver=(site.get('receiver') or '').strip()
+    created=re.match(r'^new\s+([\w.$]+)',receiver)
+    if created:return created[1].casefold()
+    builder=re.match(r'^([\w.$]+)\.builder\s*\(',receiver,re.I)
+    if builder:return builder[1].casefold()
+    if re.fullmatch(r'(?:this|super|[\w$]+(?:\.[\w$]+)*)',receiver):
+        return receiver.casefold()
+    return ''
+
+
+def relation_affects_review_scope(edge, graph, custom_tokens=()):
+    """只把可能触及关键业务结果的未解析调用放入人工复核。"""
+    site=edge.get('site') or {}
+    name=(site.get('name') or '').casefold()
+    receiver=' '.join((edge.get('receiver_type') or '',relation_receiver_hint(site))).casefold()
+    source=edge.get('source') or ''
+    target_surface=' '.join((receiver,name)).casefold()
+    caller=source.casefold()
+    caller_method=source.split('#')[-1].split('(',1)[0].casefold()
+    method_rows=getattr(graph,'methods',{})
+    method_meta=method_rows.get(source,{}) if isinstance(method_rows,dict) else {}
+    class_rows=getattr(graph,'classes',{})
+    owner_meta=class_rows.get(method_meta.get('owner'),{}) if isinstance(class_rows,dict) else {}
+    annotation_rows=(method_meta.get('annotations',[]) or [])+(owner_meta.get('annotations',[]) or [])
+    annotations=[a.get('name','').rsplit('.',1)[-1].casefold() for a in annotation_rows]
+    endpoint_annotation=any(a in ('restcontroller','controller','requestmapping','getmapping',
+        'postmapping','putmapping','patchmapping','deletemapping') for a in annotations)
+    return_type=(method_meta.get('return_type') or '').rsplit('.',1)[-1].casefold()
+    response_return=any(token in return_type for token in ('response','reply','result','bizresult'))
+    business_return=any(token in (method_meta.get('owner','')+' '+caller_method).casefold()
+                        for token in ('refund','payment','pay','notify','notification','callback'))
+    critical_return_context=(endpoint_annotation or 'controller' in method_meta.get('owner','').casefold()
+                             or response_return or business_return)
+    scopes=('mapper','dao','repository','jdbc','database','recordindex','store',
+            'channel','proxy','acquirer','qcm','qrcode','notification','notify','callback',
+            'uniquecontrol','fgtradeno','outtradeno','orderno','billno','transtype','mchid','entnum')
+    sink_context=any(token in target_surface for token in scopes)
+    custom_target=any(token.casefold() in target_surface for token in custom_tokens)
+    raw_receiver=site.get('receiver') or ''
+    builder_chain=(name in ('builder','newbuilder','tobuilder') or
+                   'builder' in (edge.get('receiver_type') or '').casefold() or
+                   bool(re.search(r'\.(?:new)?builder\s*\(',raw_receiver,re.I)))
+    # Builder 属性写入由 field_source 事实覆盖；不再逐个复核 Lombok/DTO 构造器绑定。
+    if builder_chain and name not in ('build',):
+        return False
+    def critical_sink(candidate):
+        candidate_site=candidate.get('site') or {}
+        candidate_name=(candidate_site.get('name') or '').casefold()
+        candidate_target=' '.join((candidate.get('receiver_type') or '',
+                                   relation_receiver_hint(candidate_site),candidate_name)).casefold()
+        candidate_builder=(candidate_name in ('builder','newbuilder','tobuilder') or
+            'builder' in (candidate.get('receiver_type') or '').casefold() or
+            bool(re.search(r'\.(?:new)?builder\s*\(',candidate_site.get('receiver') or '',re.I)))
+        candidate_db=any(token in candidate_target for token in ('mapper','dao','repository','jdbc','database','recordindex','store'))
+        if candidate_builder and candidate_name!='build':return False
+        if candidate_name.startswith('set'):
+            return candidate_db and any(token in candidate_name[3:] for token in ('refund','status','state'))
+        if candidate_name=='<init>':
+            return any(token in candidate_target for token in ('bizexception','exception','bizresult','response','resp','reply','errorcode'))
+        if 'bizresult' in candidate_target and candidate_name in ('success','fail','error','ok'):
+            return True
+        if candidate_name.startswith(('get','is','has','equals','hashcode','tostring','contains')):
+            return (candidate_db and candidate_name.startswith(('getby','find','query','select','count','exists','list','load','read')) or
+                    any(token.casefold() in candidate_target for token in custom_tokens) and
+                    any(token.casefold() in candidate_target for token in ('uniquecontrolapi','fgqrcodehelper')) or
+                    any(token in candidate_name for token in ('refundstatus','refundstate','channelrespdesc','channelrefundno','channelparam')))
+        return (any(token in candidate_target for token in scopes) or
+                any(token.casefold() in candidate_target for token in custom_tokens) or
+                any(token in candidate_name for token in ('refund','refundable','transstate','paystate','status','state')) or
+                candidate_name.startswith(('insert','update','delete','save','persist','execute','batch',
+                    'commit','rollback','register','send','publish','pay','refund','close','cancel',
+                    'notice','notify','write','remove','mark')))
+    if name.startswith('log') or 'logger' in receiver:
+        return False
+    access_method=(name.startswith(('get','is','has','equals','hashcode','tostring','contains')) or
+                   name in ('getvalue','getcode','getdata','getinfo','getmessage','getmsg'))
+    direct_return=site.get('usage')=='RETURN'
+    if direct_return and not access_method and name!='<init>' and not builder_chain:
+        return sink_context or custom_target or critical_return_context
+    # 未解析调用的返回值若沿局部赋值进入方法返回，属于最终响应来源。
+    call_origins=set(graph.origins(site.get('expression',''),edge['source'],site.get('order',0)))
+    returned_flow=False
+    state_branch=False
+    sink_flow=False
+    if call_origins:
+        for row in graph.events.get(source,[]):
+            if row.get('kind')=='return':
+                if call_origins & set(graph.origins(row.get('expression',''),source,row.get('order',0))):
+                    returned_flow=True
+            if row.get('kind')=='branch':
+                condition=(row.get('condition') or '').casefold()
+                has_state=any(token in condition for token in (
+                    'refund','refundable','transstate','paystate','status','state'))
+                if has_state and call_origins & set(graph.origins(
+                        row.get('condition',''),source,row.get('order',0))):
+                    state_branch=True
+                if 'refund' in caller and name in ('isfail','isunKnow','issuccess'):
+                    state_branch|=bool(call_origins & set(graph.origins(
+                        row.get('condition',''),source,row.get('order',0))))
+        for sibling in graph.edges:
+            if sibling['source']!=source or sibling is edge or not critical_sink(sibling):
+                continue
+            for argument in sibling['site'].get('arguments',[]):
+                if call_origins & set(graph.origins(argument,source,sibling['site'].get('order',0))):
+                    sink_flow=True
+    state_context=(any(token in name for token in ('refund','refundable','transstate','paystate','status','state')) or
+                   any(token in caller_method for token in ('refundstatus','refundstate','transstatus','paystate')))
+    if name=='<init>':
+        response_type=any(token in target_surface for token in (
+            'bizexception','exception','bizresult','response','resp','reply','errorcode'))
+        return response_type or sink_flow
+    if access_method:
+        if name.startswith(('equals','hashcode','tostring')):
+            return state_branch or sink_flow
+        # DTO/枚举访问器由字段来源与分支事实覆盖；这里只保留关键状态或副作用数据流。
+        database_query=any(token in receiver for token in ('mapper','dao','repository','jdbc','database','recordindex','store')) and name.startswith(
+            ('getby','find','query','select','count','exists','list','load','read'))
+        qcm_accessor=custom_target and any(token in receiver for token in ('uniquecontrolapi','fgqrcodehelper'))
+        return state_context or state_branch or sink_flow or database_query or qcm_accessor
+    # DTO 字段填充由字段来源事实覆盖；不把每个 setter 或 builder 链拆成绑定义务。
+    if name.startswith('set'):
+        database_target=any(token in receiver for token in ('mapper','dao','repository','jdbc','database','recordindex','store'))
+        return database_target and any(token in name[3:] for token in ('refund','status','state'))
+    if builder_chain:
+        return sink_flow
+    if name=='<init>':
+        return any(token in target_surface for token in ('bizexception','exception','bizresult','response','resp',
+                                                          'reply','errorcode'))
+    if (returned_flow and critical_return_context) or sink_flow or state_branch:
+        return True
+    if sink_context:
+        return True
+    # 只检查调用者、接收者和方法名；参数中的关键词不应把普通工具方法误判成关键调用。
+    if custom_target:
+        return True
+    if name.startswith(('insert','update','delete','save','persist','execute','batch','commit','rollback',
+                        'register','send','publish','pay','refund','close','cancel','notice','notify','write','remove','mark')):
+        return True
+    return False
+
+
+def relation_review_signature(fact):
+    data=fact.get('data',{})
+    site=dict(data.get('call') or {})
+    return stable(data.get('reason'),data.get('receiver_type'),data.get('candidates'),
+                  site.get('name'),relation_receiver_hint(site),len(site.get('arguments',[])))
 
 
 def short(type_name):
@@ -146,6 +309,22 @@ class Graph:
                             status='convention_inferred',reason='constructed_object_passed_to_call_not_runtime_dispatch',
                             requires_review=False,field=None,site=dict(site,callback_argument=argument,callback_origin=origin)))
         self.edges.extend(callbacks)
+        # 索引保留原始顺序，重复调用和回调关系不能丢失。
+        self.origin_edges = collections.defaultdict(list)
+        self.source_edges = collections.defaultdict(list)
+        self.field_edges = collections.defaultdict(list)
+        self.receiver_edges = collections.defaultdict(list)
+        for position, edge in enumerate(self.edges):
+            self.source_edges[edge['source']].append(edge)
+            self.origin_edges[(edge['source'], compact(edge['site']['expression']))].append(edge)
+            if edge['field'] is not None:
+                self.field_edges[edge['field']].append(position)
+            self.receiver_edges[(edge['receiver_type'], edge['site']['name'].casefold())].append(position)
+
+    def configuration_edges(self, owner, field, getter):
+        positions = set(self.field_edges.get(owner+'#'+field, ()))
+        positions.update(self.receiver_edges.get((owner, getter), ()))
+        return (self.edges[position] for position in sorted(positions))
 
     @lru_cache(maxsize=50000)
     def type_owner(self, name, current):
@@ -473,7 +652,7 @@ class Graph:
         for param in self.methods[symbol]['parameters']:
             if expression == param['name'] or expression.startswith(param['name']+'.'):
                 return ['parameter:'+param['type']+'@'+param['name']+expression[len(param['name']):]]
-        for edge in self.edges:
+        for edge in self.origin_edges.get((symbol, expression), ()):
             if edge['source'] == symbol and compact(edge['site']['expression']) == expression:
                 if edge['targets'] and edge['status'] == 'source_resolved':
                     target = edge['targets'][0]
@@ -494,32 +673,48 @@ class Graph:
 
 class ProjectAnalysis:
     def __init__(self, name, repo, before, after, rules, limits):
-        self.name, self.repo, self.rules, self.limits = name, str(repo), rules, limits
+        self.name, self.repo, self.rules = name, str(repo), rules
+        self.limits=dict(limits)
+        self.limits['depth']=min(self.limits['depth'],2)
+        self.limits['methods']=min(self.limits['methods'],100)
         self.graphs = dict(baseline=Graph(before, rules), result=Graph(after, rules))
         self.facts, self.obligations, self.context, self.relations = [], [], {}, []
-        self.context_bytes, self.context_methods = 0, 0
+        self.context_bytes, self.context_methods = 0, collections.Counter()
         self.context_symbols=set()
-        self.omissions = []
+        self.source_line_cache = {}
+        self.critical_symbols=collections.defaultdict(set)
+        self.critical_fields=set()
+        self.critical_classes=set()
+        self.critical_evidence_omissions=set()
+        self.scope_errors=[]
         self.fact_ids, self.obligation_ids = set(), set()
 
     def evidence(self, side, row):
         graph = self.graphs[side]
         file = next(f for f in graph.index['files'] if f['path'] == row['path'])
-        lines = source_lines(file['source'])
+        cache_key = (side, row['path'], row['blob'])
+        if cache_key not in self.source_line_cache:
+            self.source_line_cache[cache_key] = source_lines(file['source'])
+        lines = self.source_line_cache[cache_key]
         start, end = row['line'], min(max(row['line'], row['end_line']), len(lines))
         identifier = stable(self.name, graph.index['tree'], row['path'], row['blob'], start, end)
         if identifier in self.context:
             return identifier
         snippet = redact(''.join(lines[start-1:end]))
         count = len(snippet.encode('utf-8'))
-        method_key=(row['path'],row.get('method'))
+        method_key=(side,row['path'],row.get('method'))
         new_method=row['kind']=='method' and method_key not in self.context_symbols
         if self.context_bytes+count > self.limits['context_bytes'] or (
-                new_method and self.context_methods >= self.limits['methods']):
-            self.omissions.append(dict(side=side, symbol=row.get('method'), path=row['path'], reason='context_budget'))
+                new_method and self.context_methods[side] >= self.limits['methods']):
+            critical=(row['kind']=='method' and row.get('method') in self.critical_symbols[side])
+            critical|=row['kind']=='field' and (row.get('owner'),row.get('name')) in self.critical_fields
+            critical|=row['kind']=='class' and row.get('owner') in self.critical_classes
+            if critical:
+                marker='{}:{}:{}'.format(side,row['path'],row.get('method') or row.get('owner') or row.get('name','<source>'))
+                self.critical_evidence_omissions.add(marker)
             return None
         self.context_bytes += count
-        self.context_methods += new_method
+        self.context_methods[side] += new_method
         if row['kind']=='method':self.context_symbols.add(method_key)
         self.context[identifier] = dict(id=identifier, project=self.name, side=side, tree=graph.index['tree'],
                                         path=row['path'], blob=row['blob'], start_line=start, end_line=end,
@@ -539,24 +734,61 @@ class ProjectAnalysis:
         self.fact_ids.add(identifier); self.facts.append(result)
         return result
 
-    def obligation(self, fact, dimension, condition, assertion, required=True):
+    def obligation(self, fact, dimension, condition, assertion, required=True, optional_reason=None):
         if not fact:
             return
         identifier = stable(self.name, fact['id'], dimension, condition, assertion)
         if identifier in self.obligation_ids:
             return
         self.obligation_ids.add(identifier)
-        self.obligations.append(dict(id=identifier, fact_ids=[fact['id']], evidence_ids=fact['evidence_ids'],
-                                     dimension=dimension, condition=clean(condition), assertion=clean(assertion), required=required))
+        item=dict(id=identifier, fact_ids=[fact['id']], evidence_ids=fact['evidence_ids'],
+                  dimension=dimension, condition=clean(condition), assertion=clean(assertion), required=required)
+        if not required:
+            item['optional_reason']=optional_reason or 'summarized_low_priority_evidence'
+        self.obligations.append(item)
+
+    def boundary_fact(self, row):
+        """边界只引用实际调用点或目标位置，预算不足时保留取证缺口。"""
+        row=dict(row); side=row['side']; graph=self.graphs[side]
+        anchor=None
+        if row.get('parent') in graph.methods:
+            anchor=dict(graph.methods[row['parent']])
+            call=next((edge['site'] for edge in graph.source_edges.get(row['parent'],())
+                       if row.get('symbol') in edge['targets']),None)
+            if call: anchor.update(line=call['line'],end_line=call['end_line'])
+        elif row.get('symbol') in graph.methods:
+            anchor=dict(graph.methods[row['symbol']])
+        elif row.get('symbol') in graph.classes:
+            anchor=dict(graph.classes[row['symbol']])
+        elif row.get('path'):
+            file=next((f for f in graph.index['files'] if f['path']==row['path']),None)
+            if file: anchor=dict(file,kind='boundary_location',line=1,end_line=1)
+        refs=[]
+        if anchor:
+            anchor.update(kind='boundary_location',end_line=min(anchor['end_line'],anchor['line']+3))
+            row['source_location']=dict(path=anchor['path'],start_line=anchor['line'],end_line=anchor['end_line'])
+            ref=self.evidence(side,anchor)
+            if ref: refs=[ref]
+        data=clean(row); identifier=stable(self.name,'analysis_boundary',data,refs)
+        fact=dict(id=identifier,kind='analysis_boundary',classification='risk_candidate',data=data,
+                  evidence_ids=refs,evidence_status='located' if refs else 'unavailable')
+        if identifier not in self.fact_ids:
+            self.facts.append(fact);self.fact_ids.add(identifier)
+        return row,fact
 
     def changed(self):
         old, new = self.graphs['baseline'], self.graphs['result']
+        ignored = {symbol for symbol, row in new.methods.items()
+                   if symbol not in old.methods and test_source(row['path'])}
         methods = set()
         for owner in sorted(set(old.classes)|set(new.classes)):
             a,b=old.classes.get(owner),new.classes.get(owner)
+            if a is None and b is not None and test_source(b['path']):
+                continue
             def signature(row):
                 return {k:row.get(k) for k in ('imports','annotations','extends','implements','class_kind')} if row else None
             if signature(a)!=signature(b):
+                self.critical_classes.add(owner)
                 fact=self.fact('class_binding_change',dict(owner=owner,before=signature(a),after=signature(b)),[('baseline',a),('result',b)])
                 self.obligation(fact,'class_binding',dict(owner=owner),dict(kind='review_class_binding'))
                 imports=set((a or {}).get('imports',[]))^set((b or {}).get('imports',[]))
@@ -564,30 +796,42 @@ class ProjectAnalysis:
                 structural=any((a or {}).get(k)!=(b or {}).get(k) for k in ('annotations','extends','implements'))
                 for graph in (old,new):
                     for symbol in graph.methods_by_owner.get(owner,[]):
-                        if structural or any(re.search(r'\b'+re.escape(n)+r'\b',graph.methods[symbol]['source']) for n in names):methods.add(symbol)
+                        if symbol not in ignored and (structural or any(re.search(r'\b'+re.escape(n)+r'\b',graph.methods[symbol]['source']) for n in names)):
+                            methods.add(symbol)
+                            side='baseline' if graph is old else 'result'
+                            self.critical_symbols[side].add(symbol)
         for symbol in sorted(set(old.methods) | set(new.methods)):
+            if symbol in ignored:
+                continue
             a, b = old.methods.get(symbol), new.methods.get(symbol)
             if compact(a.get('source') if a else '') != compact(b.get('source') if b else ''):
                 methods.add(symbol)
+                for side,graph in (('baseline',old),('result',new)):
+                    if symbol in graph.methods:self.critical_symbols[side].add(symbol)
                 fact = self.fact('method_change', dict(symbol=symbol, change='modified' if a and b else ('added' if b else 'deleted')),
                                  [('baseline', a), ('result', b)])
                 self.obligation(fact, 'changed_behavior', dict(symbol=symbol), dict(kind='inspect_behavior'))
         changed_fields = []
         for key in sorted(set(old.fields) | set(new.fields)):
             a, b = old.fields.get(key), new.fields.get(key)
+            if a is None and b is not None and test_source(b['path']):
+                continue
             if compact(a.get('source') if a else '') != compact(b.get('source') if b else ''):
                 changed_fields.append(key)
+                self.critical_fields.add(key)
                 consumers = sorted({r['source'] for graph in (old,new) for r in graph.field_reads+graph.edges
-                                    if r['field']==key[0]+'#'+key[1]})
+                                    if r['field']==key[0]+'#'+key[1] and r['source'] not in ignored})
+                for side,graph in (('baseline',old),('result',new)):
+                    self.critical_symbols[side].update(s for s in consumers if s in graph.methods)
                 fact = self.fact('field_change', dict(owner=key[0], field=key[1], before=a.get('type') if a else None,
                     after=b.get('type') if b else None, before_initializer=a.get('initializer') if a else None,
                     after_initializer=b.get('initializer') if b else None, consumers=consumers),
                     [('baseline', a), ('result', b)])
                 self.obligation(fact,'field_behavior',dict(owner=key[0],field=key[1]),dict(kind='inspect_field_consumers'))
-                methods.update(consumers)
+                methods.update(s for s in consumers if s not in ignored)
                 for graph in (old, new):
                     for edge in graph.edges:
-                        if edge['field'] == key[0]+'#'+key[1]:
+                        if edge['field'] == key[0]+'#'+key[1] and edge['source'] not in ignored:
                             methods.add(edge['source'])
         return methods, changed_fields
 
@@ -598,7 +842,12 @@ class ProjectAnalysis:
             for target in edge['targets']:
                 forward[edge['source']].add(target)
                 reverse[target].add(edge['source'])
-        seen = {s: 0 for s in sorted(seeds) if s in graph.methods}
+        valid_seeds=[s for s in sorted(seeds) if s in graph.methods]
+        if len(valid_seeds)>self.limits['methods']:
+            self.scope_errors.append('{} changed methods exceed the per-snapshot method limit ({}/{})'.format(
+                side,len(valid_seeds),self.limits['methods']))
+        valid_seeds=valid_seeds[:self.limits['methods']]
+        seen = {s: 0 for s in valid_seeds}
         # 上溯和下探分别进行，避免经共享配置方法反向扩散到无关业务。
         for direction in (reverse,forward):
             visited={s:0 for s in sorted(seeds) if s in graph.methods}
@@ -610,17 +859,8 @@ class ProjectAnalysis:
                     if other not in seeds and '/src/test/' in '/'+graph.methods[other]['path'].replace('\\','/'):
                         continue
                     if distance>=self.limits['depth'] or len(seen)>=self.limits['methods']:
-                        self.omissions.append(dict(side=side,symbol=other,parent=symbol,reason='relation_budget'))
                         continue
                     visited[other]=distance+1;seen[other]=min(seen.get(other,distance+1),distance+1);queue.append(other)
-        # 上游对返回值的同类型二次转换仍需读取，例如 finally 中重构响应。
-        for symbol in list(sorted(seen)):
-            method=graph.methods[symbol]
-            for target in sorted(forward[symbol]):
-                if target in seen or graph.declared_type(graph.methods[target]['return_type'],graph.methods[target]['owner'])!=graph.declared_type(method['return_type'],method['owner']):continue
-                if seen[symbol]>=self.limits['depth'] or len(seen)>=self.limits['methods']:
-                    self.omissions.append(dict(side=side,symbol=target,parent=symbol,reason='return_transform_budget'));continue
-                seen[target]=seen[symbol]+1
         # 明确构造并传出的回调对象按约定展开；不把这些边称为直接调用。
         queue=collections.deque()
         for edge in graph.edges:
@@ -630,7 +870,7 @@ class ProjectAnalysis:
             parent,target=queue.popleft()
             if target in seen:continue
             if seen[parent]>=self.limits['depth'] or len(seen)>=self.limits['methods']:
-                self.omissions.append(dict(side=side,symbol=target,parent=parent,reason='callback_budget'));continue
+                continue
             seen[target]=seen[parent]+1
             queue.extend((target,other) for other in sorted(forward[target]))
         return seen
@@ -638,8 +878,40 @@ class ProjectAnalysis:
     def configurations(self, selected):
         bindings = {}
         for side, graph in self.graphs.items():
+            reverse_calls=collections.defaultdict(set)
+            for call_edge in graph.edges:
+                for target in call_edge['targets']:
+                    reverse_calls[target].add(call_edge['source'])
+            entrypoint_annotations={'RequestMapping','GetMapping','PostMapping','PutMapping','DeleteMapping',
+                                    'PatchMapping','DubboService','KafkaListener','RabbitListener','Scheduled',
+                                    'EventListener'}
+            entrypoints=set()
+            for symbol,method in graph.methods.items():
+                names={a['name'].rsplit('.',1)[-1] for a in method.get('annotations',[])}
+                names.update(a['name'].rsplit('.',1)[-1] for a in
+                             graph.classes.get(method['owner'],{}).get('annotations',[]))
+                if names & entrypoint_annotations:
+                    entrypoints.add(symbol)
+            entrypoint_cache={}
+            def find_entrypoints(symbol):
+                if symbol in entrypoint_cache:return entrypoint_cache[symbol]
+                queue=collections.deque([(symbol,0,[symbol])]);seen={symbol};found=[]
+                while queue and len(seen)<=self.limits['methods']:
+                    current,distance,path=queue.popleft()
+                    if current in entrypoints:
+                        found.append(dict(symbol=current,distance=distance,path=list(reversed(path))))
+                        continue
+                    if distance>=self.limits['depth']:continue
+                    for caller in sorted(reverse_calls[current]):
+                        if caller in seen:continue
+                        seen.add(caller);queue.append((caller,distance+1,path+[caller]))
+                found=sorted(found,key=lambda row:(row['distance'],row['symbol']))
+                entrypoint_cache[symbol]=found
+                return found
             current = {}
             for key, field in sorted(graph.fields.items()):
+                if test_source(field['path']) and key not in self.graphs['baseline'].fields:
+                    continue
                 class_properties=[a for a in graph.classes.get(field['owner'],{}).get('annotations',[])
                                   if a['name'].rsplit('.',1)[-1]=='ConfigurationProperties']
                 for ann in field['annotations']+class_properties:
@@ -658,14 +930,32 @@ class ProjectAnalysis:
                     scope = self.rules['config_scopes'].get(field['owner'], 'unconfigured')
                     consumers = []
                     getter = 'get'+field['name'].casefold()
-                    for edge in graph.edges:
+                    for edge in graph.configuration_edges(field['owner'], field['name'], getter):
+                        if edge['source'] not in self.graphs['baseline'].methods and test_source(graph.methods[edge['source']]['path']):
+                            continue
                         site = edge['site']
                         matches = edge['field'] == field['owner']+'#'+field['name']
                         matches |= edge['receiver_type'] == field['owner'] and site['name'].casefold() == getter
                         if matches:
                             conditions=[r['condition'] for r in graph.events[edge['source']] if r['kind']=='branch'
                                         and compact(site['expression']) in compact(r['condition'])]
-                            consumers.append(dict(symbol=edge['source'], guards=site['guards'],conditions=conditions,
+                            use_kinds=('branch','switch','assignment','return','throw','call','construct')
+                            usage_sites=[]
+                            for event in graph.events[edge['source']]:
+                                if event['kind'] not in use_kinds:continue
+                                evidence_text=' '.join(str(event.get(name,'')) for name in
+                                    ('condition','expression','target','then','else','arguments','guards'))
+                                if compact(site['expression']) not in compact(evidence_text):continue
+                                usage_sites.append(dict(kind=event['kind'],line=event.get('line'),
+                                    expression=event.get('condition') or event.get('expression') or event.get('target',''),
+                                    guards=event.get('guards',[])))
+                            consumers.append(dict(symbol=edge['source'],
+                                read_location=dict(path=graph.methods[edge['source']]['path'],line=site.get('line'),
+                                                   expression=site['expression']),
+                                entrypoints=find_entrypoints(edge['source']),
+                                entrypoint_status='found_within_depth' if find_entrypoints(edge['source']) else 'not_found_within_depth',
+                                guards=site['guards'],conditions=conditions,usage_sites=usage_sites,
+                                usage_status='indexed' if usage_sites else 'no_direct_use_event_found',
                                 condition_constants=[dict(reference=ref,value=graph.constant_value(ref,field['owner']))
                                     for condition in conditions for ref in re.findall(r'[\w.]+\.get\w+\(\)',condition)
                                     if graph.constant_value(ref,field['owner']) is not None]))
@@ -685,7 +975,8 @@ class ProjectAnalysis:
             locations = [('baseline', a['row'] if a else None), ('result', b['row'] if b else None)]
             for side, binding in [('baseline', a), ('result', b)]:
                 if binding:
-                    locations += [(side, self.graphs[side].methods[c['symbol']]) for c in binding['consumers']]
+                    locations += [(side, self.graphs[side].methods[c['symbol']]) for c in binding['consumers']
+                                  if c['symbol'] in selected[side]]
             fact = self.fact('configuration', dict(before=summary(a), after=summary(b),
                                                   change='added' if not a else ('removed' if not b else 'retained_or_consumers_changed')), locations)
             if not a or not b or a['consumers'] != b['consumers']:
@@ -719,7 +1010,7 @@ class ProjectAnalysis:
                     if field and (target.startswith('this.') or not shadowed):
                         aliases=[graph.constant_value(a['arguments'].get('name',a['arguments'].get('value','')),method['owner'])
                                  for a in field['annotations'] if a['name'].rsplit('.',1)[-1] in self.rules['aliases']]
-                        fact=self.fact('field_source',dict(side=side,symbol=symbol,receiver='this',field=next((a for a in aliases if a),name),
+                        fact=self.fact('field_source',dict(side=side,symbol=symbol,receiver='this',receiver_type=method['owner'],field=next((a for a in aliases if a),name),
                             expression=row['expression'],origins=graph.origins(row['expression'],symbol,row['order']),guards=row['guards']),[(side,method)])
                         if fact:output.append(fact)
                 if row['kind'] == 'branch' and side == 'result' and symbol in required_symbols:
@@ -776,7 +1067,7 @@ class ProjectAnalysis:
                                 aliases += [graph.constant_value(a['arguments'].get('name', a['arguments'].get('value', '')),declaration['owner'])
                                             for a in declaration['annotations']
                                             if a['name'].rsplit('.',1)[-1] in self.rules['aliases']]
-                        fact = self.fact('field_source', dict(side=side, symbol=symbol, receiver=row['receiver'],
+                        fact = self.fact('field_source', dict(side=side, symbol=symbol, receiver=row['receiver'], receiver_type=receiver,
                                         field=next((a for a in aliases if a), field), expression=expression,
                                         origins=origins, guards=row['guards']), [(side, method)])
                         if fact:
@@ -833,13 +1124,16 @@ class ProjectAnalysis:
     def run(self):
         changed, fields = self.changed()
         selected = {side: self.traverse(side, changed) for side in self.graphs}
+        chain_symbols = set(selected['result'])
         # 同名字段写入仅作为合同消费者候选，不冒充调用或业务语义绑定。
-        changed_labels=set()
+        changed_labels=collections.defaultdict(set)
         for symbol in changed:
             old_calls={compact(r['expression']) for r in self.graphs['baseline'].events.get(symbol,[]) if r['kind']=='call'}
             for row in self.graphs['result'].events.get(symbol,[]):
                 if row['kind']=='call' and compact(row['expression']) not in old_calls and row['name'].startswith('set') and len(row['arguments'])==1:
-                    changed_labels.add(row['name'][3:].casefold())
+                    receiver=self.graphs['result'].variable_type(row['receiver'],symbol,row['order'])
+                    changed_labels[row['name'][3:].casefold()].add(receiver)
+        label_candidates=[]
         for side,graph in self.graphs.items():
             for symbol in sorted(graph.methods):
                 if '/src/test/' in '/'+graph.methods[symbol]['path'].replace('\\','/'):
@@ -850,8 +1144,13 @@ class ProjectAnalysis:
                     if row['name'] in ('put','putIfAbsent') and len(row['arguments'])>1:
                         label=graph.constant_value(row['arguments'][0],row['owner'])
                     if not isinstance(label,str) or label.casefold() not in changed_labels:continue
-                    if len(selected[side])>=self.limits['methods'] and symbol not in selected[side]:
-                        self.omissions.append(dict(side=side,symbol=symbol,reason='contract_consumer_budget'));continue
+                    receiver=graph.variable_type(row['receiver'],symbol,row['order'])
+                    matched=(receiver in graph.classes and receiver in changed_labels[label.casefold()])
+                    if symbol not in selected[side] and not matched:
+                        label_candidates.append(dict(side=side,symbol=symbol,path=graph.methods[symbol]['path'],
+                            label=label,receiver_type=receiver,reason='same_label_not_confirmed_connection'))
+                        continue
+                    if len(selected[side])>=self.limits['methods'] and symbol not in selected[side]:continue
                     selected[side].setdefault(symbol,0)
                     self.fact('field_contract_consumer',dict(side=side,symbol=symbol,label=label,
                               reason='matching_field_label_not_business_binding'),[(side,graph.methods[symbol])],'risk_candidate')
@@ -861,6 +1160,8 @@ class ProjectAnalysis:
         for edge in self.graphs['result'].edges:
             if edge['source'] in changed and (edge['source'],edge['site']['name'],compact(edge['site']['receiver']),tuple(compact(a) for a in edge['site']['arguments'])) not in previous_calls:
                 required_symbols.update(edge['targets'])
+        for side in selected:
+            self.critical_symbols[side].update(selected[side])
         configured=set(self.rules['config_annotations'])|set(self.rules['aliases'])|{'Data','Getter','Setter','NotBlank','NotNull','Length','Size','Pattern'}
         for side,graph in self.graphs.items():
             for key in fields:
@@ -889,12 +1190,17 @@ class ProjectAnalysis:
                     site['parameter_bindings']=[dict(parameter=param['name'],declared_type=param['type'],expression=arg,
                         origins=graph.origins(arg,edge['source'],edge['site']['order']))
                         for param,arg in zip(target['parameters'],site['arguments'])]
-                self.relations.append(dict(id=stable(self.name, side, edge['source'], site), side=side,
-                    source=edge['source'], targets=edge['targets'], status=edge['status'], reason=edge['reason'],
-                    receiver_type=edge['receiver_type'], field=edge['field'], evidence_ids=[evidence], site=clean(site)))
-                if side == 'result' and edge['source'] in required_symbols and edge['requires_review']:
+                relation_in_scope=edge['status']!='unresolved' or relation_affects_review_scope(
+                    edge,graph,self.rules.get('relation_review_tokens',()))
+                if relation_in_scope:
+                    self.relations.append(dict(id=stable(self.name, side, edge['source'], site), side=side,
+                        source=edge['source'], targets=edge['targets'], status=edge['status'], reason=edge['reason'],
+                        receiver_type=edge['receiver_type'], field=edge['field'], evidence_ids=[evidence], site=clean(site)))
+                if (side == 'result' and edge['source'] in selected[side] and edge['requires_review'] and
+                        relation_in_scope and not standalone_diagnostic_log(site)):
                     fact = self.fact('unresolved_relation', dict(symbol=edge['source'], call=site,
-                                      reason=edge['reason'], candidates=edge['targets']), [('result',method)], 'risk_candidate')
+                                      receiver_type=edge['receiver_type'],reason=edge['reason'],
+                                      candidates=edge['targets']), [('result',method)], 'risk_candidate')
                     self.obligation(fact, 'review_relation', dict(expression=site['expression']), dict(kind='review_binding'))
             for row in graph.index['events']:
                 if row['kind'] == 'mapper':
@@ -906,6 +1212,8 @@ class ProjectAnalysis:
                         if side == 'result' and row['dynamic']:
                             self.obligation(fact,'mapper_dynamic_conditions',dict(statement=row['method']),dict(kind='inspect_sql_conditions'))
                 if row['kind'] == 'field' and row.get('initializer') and row['name'] in referenced_names:
+                    if test_source(row['path']) and (row['owner'],row['name']) not in self.graphs['baseline'].fields:
+                        continue
                     self.fact('constant_or_collection', dict(side=side, owner=row['owner'], name=row['name'],
                               initializer=row['initializer'], references=[dict(reference=ref,value=graph.constant_value(ref,row['owner']))
                               for ref in re.findall(r'[\w.]+\.getValue\(\)',row['initializer'])],
@@ -914,40 +1222,82 @@ class ProjectAnalysis:
         old_outputs=collections.defaultdict(list)
         for fact in outputs['baseline']:
             data=fact['data'];old_outputs[(data['symbol'],data['field'],data['receiver'])].append((data['expression'],data['origins'],data['guards']))
-        changed_output_fields=set()
+        def output_group(data):
+            receiver_type=data.get('receiver_type')
+            return receiver_type if receiver_type in self.graphs['result'].classes else data['symbol']
+        changed_output_groups=set()
         for fact in outputs['result']:
             data=fact['data']
             if data['symbol'] in changed and (data['expression'],data['origins'],data['guards']) not in old_outputs[(data['symbol'],data['field'],data['receiver'])]:
-                changed_output_fields.add(data['field'])
+                changed_output_groups.add((data['field'],output_group(data)))
         by_field = collections.defaultdict(list)
         for fact in outputs['result']:
-            by_field[fact['data']['field']].append(fact)
-        for field, entries in sorted(by_field.items()):
+            data=fact['data']
+            # 类型不明确时先比较同一方法内的来源。
+            group=output_group(data)
+            by_field[(data['field'],group)].append(fact)
+        for (field, group), entries in sorted(by_field.items()):
             signatures = {tuple(f['data']['origins']) for f in entries}
-            if len(signatures) > 1 and field in changed_output_fields:
+            if len(signatures) > 1 and (field,group) in changed_output_groups:
                 locations = [('result',self.graphs['result'].methods[f['data']['symbol']]) for f in entries]
-                candidate = self.fact('field_source_difference', dict(field=field, sources=[dict(fact_id=f['id'],
+                candidate = self.fact('field_source_difference', dict(field=field, receiver_group=group, sources=[dict(fact_id=f['id'],
                                       symbol=f['data']['symbol'],origins=f['data']['origins']) for f in entries]),
                                       locations,'risk_candidate')
                 self.obligation(candidate,'consumer_field_sources',dict(field=field),dict(kind='compare_output_sources'))
+        # 仅在已选调用链内提示未确认对象绑定的跨方法来源差异。
+        graph=self.graphs['result']
+        neighbors=collections.defaultdict(set)
+        for edge in graph.edges:
+            if edge['source'] in chain_symbols:
+                for target in edge['targets']:
+                    if target in chain_symbols:
+                        neighbors[edge['source']].add(target)
+                        neighbors[target].add(edge['source'])
+        components={}
+        for symbol in sorted(chain_symbols):
+            if symbol in components:continue
+            queue=[symbol];components[symbol]=symbol
+            for current in queue:
+                for neighbor in sorted(neighbors[current]):
+                    if neighbor not in components:
+                        components[neighbor]=symbol;queue.append(neighbor)
+        chain_fields=collections.defaultdict(list)
+        for fact in outputs['result']:
+            data=fact['data']
+            if data['symbol'] in chain_symbols:
+                chain_fields[(components[data['symbol']],data['field'])].append(fact)
+        for (component,field), entries in sorted(chain_fields.items()):
+            pairs=[]
+            for index, first in enumerate(entries):
+                a=first['data']
+                for second in entries[index+1:]:
+                    b=second['data']
+                    if a['symbol']==b['symbol'] or a['origins']==b['origins']:
+                        continue
+                    if a.get('receiver_type') in graph.classes and b.get('receiver_type') in graph.classes:
+                        continue
+                    if not any(d['symbol'] in changed and
+                            (d['expression'],d['origins'],d['guards']) not in old_outputs[(d['symbol'],d['field'],d['receiver'])]
+                            for d in (a,b)):
+                        continue
+                    pairs.append((first,second))
+            if not pairs:continue
+            sources={fact['id']:fact for pair in pairs for fact in pair}
+            entries=[sources[key] for key in sorted(sources)]
+            locations=[('result',graph.methods[f['data']['symbol']]) for f in entries]
+            candidate=self.fact('field_source_binding_candidate',dict(field=field,chain=component,
+                reason='receiver_binding_unconfirmed',sources=[dict(fact_id=f['id'],symbol=f['data']['symbol'],
+                    receiver=f['data']['receiver'],receiver_type=f['data']['receiver_type'],origins=f['data']['origins'])
+                    for f in entries]),locations,'risk_candidate')
+            self.obligation(candidate,'review_boundary',dict(field=field,symbol=component),dict(kind='review_field_source_binding'))
         self.argument_changes(changed)
-        issues = []
-        for side, graph in self.graphs.items():
-            issues += [dict(row,side=side) for row in graph.index['issues']]
-        unique_omissions = {stable(row):row for row in self.omissions}
-        for row in issues+list(unique_omissions.values()):
-            anchor = next(iter(self.graphs[row['side']].methods.values()),None)
-            fact = self.fact('analysis_boundary',row,[(row['side'],anchor)],'risk_candidate') if anchor else None
-            if fact is None:
-                refs=sorted(e['id'] for e in self.context.values() if e['side']==row['side'])
-                if refs:
-                    data=clean(row);identifier=stable(self.name,'analysis_boundary',data,[refs[0]])
-                    fact=dict(id=identifier,kind='analysis_boundary',classification='risk_candidate',data=data,evidence_ids=[refs[0]])
-                    if identifier not in self.fact_ids:self.facts.append(fact);self.fact_ids.add(identifier)
-            self.obligation(fact,'review_analysis_boundary',row,dict(kind='document_limit'))
+        boundaries=[]
         return dict(name=self.name, repository=self.repo,
             snapshots={side:graph.index['tree'] for side,graph in self.graphs.items()},
             facts=sorted(self.facts,key=lambda f:f['id']),relations=sorted(self.relations,key=lambda r:r['id']),
             obligations=sorted(self.obligations,key=lambda o:o['id']),
-            boundaries=sorted(issues+list(unique_omissions.values()),key=lambda r:json.dumps(r,sort_keys=True)),
+            field_label_candidates=sorted(label_candidates,key=lambda r:(r['side'],r['symbol'],r['label'])),
+            boundaries=sorted(boundaries,key=lambda r:json.dumps(r,sort_keys=True)),
+            scope_errors=sorted(set(self.scope_errors)),
+            critical_evidence_omissions=sorted(self.critical_evidence_omissions),
             stats={side:dict(graph.index['stats'],selected_methods=len(selected[side])) for side,graph in self.graphs.items()}), list(self.context.values())

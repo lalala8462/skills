@@ -2,10 +2,13 @@
 """Export model-reviewed test cases as a five-column XLSX using Python stdlib."""
 import argparse
 import json
+import posixpath
 import re
 import sys
+import unicodedata
 import zipfile
 from pathlib import Path
+from xml.etree import ElementTree as ET
 from xml.sax.saxutils import escape
 
 HEADERS = ('用例编号', '用例名称', '前置条件', '步骤描述', '预期结果')
@@ -71,10 +74,16 @@ def _case(item, ids):
     return identifier, title, preconditions, steps, expected
 
 
-def normalize(data):
+def normalize(data, analysis):
     """只接受当前四类用例；源码和覆盖校验由交付入口先执行。"""
     from test_points import PURPOSES, case_material, validate_cases
-    validate_cases(data)
+    validate_cases(data, analysis)
+    return _normalize_validated(data)
+
+
+def _normalize_validated(data):
+    """仅供同一调用中已校验的对象使用，不缓存跨调用的校验结果。"""
+    from test_points import PURPOSES, case_material
     ids, groups = set(), {}
     for purpose in PURPOSES:
         rows = []
@@ -107,8 +116,14 @@ def _sheet(rows):
              '<col min="2" max="5" width="40" customWidth="1"/></cols>',
              '<sheetData>']
     for n, values in enumerate((HEADERS,) + tuple(rows), 1):
-        max_lines = max(value.count('\n') + 1 for value in values)
-        height = 24 if n == 1 else min(240, max(32, 18 * max_lines + 10))
+        def display_lines(value, width):
+            total = 0
+            for line in value.split('\n'):
+                length = sum(2 if unicodedata.east_asian_width(ch) in ('W','F') else 1 for ch in line)
+                total += max(1, (length + width - 1) // width)
+            return total
+        max_lines = max(display_lines(value, 13 if index == 0 else 38) for index, value in enumerate(values))
+        height = 24 if n == 1 else min(409, max(32, 18 * max_lines + 10))
         items.append('<row r="{}" ht="{}" customHeight="1">'.format(n, height))
         for col, value in zip('ABCDE', values):
             items.append(_cell(col, n, value, 1 if n == 1 else 2))
@@ -117,7 +132,120 @@ def _sheet(rows):
     return ''.join(items).encode('utf-8')
 
 
-def export(rows, target):
+def _template_sheet(xml_text, rows, shared_strings):
+    """Keep the template sheet layout/styles and replace only header/data rows."""
+    main_ns = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+    root = ET.fromstring(xml_text)
+    if root.tag != '{%s}worksheet' % main_ns:
+        raise ValueError('template worksheet uses an unsupported XML namespace')
+    if not re.search(r'<worksheet\b[^>]*\bxmlns=["\']' + re.escape(main_ns) + r'["\']', xml_text):
+        raise ValueError('template worksheet must declare the standard namespace as its default namespace')
+    sheet_data = root.find('{%s}sheetData' % main_ns)
+    if sheet_data is None:
+        raise ValueError('template worksheet is missing sheetData')
+    template_rows = {row.get('r'): row for row in sheet_data.findall('{%s}row' % main_ns)}
+    header = template_rows.get('1')
+    if header is None:
+        raise ValueError('template worksheet is missing header row 1')
+    header_cells = {cell.get('r'): cell for cell in header.findall('{%s}c' % main_ns)}
+    header_styles = {}
+    data_styles = {}
+    data_row = template_rows.get('2')
+    data_cells = {cell.get('r'): cell for cell in data_row.findall('{%s}c' % main_ns)} if data_row is not None else {}
+    for column, expected in zip('ABCDE', HEADERS):
+        cell = header_cells.get(column + '1')
+        if cell is None:
+            raise ValueError('template worksheet header is missing cell ' + column + '1')
+        value = ''.join(node.text or '' for node in cell.findall('.//{%s}t' % main_ns))
+        if cell.get('t') == 's':
+            try:
+                shared_index = int(cell.find('{%s}v' % main_ns).text)
+                if shared_index < 0 or shared_index >= len(shared_strings):
+                    raise ValueError('shared-string index is out of range')
+                value = shared_strings[shared_index]
+            except (AttributeError, TypeError, ValueError, IndexError):
+                raise ValueError('template worksheet has an invalid shared-string header')
+        if value != expected:
+            raise ValueError('template worksheet header mismatch at ' + column + '1')
+        header_styles[column] = cell.get('s', '0')
+        data_cell = data_cells.get(column + '2')
+        data_styles[column] = data_cell.get('s', '0') if data_cell is not None else '0'
+
+    row_height = header.get('ht', '24')
+    widths = [15, 40, 40, 40, 40]
+    generated = []
+    all_rows = [HEADERS] + rows
+    for row_number, values in enumerate(all_rows, 1):
+        if row_number == 1:
+            height = row_height
+        else:
+            line_count = 1
+            for value, width in zip(values, widths):
+                display_width = 13 if width == 15 else 38
+                for line in value.split('\n'):
+                    visible = sum(2 if unicodedata.east_asian_width(ch) in ('W', 'F') else 1 for ch in line)
+                    line_count = max(line_count, (visible + display_width - 1) // display_width)
+            height = str(min(409, max(32, 18 * line_count + 10)))
+        generated.append('<row r="{}" ht="{}" customHeight="1">'.format(row_number, escape(str(height))))
+        for column, value in zip('ABCDE', values):
+            style = header_styles[column] if row_number == 1 else data_styles[column]
+            generated.append(_cell(column, row_number, value, style))
+        generated.append('</row>')
+    sheet_data_xml = '<sheetData>' + ''.join(generated) + '</sheetData>'
+    pattern = re.compile(r'<(?:[A-Za-z_][\w.-]*:)?sheetData\b[^>]*>.*?</(?:[A-Za-z_][\w.-]*:)?sheetData>', re.S)
+    updated, count = pattern.subn(sheet_data_xml, xml_text, count=1)
+    if count != 1:
+        raise ValueError('template worksheet sheetData could not be replaced safely')
+    dimension = 'A1:E{}'.format(len(all_rows))
+    updated, _ = re.subn(r'(<dimension\b[^>]*\bref=)(["\'])[^"\']*\2',
+                         lambda match: match.group(1) + match.group(2) + dimension + match.group(2),
+                         updated, count=1)
+    updated, _ = re.subn(r'(<autoFilter\b[^>]*\bref=)(["\'])[^"\']*\2',
+                         lambda match: match.group(1) + match.group(2) + dimension + match.group(2),
+                         updated, count=1)
+    return updated.encode('utf-8')
+
+
+def _export_template(rows, target, template, names, purposes):
+    if target.resolve() == template.resolve():
+        raise ValueError('output workbook cannot overwrite its template')
+    main_ns = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+    document_rel_ns = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+    package_rel_ns = 'http://schemas.openxmlformats.org/package/2006/relationships'
+    with zipfile.ZipFile(template, 'r') as source:
+        workbook = ET.fromstring(source.read('xl/workbook.xml'))
+        relationships = ET.fromstring(source.read('xl/_rels/workbook.xml.rels'))
+        targets = {relation.get('Id'): relation.get('Target')
+                   for relation in relationships.findall('{%s}Relationship' % package_rel_ns)}
+        sheets = {}
+        order = []
+        for sheet in workbook.findall('.//{%s}sheet' % main_ns):
+            name = sheet.get('name')
+            target_id = sheet.get('{%s}id' % document_rel_ns)
+            relative = targets.get(target_id)
+            if not name or not relative:
+                raise ValueError('template workbook has an unresolved worksheet relationship')
+            sheet_path = relative.lstrip('/') if relative.startswith('/') else posixpath.normpath(posixpath.join('xl', relative))
+            sheets[name] = sheet_path
+            order.append(name)
+        if order != list(names):
+            raise ValueError('template workbook must contain exactly the four current sheets in their standard order')
+        shared_strings = []
+        if 'xl/sharedStrings.xml' in source.namelist():
+            shared = ET.fromstring(source.read('xl/sharedStrings.xml'))
+            shared_strings = [''.join(node.text or '' for node in item.findall('.//{%s}t' % main_ns))
+                              for item in shared.findall('{%s}si' % main_ns)]
+        sheet_content = {}
+        for name, purpose in zip(names, purposes):
+            sheet_path = sheets[name]
+            original = source.read(sheet_path).decode('utf-8')
+            sheet_content[sheet_path] = _template_sheet(original, rows['purposes'][purpose], shared_strings)
+        with zipfile.ZipFile(target, 'x', zipfile.ZIP_DEFLATED) as output:
+            for item in source.infolist():
+                output.writestr(item, sheet_content.get(item.filename, source.read(item.filename)))
+
+
+def export(rows, target, template=None):
     target = Path(target)
     target.parent.mkdir(parents=True, exist_ok=True)
     from test_points import PURPOSES, PURPOSE_NAMES
@@ -125,6 +253,11 @@ def export(rows, target):
         raise ValueError('export requires normalized current four-purpose rows')
     names = PURPOSE_NAMES
     sheets = tuple(rows['purposes'][p] for p in PURPOSES)
+    if template:
+        _export_template(rows, target, Path(template), names, PURPOSES)
+        result = {purpose: len(rows['purposes'][purpose]) for purpose in PURPOSES}
+        result['total'] = sum(result.values())
+        return result
     # x mode: never overwrite user files.
     with zipfile.ZipFile(target, 'x', zipfile.ZIP_DEFLATED) as archive:
         archive.writestr('[Content_Types].xml', '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -172,21 +305,30 @@ def main(argv=None):
     parser.add_argument('--output', required=True, help='New .xlsx output path')
     parser.add_argument('--analysis', required=True, help='本次当前版本生成的 analysis.json')
     parser.add_argument('--review', required=True, help='本次源码补查与处置记录')
+    parser.add_argument('--scope-only', action='store_true',
+                        help='只校验快审选中的范围，不要求清空范围外覆盖义务')
+    parser.add_argument('--template', help='可选的既有四表 Excel 模板；保留模板工作表、列宽和单元格样式')
     args = parser.parse_args(argv)
     try:
         if Path(args.output).suffix.lower() != '.xlsx':
             raise ValueError('output must end with .xlsx')
-        from validate_analysis import validate_files
-        errors,_=validate_files(args.analysis,args.review,args.input)
-        if errors:
-            raise ValueError('Coverage validation failed: '+'; '.join(errors[:8]))
-        rows = normalize(json.loads(Path(args.input).read_text(encoding='utf-8-sig')))
-        count = export(rows, args.output)
+        cases=json.loads(Path(args.input).read_text(encoding='utf-8-sig'))
+        if args.scope_only:
+            from scope_validation import validate_scope_files
+            validate_scope_files(args.analysis,args.review,args.input)
+        else:
+            from validate_analysis import validate_files
+            errors,_=validate_files(args.analysis,args.review,args.input)
+            if errors:
+                raise ValueError('Coverage validation failed: '+'; '.join(errors[:8]))
+        rows = _normalize_validated(cases)
+        count = export(rows, args.output, args.template)
         from test_points import PURPOSES, PURPOSE_NAMES
         print('EXPORTED: ' + ', '.join('{}={}'.format(name, count[p]) for p, name in zip(PURPOSES, PURPOSE_NAMES))
               + ', total={} -> {}'.format(count['total'], Path(args.output).resolve()))
         return 0
-    except (ValueError, OSError, KeyError, TypeError, IndexError, json.JSONDecodeError, zipfile.BadZipFile) as exc:
+    except (ValueError, OSError, KeyError, TypeError, IndexError, json.JSONDecodeError,
+            zipfile.BadZipFile, ET.ParseError) as exc:
         print('ERROR: ' + str(exc), file=sys.stderr)
         return 2
 

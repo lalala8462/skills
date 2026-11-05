@@ -10,7 +10,7 @@ from unittest import mock
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
 import analyze
-from analysis_engine import COMMON_RULES,Graph,ProjectAnalysis
+from analysis_engine import COMMON_RULES,Graph,ProjectAnalysis,relation_affects_review_scope,relation_review_signature
 from source_index import JavaParser,DEFAULT_LIMITS,build_index,git_bytes,stable
 from validate_analysis import validate
 
@@ -140,6 +140,62 @@ class AnalysisTest(unittest.TestCase):
         self.assertTrue(any(r['site']['name']=='update' and r['site']['arguments']==['record.getTradeNo()']
                             for r in self.analysis['projects'][0]['relations']))
 
+    def test_added_test_methods_do_not_become_business_seeds(self):
+        production='package seed; class Pay { int run(){ return 1; } }'
+        old_test='package seed; class PayTest { void existing(){ System.out.println(1); } }'
+        commit(self.source,{'module/src/main/java/seed/Pay.java':production,
+               'module/src/test/java/seed/PayTest.java':old_test},'test exclusion baseline')
+        head=commit(self.source,{'module/src/main/java/seed/Pay.java':production.replace('return 1','return 2'),
+            'module/src/test/java/seed/PayTest.java':old_test.replace(' } }',' } void added(){ System.out.println(2); } }'),
+            'module/src/test/java/seed/NewTest.java':'package seed; @interface Value { String value(); } class NewTest { @Value("${TEST_ONLY}") String value="1"; void run(){ System.out.println(value); } }'},'test exclusion change')
+        result,context=self.analyze([head]); project=result['projects'][0]
+        symbols=[f['data'].get('symbol','') for f in project['facts'] if f['kind']=='method_change']
+        self.assertTrue(any(s=='seed.Pay#run()' for s in symbols))
+        self.assertFalse(any('PayTest#added' in s or 'NewTest#' in s for s in symbols))
+        self.assertFalse(any('/src/test/' in e['path'] for e in context))
+        self.assertFalse(any('TEST_ONLY' in str(o['condition']) for o in project['obligations']))
+        self.assertFalse(any('/src/test/' in c.get('path','') for c in project['candidates']))
+        self.assertFalse(any('PayTest#added' in str(row) or 'NewTest#' in str(row) for row in project['history']))
+
+    def test_disconnected_same_label_is_retained_without_graph_expansion(self):
+        production='package labels; class Payload { void setZebraCode(String v){} } class Handler { void run(Payload p){ p.setZebraCode("old"); } }'
+        other='package labels; class OtherPayload { void setZebraCode(String v){} } class Other { void write(OtherPayload p){ p.setZebraCode("other"); } } class Same { void write(Payload p){ p.setZebraCode("same"); } }'
+        commit(self.source,{'label/src/main/java/labels/Handler.java':production,
+                            'label/src/main/java/labels/Other.java':other},'label baseline')
+        head=commit(self.source,{'label/src/main/java/labels/Handler.java':production.replace('"old"','"new"')},'label change')
+        result,_=self.analyze([head]);project=result['projects'][0]
+        self.assertTrue(any(c['symbol']=='labels.Other#write(OtherPayload)' and c['label']=='ZebraCode'
+                            for c in project['field_label_candidates']))
+        self.assertFalse(any(o['assertion']['kind']=='review_field_label_candidates' for o in project['obligations']))
+        self.assertFalse(any(r['source']=='labels.Other#write(OtherPayload)' for r in project['relations']))
+        self.assertTrue(any(r['source']=='labels.Same#write(Payload)' for r in project['relations']))
+        self.assertTrue(any(o['dimension']=='changed_behavior' and 'labels.Handler#run' in str(o['condition'])
+                            for o in project['obligations']))
+
+    def test_call_chain_map_source_difference_requires_binding_review(self):
+        source='''package mapchain; import java.util.Map;
+class Handler {
+ void changed(Map<String,String> m,String x,String y){m.put("orderNo",x);m.putIfAbsent("refundNo",x);m.putIfAbsent("same",x);m.put("onlyChanged",x);}
+ void caller(Map<String,String> m,String x,String y){changed(m,x,y);m.put("orderNo",x);m.putIfAbsent("refundNo",x);m.putIfAbsent("same",x);m.put("onlyCaller",y);}
+ void unrelated(Map<String,String> m,String x,String y){m.put("orderNo",x);}
+}'''
+        commit(self.source,{'map/src/main/java/mapchain/Handler.java':source},'map baseline')
+        after=source.replace('m.put("orderNo",x);','m.put("orderNo",y);',1).replace('m.putIfAbsent("refundNo",x);','m.putIfAbsent("refundNo",y);',1)
+        head=commit(self.source,{'map/src/main/java/mapchain/Handler.java':after},'map change')
+        result,_=self.analyze([head]);project=result['projects'][0]
+        candidates=[f for f in project['facts'] if f['kind']=='field_source_binding_candidate']
+        self.assertEqual({f['data']['field'] for f in candidates},{'orderNo','refundNo'})
+        candidate=next(f for f in candidates if f['data']['field']=='orderNo')
+        self.assertEqual(candidate['classification'],'risk_candidate')
+        self.assertEqual(candidate['data']['reason'],'receiver_binding_unconfirmed')
+        symbols=[s['symbol'] for s in candidate['data']['sources']]
+        self.assertEqual(len(symbols),2)
+        self.assertTrue(any('#changed(' in s for s in symbols))
+        self.assertTrue(any('#caller(' in s for s in symbols))
+        self.assertFalse(any('#unrelated(' in s for s in symbols))
+        self.assertTrue(any(o['assertion']['kind']=='review_field_source_binding' and candidate['id'] in o['fact_ids']
+                            for o in project['obligations']))
+
     def test_snapshot_ignores_unselected_commit(self):
         first=commit(self.source,{'one.txt':'selected'},'first')
         commit(self.source,{'hidden.txt':'must not leak'},'not selected')
@@ -169,7 +225,7 @@ class AnalysisTest(unittest.TestCase):
 
     def test_limits_and_unknown_annotations_are_visible(self):
         result,_=self.analyze([self.after],limits={'methods':1})
-        self.assertTrue(result['projects'][0]['boundaries'])
+        self.assertEqual(result['projects'][0]['boundaries'],[])
         generic,_=self.analyze([self.after],rules=False)
         self.assertFalse(any(f['kind']=='configuration' and f['data'].get('after',{}).get('key')=='NEW_ALIAS'
                              for f in generic['projects'][0]['facts']))
@@ -177,16 +233,20 @@ class AnalysisTest(unittest.TestCase):
         self.assertTrue(any(f['kind']=='annotation_binding_unconfigured' for f in generic['projects'][0]['facts']))
 
     def test_file_limit_is_explicit_and_cannot_silently_pass(self):
-        result,context=self.analyze([self.after],limits={'files':1})
-        self.assertTrue(result['projects'][0]['boundaries'])
-        errors,_=validate(result,context,dict(analysis_id=result['analysis_id'],dispositions=[]),self.empty_cases(result))
-        self.assertTrue(errors)
+        head=commit(self.source,{'src/A.java':'package sample; class A {}',
+            'src/Small.java':AFTER.replace('class Flow {','class Flow { String limitMarker(){return "changed";}')},'limit changed source files')
+        result,_=self.analyze([head],limits={'files':1})
+        project=result['projects'][0]
+        self.assertEqual(project['boundaries'],[])
+        self.assertIn('changed Java source could not be fully indexed: src/Small.java',project['hard_errors'])
 
     def test_non_utf8_file_is_reported(self):
         path=self.source/'src/Legacy.java';path.write_bytes(b'//\xff\xfe\nclass Legacy {}')
         git(self.source,'add','.');git(self.source,'commit','-qm','legacy encoding')
         result,_=self.analyze([git(self.source,'rev-parse','HEAD')])
-        self.assertTrue(any('decode' in b['reason'] for b in result['projects'][0]['boundaries']))
+        project=result['projects'][0]
+        self.assertEqual(project['boundaries'],[])
+        self.assertTrue(any('src/Legacy.java' in error for error in project['hard_errors']))
 
     def test_zero_net_change_keeps_method_history(self):
         commit(self.source,{'src/Small.java':BEFORE},'reset fixture')
@@ -320,20 +380,96 @@ class AnalysisTest(unittest.TestCase):
         errors,_=validate(self.analysis,self.context,review,cases)
         self.assertTrue(any('lost source coverage links' in e for e in errors))
 
-    def test_four_purpose_catalog_integrates_with_fixed_source_coverage(self):
-        from export_test_cases import normalize,main as export_main
-        data,review=self.closed_cases()
-        errors,_=validate(self.analysis,self.context,review,data)
+    def test_weak_label_candidates_do_not_block_valid_delivery(self):
+        from export_test_cases import main as export_main
+        from review_workbench import grouped
+        analysis=copy.deepcopy(self.analysis)
+        analysis['projects'][0]['field_label_candidates'].extend(dict(side='result',symbol='Other#write{}()'.format(i),
+            path='Other.java',label='orderNo',receiver_type='Other',reason='same_label_not_confirmed_connection') for i in range(324))
+        cases,review=self.closed_cases()
+        errors,_=validate(analysis,self.context,review,cases)
         self.assertEqual(errors,[])
-        self.assertEqual(sum(len(rows) for rows in normalize(data)['purposes'].values()),len(self.all_cases(self.closed_cases()[0])))
-        out=self.base/'four-purpose-delivery';out.mkdir()
-        for filename,value in [('analysis.json',self.analysis),('review.json',review),('cases.json',data)]:
+        self.assertIn('弱线索',grouped(analysis)['note'])
+        out=self.base/'weak-label-delivery';out.mkdir()
+        for filename,value in [('analysis.json',analysis),('review.json',review),('cases.json',cases)]:
             (out/filename).write_text(json.dumps(value,ensure_ascii=False),encoding='utf-8')
-        (out/'context.jsonl').write_text('\n'.join(json.dumps(r,ensure_ascii=False) for r in self.context),encoding='utf-8')
-        self.assertEqual(export_main(['--input',str(out/'cases.json'),'--output',str(out/'cases.xlsx'),
+        (out/'context.jsonl').write_text('\n'.join(json.dumps(row,ensure_ascii=False) for row in self.context),encoding='utf-8')
+        target=out/'cases.xlsx'
+        self.assertEqual(export_main(['--input',str(out/'cases.json'),'--output',str(target),
             '--analysis',str(out/'analysis.json'),'--review',str(out/'review.json')]),0)
+        self.assertTrue(target.is_file())
+
+    def test_fast10_review_caps_method_groups_and_merges_repeated_bindings(self):
+        from analysis_engine import VERSION
+        from review_workbench import fast10_view,grouped
+        facts=[];obligations=[]
+        for index in range(12):
+            symbol='sample.service.RefundService#run{}()'.format(index)
+            name='queryById' if index<5 else 'queryById{}'.format(index)
+            call=dict(name=name,receiver='dao',expression='dao.{}(value{})'.format(name,index),
+                      arguments=['value{}'.format(index)])
+            fact_id='fact-{}'.format(index);obligation_id='obligation-{}'.format(index)
+            facts.append(dict(id=fact_id,kind='unresolved_relation',data=dict(symbol=symbol,
+                call=call,receiver_type='sample.StoreDao',reason='external_target',candidates=['sample.StoreDao#queryById(String)']),
+                evidence_ids=[]))
+            obligations.append(dict(id=obligation_id,fact_ids=[fact_id],evidence_ids=[],
+                dimension='review_relation',condition=dict(expression=call['expression']),
+                assertion=dict(kind='review_binding'),required=True))
+            branch_fact_id='branch-fact-{}'.format(index)
+            branch_obligation_id='branch-obligation-{}'.format(index)
+            facts.append(dict(id=branch_fact_id,kind='branch',data=dict(symbol=symbol,condition='status == {}'
+                .format(index)),evidence_ids=[]))
+            obligations.append(dict(id=branch_obligation_id,fact_ids=[branch_fact_id],evidence_ids=[],
+                dimension='branch',condition=dict(expression='status == {}'.format(index)),
+                assertion=dict(kind='review_branch'),required=True))
+        analysis=dict(schema_version=1,analyzer_version=VERSION,analysis_id='fast10-test',
+            projects=[dict(name='sample',facts=facts,relations=[],obligations=obligations,
+                           boundaries=[],field_label_candidates=[])])
+        project=grouped(analysis)['projects'][0]
+        self.assertEqual(project['fast10_review']['time_budget_minutes'],10)
+        self.assertEqual(project['fast10_review']['max_method_groups'],8)
+        self.assertEqual(project['fast10_review']['max_relation_groups'],4)
+        self.assertEqual(project['fast10_review']['deferred_method_group_count'],4)
+        self.assertEqual(project['fast10_review']['queued_method_group_count'],8)
+        self.assertLessEqual(project['fast10_review']['queued_obligation_count'],20)
+        self.assertEqual(len(project['relation_review_batches']),1)
+        self.assertEqual(len(project['relation_review_batches'][0]['members']),5)
+        compact=fast10_view(analysis)['projects'][0]
+        self.assertNotIn('groups',compact)
+        self.assertNotIn('relation_review_groups',compact)
+        self.assertNotIn('relation_review_batches',compact)
+        flow_review=compact['normal_flow_review']
+        self.assertEqual(flow_review['group_count'],1)
+        self.assertEqual(flow_review['groups'][0]['name'],'退款主流程')
+        self.assertLessEqual(flow_review['groups'][0]['method_count'],8)
+        self.assertEqual(flow_review['supporting_obligation_count'] +
+                         flow_review['unassigned_relation_member_count'],
+                         project['fast10_review']['queued_obligation_count'])
+        self.assertLess(flow_review['supporting_obligation_count'],
+                        flow_review['total_obligation_count'])
+        self.assertEqual(set(flow_review['visible_fact_ids']),{fact['id'] for fact in compact['facts']})
+        self.assertEqual(flow_review['visible_fact_count'],len(compact['facts']))
+        self.assertTrue(all(fact['kind']!='unresolved_relation' for fact in compact['facts']))
+        self.assertGreater(flow_review['groups'][0]['relation_group_count'],0)
+        self.assertEqual(compact['fast10_review']['normal_flow_group_count'],1)
+
+    def test_fast10_prioritizes_changed_payment_method_before_enum_helper(self):
+        from analysis_engine import VERSION
+        from review_workbench import grouped
+        facts=[];obligations=[]
+        for index,symbol in enumerate(('sample.enums.ATypeEnum#mapDao()','sample.ZPayService#aggregatePay()')):
+            fact_id='change-fact-{}'.format(index);obligation_id='change-obligation-{}'.format(index)
+            facts.append(dict(id=fact_id,kind='method_change',data=dict(symbol=symbol,change='added'),evidence_ids=[]))
+            obligations.append(dict(id=obligation_id,fact_ids=[fact_id],evidence_ids=[],dimension='changed_behavior',
+                condition=dict(symbol=symbol),assertion=dict(kind='review_change'),required=True))
+        analysis=dict(schema_version=1,analyzer_version=VERSION,analysis_id='fast10-priority-test',
+            projects=[dict(name='sample',facts=facts,relations=[],obligations=obligations,
+                           boundaries=[],field_label_candidates=[])])
+        queued=grouped(analysis)['projects'][0]['fast10_review']['queued_method_groups']
+        self.assertEqual(queued[0]['symbol'],'sample.ZPayService#aggregatePay()')
+
+    def delivery_report(self, out, data):
         from test_points import PURPOSES,PURPOSE_NAMES
-        from validate_report import main as report_main
         counts=[len(data['purpose_cases'][purpose]) for purpose in PURPOSES]
         summary='Excel：cases.xlsx；'+'；'.join(name+'用例数量：'+str(count) for name,count in zip(PURPOSE_NAMES,counts))
         summary+='；总用例数量：'+str(sum(counts))
@@ -344,11 +480,48 @@ class AnalysisTest(unittest.TestCase):
             lines.append(line)
             if line.startswith('#'):lines.extend(['',content.get(line,'无')])
         report=out/'report.md';report.write_text('\n'.join(lines),encoding='utf-8')
+        return report
+
+    def test_four_purpose_catalog_integrates_with_fixed_source_coverage(self):
+        from export_test_cases import normalize,main as export_main
+        data,review=self.closed_cases()
+        errors,_=validate(self.analysis,self.context,review,data)
+        self.assertEqual(errors,[])
+        self.assertEqual(sum(len(rows) for rows in normalize(data, self.analysis)['purposes'].values()),len(self.all_cases(self.closed_cases()[0])))
+        out=self.base/'four-purpose-delivery';out.mkdir()
+        for filename,value in [('analysis.json',self.analysis),('review.json',review),('cases.json',data)]:
+            (out/filename).write_text(json.dumps(value,ensure_ascii=False),encoding='utf-8')
+        (out/'context.jsonl').write_text('\n'.join(json.dumps(r,ensure_ascii=False) for r in self.context),encoding='utf-8')
+        report=self.delivery_report(out,data)
+        self.assertEqual(export_main(['--input',str(out/'cases.json'),'--output',str(out/'cases.xlsx'),
+            '--analysis',str(out/'analysis.json'),'--review',str(out/'review.json')]),0)
+        from validate_report import main as report_main
         self.assertEqual(report_main([str(report),'--analysis',str(out/'analysis.json'),
             '--review',str(out/'review.json'),'--cases',str(out/'cases.json')]),0)
         data['purpose_cases']['acceptance'].pop()
         errors,_=validate(self.analysis,self.context,review,data)
         self.assertTrue(any('uncovered test points' in e for e in errors))
+
+    def test_reviewed_change_passes_coverage_and_excel_export(self):
+        from test_points import compile_plan
+        from export_test_cases import main as export_main
+        data,review=self.closed_cases()
+        plan=copy.deepcopy(data['test_point_catalog']['plan'])
+        plan['requirements'][0]['source']['kind']='reviewed_change'
+        data['test_point_catalog']=compile_plan(plan,self.analysis)
+        errors,_=validate(self.analysis,self.context,review,data)
+        self.assertEqual(errors,[])
+        out=self.base/'reviewed-change-delivery';out.mkdir()
+        for filename,value in [('analysis.json',self.analysis),('review.json',review),('cases.json',data)]:
+            (out/filename).write_text(json.dumps(value,ensure_ascii=False),encoding='utf-8')
+        (out/'context.jsonl').write_text('\n'.join(json.dumps(r,ensure_ascii=False) for r in self.context),encoding='utf-8')
+        report=self.delivery_report(out,data)
+        self.assertEqual(export_main(['--input',str(out/'cases.json'),'--output',str(out/'cases.xlsx'),
+            '--analysis',str(out/'analysis.json'),'--review',str(out/'review.json')]),0)
+        self.assertTrue((out/'cases.xlsx').is_file())
+        from validate_report import main as report_main
+        self.assertEqual(report_main([str(report),'--analysis',str(out/'analysis.json'),
+            '--review',str(out/'review.json'),'--cases',str(out/'cases.json')]),0)
 
     def test_wrong_executable_condition_is_rejected_even_with_original_coverage_links(self):
         from test_points import compile_plan
@@ -366,7 +539,8 @@ class AnalysisTest(unittest.TestCase):
                   c['coverage_links'][0]['obligation_id'] in point['obligation_ids'])
         case['test_point_links'][0].update(point_id=point['id'],conditions=point['conditions'])
         data['test_point_catalog']=catalog
-        normalize(data)
+        with self.assertRaisesRegex(ValueError,'test conditions do not cover source obligation'):
+            normalize(data, self.analysis)
         errors,_=validate(self.analysis,self.context,review,data)
         self.assertTrue(any('test conditions do not cover source obligation' in e for e in errors),errors)
         out=self.base/'bad-condition-delivery';out.mkdir()
@@ -440,6 +614,80 @@ class AnalysisTest(unittest.TestCase):
         self.assertTrue(any('review evidence' in e for e in errors))
 
 
+class BoundaryBatchTest(unittest.TestCase):
+    def test_batch_closes_both_obligations_and_rejects_overlap(self):
+        from analysis_engine import VERSION
+        from test_points import compile_plan,PURPOSES
+        rules={}; snapshots={'baseline':'a'*40,'result':'b'*40}; project='sample'; repo='repo'
+        analysis_id=stable(VERSION,rules,[(project,repo,snapshots)])
+        facts=[]; obligations=[]; context=[]; members=[]
+        for side in ('baseline','result'):
+            condition=dict(side=side,parent='sample.Flow#run()',symbol='sample.Store#find()',reason='relation_budget')
+            ref='source-'+side
+            context.append(dict(id=ref,project=project,side=side,path='src/sample/Flow.java',snippet='void run() {}'))
+            fid=stable(project,'analysis_boundary',condition,[ref])
+            facts.append(dict(id=fid,kind='analysis_boundary',data=condition,evidence_ids=[ref]))
+            assertion=dict(kind='document_limit')
+            oid=stable(project,fid,'review_analysis_boundary',condition,assertion)
+            obligations.append(dict(id=oid,fact_ids=[fid],evidence_ids=[ref],dimension='review_analysis_boundary',
+                                    condition=condition,assertion=assertion,required=True))
+            members.append(dict(obligation_id=oid,evidence_ids=[ref]))
+        project_data=dict(name=project,repository=repo,snapshots=snapshots,hard_errors=[],facts=facts,
+                          obligations=obligations,boundaries=[o['condition'] for o in obligations])
+        analysis=dict(schema_version=1,analyzer_version=VERSION,rules=rules,analysis_id=analysis_id,projects=[project_data])
+        plan=dict(version=1,analysis_id=analysis_id,requirements=[],rules=[],impacts=[],candidates=[])
+        cases=dict(schema_version=2,test_point_catalog=compile_plan(plan,analysis),purpose_cases={p:[] for p in PURPOSES})
+        batch=dict(status='reviewed_boundary',review_kind='model_source_review',conclusion='已核对两侧调用关系和目标位置。',
+                   limitations='实际运行时绑定仍未验证。',members=members)
+        review=dict(analysis_id=analysis_id,dispositions=[],boundary_batches=[batch])
+        errors,_=validate(analysis,context,review,cases,verify_sources=False)
+        self.assertEqual(errors,[])
+        metadata=copy.deepcopy(analysis); metadata_review=copy.deepcopy(review)
+        missing_fact=metadata['projects'][0]['facts'][0]; missing=metadata['projects'][0]['obligations'][0]
+        missing_fact['evidence_ids']=[];missing_fact['evidence_status']='unavailable'
+        missing_fact['id']=stable(project,'analysis_boundary',missing_fact['data'],[])
+        missing['fact_ids']=[missing_fact['id']];missing['evidence_ids']=[]
+        missing['id']=stable(project,missing_fact['id'],missing['dimension'],missing['condition'],missing['assertion'])
+        metadata_review['boundary_batches'][0]['members'][0]['obligation_id']=missing['id']
+        errors,_=validate(metadata,context,metadata_review,cases,verify_sources=False)
+        self.assertEqual(errors,[])
+        metadata_review['boundary_batches'][0]['members'][0]['evidence_ids']=[]
+        errors,_=validate(metadata,context,metadata_review,cases,verify_sources=False)
+        self.assertTrue(any('invalid boundary batch' in error for error in errors))
+        review['dispositions'].append(dict(obligation_id=members[0]['obligation_id'],evidence_ids=members[0]['evidence_ids'],
+            status=batch['status'],review_kind=batch['review_kind'],conclusion=batch['conclusion'],limitations=batch['limitations']))
+        errors,_=validate(analysis,context,review,cases,verify_sources=False)
+        self.assertTrue(any('duplicate disposition' in error for error in errors))
+
+    def test_batches_preserve_each_snapshot_and_require_relevant_evidence(self):
+        from validate_analysis import expand_boundary_batches
+        condition=dict(parent='sample.Flow#run()',symbol='sample.Store#find()',reason='relation_budget')
+        obligations={side:dict(dimension='review_analysis_boundary',
+            condition=dict(condition,side=side),fact_ids=['fact-'+side],evidence_ids=['anchor-'+side])
+            for side in ('baseline','result')}
+        evidence={}
+        for side in obligations:
+            evidence['anchor-'+side]=dict(project='sample',side=side,path='src/Other.java',snippet='class Other {}')
+            evidence['source-'+side]=dict(project='sample',side=side,path='src/sample/Flow.java',snippet='void run() {}')
+        members=[dict(obligation_id=side,evidence_ids=['anchor-'+side,'source-'+side]) for side in obligations]
+        batch=dict(status='reviewed_boundary',review_kind='model_source_review',
+                   conclusion='已核对两侧调用关系和目标位置。',limitations='实际运行时绑定仍未验证。',members=members)
+        review=dict(boundary_batches=[batch])
+        expanded=expand_boundary_batches(review,obligations,evidence)
+        self.assertEqual([x['obligation_id'] for x in expanded],['baseline','result'])
+        self.assertEqual(expanded[1]['evidence_ids'],['anchor-result','source-result'])
+        for mutate in ('missing_source','wrong_side','different_reason','duplicate','different_project'):
+            bad_review=copy.deepcopy(review); bad_obligations=copy.deepcopy(obligations); bad_evidence=copy.deepcopy(evidence)
+            if mutate=='missing_source': bad_review['boundary_batches'][0]['members'][1]['evidence_ids']=['anchor-result']
+            if mutate=='wrong_side': bad_evidence['source-result']['side']='baseline'
+            if mutate=='different_reason': bad_obligations['result']['condition']['reason']='context_budget'
+            if mutate=='duplicate': bad_review['boundary_batches'][0]['members'][1]['obligation_id']='baseline'
+            if mutate=='different_project':
+                bad_evidence['anchor-result']['project']='other';bad_evidence['source-result']['project']='other'
+            with self.assertRaises(ValueError,msg=mutate):
+                expand_boundary_batches(bad_review,bad_obligations,bad_evidence)
+
+
 class BindingTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):cls.parser=JavaParser()
@@ -451,6 +699,30 @@ class BindingTest(unittest.TestCase):
         for oid,rows in parsed.items():
             for row in rows['events']:events.append(dict(row,path=oid+'.java',blob=oid))
         return Graph(dict(events=events,tree='x',files=[dict(path=k+'.java',blob=k,source=v) for k,v in sources.items()],issues=[],stats={}),COMMON_RULES)
+
+    def test_budget_boundary_uses_callsite_and_records_missing_evidence(self):
+        graph=self.graph({'flow':'''package sample;
+class Unrelated { void ignored() {} }
+class Store { String find(){return "value";} }
+class Flow { Store store;
+ String run(){return store.find();}
+}'''})
+        engine=ProjectAnalysis('sample','repo',graph.index,graph.index,COMMON_RULES,dict(DEFAULT_LIMITS))
+        condition=dict(side='result',parent='sample.Flow#run()',symbol='sample.Store#find()',reason='relation_budget')
+        row,fact=engine.boundary_fact(condition)
+        record=engine.context[fact['evidence_ids'][0]]
+        self.assertIn('store.find()',record['snippet'])
+        self.assertNotIn('ignored()',record['snippet'])
+        self.assertEqual(row['source_location']['start_line'],5)
+        self.assertEqual(fact['evidence_status'],'located')
+        from validate_analysis import boundary_source_matches
+        self.assertTrue(boundary_source_matches(row,record,'sample'))
+        wrong=dict(record,start_line=record['end_line']+1,end_line=record['end_line']+2)
+        self.assertFalse(boundary_source_matches(row,wrong,'sample'))
+        limited=ProjectAnalysis('sample','repo',graph.index,graph.index,COMMON_RULES,dict(DEFAULT_LIMITS,context_bytes=1))
+        _,missing=limited.boundary_fact(condition)
+        self.assertEqual(missing['evidence_ids'],[])
+        self.assertEqual(missing['evidence_status'],'unavailable')
 
     def test_overloads_and_multiple_implementations_are_not_forced(self):
         graph=self.graph({'a':'''package p; interface Remote{String call(String a);}
@@ -649,10 +921,52 @@ class Task implements Runnable{@Override public void run(){System.out.println("p
         engine=ProjectAnalysis('p','unused',copy.deepcopy(graph.index),copy.deepcopy(graph.index),COMMON_RULES,DEFAULT_LIMITS)
         selected=engine.traverse('result',{'p.Main#send()'})
         self.assertIn('p.Callback#onDone()',selected)
-        self.assertIn('p.Task#run()',selected)
+        self.assertNotIn('p.Task#run()',selected)
         callbacks=[e for e in graph.edges if e['reason']=='constructed_object_passed_to_call_not_runtime_dispatch']
         self.assertEqual(len(callbacks),2)
         self.assertTrue(all(e['status']=='convention_inferred' for e in callbacks))
+
+    def test_unresolved_relation_scope_keeps_database_effects_and_drops_plain_accessors(self):
+        graph=self.graph({'scope':'''package p;
+class Helper {String getValue(){return "value";}String convert(String value){return value;}}
+interface Reply {void setPayload(String value);}
+class StoreDao {void update(String value){} String getById(String id){return id;}}
+class Flow {Helper helper;StoreDao store;Reply reply;void run(String value){String ignored=helper.getValue();store.getById(value);helper.convert("NoticeReq refund uniqueControlApi");store.update(value);}String response(){return helper.getValue();}String helperResult(){return helper.convert("value");}void setResponse(){reply.setPayload("value");}}
+class RefundService {Helper helper;String refundStatus(){return helper.getValue();}}
+@RestController class RefundController {Helper helper;@PostMapping String handle(){return helper.convert("value");}}
+'''})
+        accessor=dict(next(e for e in graph.edges if e['source'].startswith('p.Flow#run(') and e['site']['name']=='getValue'),status='unresolved',requires_review=True)
+        update=dict(next(e for e in graph.edges if e['site']['name']=='update'),status='unresolved',requires_review=True)
+        convert=dict(next(e for e in graph.edges if e['site']['name']=='convert'),status='unresolved',requires_review=True)
+        database_read=dict(next(e for e in graph.edges if e['site']['name']=='getById'),status='unresolved',requires_review=True)
+        response_setter=dict(next(e for e in graph.edges if e['site']['name']=='setPayload'),status='unresolved',requires_review=True)
+        returned=dict(next(e for e in graph.edges if e['source'].startswith('p.Flow#response(') and e['site']['name']=='getValue'),status='unresolved',requires_review=True)
+        plain_return=dict(next(e for e in graph.edges if e['source'].startswith('p.Flow#helperResult(')),status='unresolved',requires_review=True)
+        endpoint_return=dict(next(e for e in graph.edges if e['source'].startswith('p.RefundController#handle(')),status='unresolved',requires_review=True)
+        refund_getter=dict(next(e for e in graph.edges if e['source'].startswith('p.RefundService#refundStatus(')),status='unresolved',requires_review=True)
+        self.assertFalse(relation_affects_review_scope(accessor,graph))
+        self.assertTrue(relation_affects_review_scope(update,graph))
+        self.assertTrue(relation_affects_review_scope(database_read,graph))
+        self.assertFalse(relation_affects_review_scope(response_setter,graph))
+        self.assertFalse(relation_affects_review_scope(convert,graph,('uniqueControlApi','NoticeReq')))
+        self.assertFalse(relation_affects_review_scope(returned,graph))
+        self.assertFalse(relation_affects_review_scope(plain_return,graph))
+        self.assertTrue(relation_affects_review_scope(endpoint_return,graph))
+        self.assertTrue(relation_affects_review_scope(refund_getter,graph))
+
+    def test_relation_expansion_hard_caps_apply_inside_analysis_engine(self):
+        graph=self.graph({'cap':'class A{void run(){}}'})
+        engine=ProjectAnalysis('p','unused',graph.index,graph.index,COMMON_RULES,
+                               dict(DEFAULT_LIMITS,depth=9,methods=500))
+        self.assertEqual(engine.limits['depth'],2)
+        self.assertEqual(engine.limits['methods'],100)
+
+    def test_builder_field_binding_is_covered_as_field_source_not_relation_review(self):
+        graph=mock.Mock();graph.events={};graph.origins.return_value=[]
+        edge=dict(source='p.Flow#buildRecord()',receiver_type=None,status='unresolved',
+                  site=dict(name='fgTradeNo',receiver='TransRecordPo.builder().fgTradeNo(value)',
+                            expression='TransRecordPo.builder().fgTradeNo(value)',arguments=['value'],order=1))
+        self.assertFalse(relation_affects_review_scope(edge,graph,('NoticeReq',)))
 
     def test_anonymous_classes_in_distinct_methods_keep_distinct_owners(self):
         graph=self.graph({'anon':'''class A {
