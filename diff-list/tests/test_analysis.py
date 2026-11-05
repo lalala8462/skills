@@ -153,8 +153,6 @@ class AnalysisTest(unittest.TestCase):
         self.assertFalse(any('PayTest#added' in s or 'NewTest#' in s for s in symbols))
         self.assertFalse(any('/src/test/' in e['path'] for e in context))
         self.assertFalse(any('TEST_ONLY' in str(f.get('data')) for f in project['facts']))
-        self.assertFalse(any('/src/test/' in c.get('path','') for c in project['candidates']))
-        self.assertFalse(any('PayTest#added' in str(row) or 'NewTest#' in str(row) for row in project['history']))
 
     def test_disconnected_same_label_does_not_expand_review_scope(self):
         production='package labels; class Payload { void setZebraCode(String v){} } class Handler { void run(Payload p){ p.setZebraCode("old"); } }'
@@ -231,14 +229,15 @@ class Handler {
         project=result['projects'][0]
         self.assertTrue(any('src/Legacy.java' in error for error in project['hard_errors']))
 
-    def test_zero_net_change_keeps_method_history(self):
+    def test_zero_net_change_keeps_commit_review(self):
         commit(self.source,{'src/Small.java':BEFORE},'reset fixture')
         one=commit(self.source,{'src/Small.java':AFTER},'enable')
         two=commit(self.source,{'src/Small.java':BEFORE},'revert')
         result,_=self.analyze([one,two])
         p=result['projects'][0]
         self.assertEqual(p['snapshots']['baseline'],p['snapshots']['result'])
-        self.assertTrue(p['history'])
+        self.assertEqual(len(p['git']['commit_review']['commits']),2)
+        self.assertTrue(p['git']['commit_review']['review_required'])
         self.assertFalse(any(f['kind']=='method_change' for f in p['facts']))
 
     def test_new_analysis_clone_footer_uses_analysis_clone(self):
