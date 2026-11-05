@@ -23,7 +23,7 @@ def normal_flow_name(symbol):
 
 
 def fast10_view(analysis):
-    if analysis.get('schema_version')!=1 or analysis.get('analyzer_version')!=VERSION:
+    if analysis.get('schema_version')!=2 or analysis.get('analyzer_version')!=VERSION:
         raise ValueError('unsupported analysis schema/analyzer version')
     projects=[]
     selected_relation_ids=set()
