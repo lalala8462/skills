@@ -1,4 +1,4 @@
 interface:
   display_name: "diff-list"
-  short_description: "基于项目与 Git 修订生成含业务流程、特殊逻辑及配置数据库清单的 Markdown 文件"
-  default_prompt: "使用 $diff-list，基于我提供的程序项目及对应 Git 修订号，按模板输出含业务流程图、特殊逻辑和数据库配置改动清单的 Markdown 文件。"
+  short_description: "基于 Git 修订梳理最终净变化和一层直接影响，生成范围报告与测试用例 Excel"
+  default_prompt: "使用 $diff-list，基于我提供的仓库与 Git 修订，按默认快速流程分析最终净变化和一层直接影响，生成范围 Markdown 报告与四类测试用例 Excel。"
