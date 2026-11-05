@@ -405,6 +405,8 @@ def validate_cases(data, analysis=None):
                 if unknown:
                     raise ValueError('unknown case fact: '+unknown[0])
                 allowed={identifier for fact_id in fact_ids for identifier in known_facts[fact_id].get('evidence_ids',[])}
+                if fact_ids and allowed and not evidence_ids:
+                    raise ValueError('case with source facts requires referenced evidence: '+case_id)
                 if not set(evidence_ids)<=allowed:
                     raise ValueError('case evidence must belong to referenced facts: '+case_id)
             result.append(case)
