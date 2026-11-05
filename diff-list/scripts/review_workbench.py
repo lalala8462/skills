@@ -38,11 +38,11 @@ def fast10_view(analysis):
         'annotation_binding_unconfigured','entrypoint','constant_or_collection',
         'object_copy','constructor_mapping'
     }
-    for source in analysis.get('projects',[]):
-        facts=source.get('facts',[])
+    for source in analysis['projects']:
+        facts=source['facts']
         primary=[fact for fact in facts if fact.get('kind') in primary_kinds]
-        change_seeds=set(source.get('change_seeds') or [])
-        direct_relations=list(source.get('relations') or [])
+        change_seeds=set(source['change_seeds'])
+        direct_relations=list(source['relations'])
         selected_relation_ids.update(relation.get('id') for relation in direct_relations if relation.get('id'))
         direct_symbols=set(change_seeds)
         for relation in direct_relations:
@@ -100,11 +100,11 @@ def fast10_view(analysis):
                 selected_evidence_count=len(evidence_ids)),
             facts=visible,
             direct_relations=direct_relations,
-            hard_errors=source.get('hard_errors',[]),
-            stats=source.get('stats',{})
+            hard_errors=source['hard_errors'],
+            stats=source['stats']
         ))
 
-    cross=[row for row in analysis.get('cross_project_relations',[])
+    cross=[row for row in analysis['cross_project_relations']
            if row.get('source_relation') in selected_relation_ids]
     return dict(
         analysis_id=analysis['analysis_id'],
