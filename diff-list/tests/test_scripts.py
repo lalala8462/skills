@@ -8,11 +8,15 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from test_test_points import analysis as fixture_analysis
 from unittest import mock
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT / "scripts"))
+
+
+def fixture_analysis():
+    return dict(analysis_id='fixture-analysis',projects=[dict(name='sample',facts=[])])
+
 
 
 def module(name):
@@ -763,20 +767,25 @@ class AdditionalRegressionTests(unittest.TestCase):
         errors,_=validator.validate(content,template,['webapi='+two])
         self.assertTrue(any('对应关系' in x for x in errors))
 
-    def export_input(self,raw=None):
-        from test_test_points import analysis,plan,cases
-        from test_points import compile_plan
-        return cases(compile_plan(raw or plan(),analysis()))
+    def export_input(self,count=1):
+        from case_contract import PURPOSES
+        groups={purpose:[] for purpose in PURPOSES}
+        for index in range(count):
+            groups['acceptance'].append(dict(
+                case_id='A-{:03d}'.format(index+1),
+                title='退款场景{}'.format(index+1),
+                preconditions='准备有效退款数据',
+                steps=['发起请求','检查响应'],
+                expected=['接口返回退款结果'],
+                observable_evidence=[dict(surface='接口',target='返回体',assertion='refundStatus=SUCCESS')],
+                fact_ids=[],evidence_ids=[]))
+        return dict(schema_version=3,analysis_id='fixture-analysis',purpose_cases=groups)
 
     def test_export_test_cases_xlsx_structure(self):
         import zipfile
         from xml.etree import ElementTree as ET
-        from test_test_points import plan
-        raw=plan();other=copy.deepcopy(raw['candidates'][0]);other['id']='second'
-        other['entry']['target']='POST /refund/check';raw['candidates'].append(other)
-        data=self.export_input(raw)
-        cases=data['purpose_cases']['acceptance']
-        cases[0]['steps']=['发起请求','检查响应'];cases[1]['steps']='=1+2'
+        data=self.export_input(2)
+        data['purpose_cases']['acceptance'][1]['steps']=['=1+2']
         exporter=module('export_test_cases');rows=exporter.normalize(data, fixture_analysis())
         self.assertEqual(rows['purposes']['acceptance'][0][3],'1. 发起请求\n2. 检查响应')
         with tempfile.TemporaryDirectory() as td:
@@ -797,17 +806,15 @@ class AdditionalRegressionTests(unittest.TestCase):
         exporter=module('export_test_cases')
         for field,value in [('case_id',''),('steps',[]),('preconditions',''),('expected',[])]:
             data=self.export_input();data['purpose_cases']['acceptance'][0][field]=value
-            with self.assertRaises(ValueError):exporter.normalize(data, fixture_analysis())
+            with self.assertRaises(ValueError):exporter.normalize(data,fixture_analysis())
 
-    def test_old_case_formats_and_coverage_fields_are_rejected(self):
+    def test_non_current_case_formats_and_extra_fields_are_rejected(self):
         exporter=module('export_test_cases')
         for data in ({'cases':[]},{'focus_cases':[],'regular_cases':[]}):
-            with self.assertRaisesRegex(ValueError,'current four-purpose cases'):exporter.normalize(data, fixture_analysis())
-        for field in ('coverage_key','coverage_keys'):
-            data=self.export_input();data['purpose_cases']['acceptance'][0][field]='unused'
-            with self.assertRaisesRegex(ValueError,'unsupported fields'):exporter.normalize(data, fixture_analysis())
-        data=self.export_input();data['purpose_cases']['acceptance'][0]['coverage_links'][0]['trigger_conditions']=[]
-        with self.assertRaisesRegex(ValueError,'unsupported fields'):exporter.normalize(data, fixture_analysis())
+            with self.assertRaises(ValueError):exporter.normalize(data,fixture_analysis())
+        data=self.export_input();data['purpose_cases']['acceptance'][0]['coverage_links']=[]
+        with self.assertRaisesRegex(ValueError,'unsupported fields'):
+            exporter.normalize(data,fixture_analysis())
 
     def test_delivery_commands_require_current_analysis_material(self):
         with tempfile.TemporaryDirectory() as td:
@@ -834,8 +841,8 @@ class AdditionalRegressionTests(unittest.TestCase):
     def test_four_sheets_keep_empty_groups_and_valid_xml(self):
         import zipfile
         from xml.etree import ElementTree as ET
-        from test_points import PURPOSE_NAMES
-        exporter=module('export_test_cases');rows=exporter.normalize(self.export_input(), fixture_analysis())
+        from case_contract import PURPOSE_NAMES
+        exporter=module('export_test_cases');rows=exporter.normalize(self.export_input(),fixture_analysis())
         with tempfile.TemporaryDirectory() as td:
             target=Path(td)/'cases.xlsx';counts=exporter.export(rows,target)
             self.assertEqual((counts['acceptance'],counts['core_regression'],counts['total']),(1,0,1))
@@ -850,31 +857,29 @@ class AdditionalRegressionTests(unittest.TestCase):
                     self.assertEqual(len(sheet.findall('.//x:row',ns)),2 if n==1 else 1)
 
     def test_duplicate_case_ids_are_rejected(self):
-        from test_test_points import plan
-        raw=plan();other=copy.deepcopy(raw['candidates'][0]);other['id']='second'
-        other['entry']['target']='POST /refund/check';raw['candidates'].append(other)
-        data=self.export_input(raw);rows=data['purpose_cases']['acceptance']
+        data=self.export_input(2);rows=data['purpose_cases']['acceptance']
         rows[1]['case_id']=rows[0]['case_id']
-        with self.assertRaisesRegex(ValueError,'duplicate or multiline case_id'):module('export_test_cases').normalize(data, fixture_analysis())
+        with self.assertRaisesRegex(ValueError,'duplicate or multiline case_id'):
+            module('export_test_cases').normalize(data,fixture_analysis())
 
     def test_observable_evidence_required_for_current_cases(self):
         exporter=module('export_test_cases')
         for incomplete in ([],[{}],[{'surface':'接口','target':'返回体'}],[{'surface':'数据库','assertion':'status=SUCCESS'}]):
             data=self.export_input();data['purpose_cases']['acceptance'][0]['observable_evidence']=incomplete
-            with self.assertRaises(ValueError):exporter.normalize(data, fixture_analysis())
+            with self.assertRaises(ValueError):exporter.normalize(data,fixture_analysis())
 
     def test_vague_assertions_rejected(self):
         exporter=module('export_test_cases')
         for phrase in ('符合预期','处理成功','系统正常','接口成功','退款成功','状态正确'):
             data=self.export_input();data['purpose_cases']['acceptance'][0]['observable_evidence'][0]['assertion']=phrase
-            with self.assertRaisesRegex(ValueError,'not an observable'):exporter.normalize(data, fixture_analysis())
+            with self.assertRaisesRegex(ValueError,'not an observable'):exporter.normalize(data,fixture_analysis())
 
     def test_evidence_channels_visible_in_xlsx_expected_column(self):
         import zipfile
         exporter=module('export_test_cases');channels=('页面','接口','日志','数据库','文件','下游行为','缓存')
         data=self.export_input();case=data['purpose_cases']['acceptance'][0]
         case['observable_evidence'] += [dict(surface=surface,target='订单状态字段',assertion='status=SUCCESS') for surface in channels]
-        records=exporter.normalize(data, fixture_analysis())
+        records=exporter.normalize(data,fixture_analysis())
         for surface in channels:self.assertIn(surface+'｜订单状态字段：status=SUCCESS',records['purposes']['acceptance'][0][4])
         with tempfile.TemporaryDirectory() as td:
             out=Path(td)/'test.xlsx';exporter.export(records,out)
