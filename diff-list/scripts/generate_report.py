@@ -31,7 +31,7 @@ def render(template, report_data, cases, excel_name):
     if any(not isinstance(value, str) or not value.strip() for value in sections.values()):
         raise ValueError('every report section must contain reviewed text or the explicit word 无')
 
-    from test_points import PURPOSES, PURPOSE_NAMES
+    from case_contract import PURPOSES, PURPOSE_NAMES
     groups = cases.get('purpose_cases')
     if not isinstance(groups, dict) or set(groups) != set(PURPOSES):
         raise ValueError('cases must contain exactly the four current purpose arrays')
@@ -126,7 +126,7 @@ def main(argv=None):
             errors, _ = validate_files(args.analysis, args.review, args.cases)
             if errors:
                 raise ValueError('coverage validation failed: ' + '; '.join(errors[:8]))
-        from test_points import PURPOSES
+        from case_contract import PURPOSES
         excel_path = Path(args.excel) if args.excel else None
         purpose_counts = [len(cases['purpose_cases'][p]) for p in PURPOSES]
         if sum(purpose_counts):
