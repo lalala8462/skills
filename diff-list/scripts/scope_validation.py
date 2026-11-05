@@ -23,11 +23,11 @@ def validate_scope_data(analysis, review, cases):
     for reviewed in review.get('projects', []):
         normal = reviewed.get('normal_flow_review') or {}
         groups = normal.get('groups') or []
-        if not groups:
-            continue
-        scope_found = True
         fact_ids = set(normal.get('supporting_fact_ids') or [])
         fact_ids.update(normal.get('visible_fact_ids') or [])
+        if not groups and not fact_ids:
+            continue
+        scope_found = True
         allowed_evidence.update(normal.get('evidence_ids') or [])
         for group in groups:
             fact_ids.update(group.get('fact_ids') or [])
