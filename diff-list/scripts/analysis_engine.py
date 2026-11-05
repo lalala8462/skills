@@ -678,7 +678,7 @@ class ProjectAnalysis:
         self.limits['depth']=min(self.limits['depth'],1)
         self.limits['methods']=min(self.limits['methods'],100)
         self.graphs = dict(baseline=Graph(before, rules), result=Graph(after, rules))
-        self.facts, self.obligations, self.context, self.relations = [], [], {}, []
+        self.facts, self.context, self.relations = [], {}, []
         self.context_bytes, self.context_methods = 0, collections.Counter()
         self.context_symbols=set()
         self.source_line_cache = {}
@@ -687,7 +687,7 @@ class ProjectAnalysis:
         self.critical_classes=set()
         self.critical_evidence_omissions=set()
         self.scope_errors=[]
-        self.fact_ids, self.obligation_ids = set(), set()
+        self.fact_ids = set()
 
     def evidence(self, side, row):
         graph = self.graphs[side]
@@ -734,48 +734,6 @@ class ProjectAnalysis:
         self.fact_ids.add(identifier); self.facts.append(result)
         return result
 
-    def obligation(self, fact, dimension, condition, assertion, required=True, optional_reason=None):
-        if not fact:
-            return
-        identifier = stable(self.name, fact['id'], dimension, condition, assertion)
-        if identifier in self.obligation_ids:
-            return
-        self.obligation_ids.add(identifier)
-        item=dict(id=identifier, fact_ids=[fact['id']], evidence_ids=fact['evidence_ids'],
-                  dimension=dimension, condition=clean(condition), assertion=clean(assertion), required=required)
-        if not required:
-            item['optional_reason']=optional_reason or 'summarized_low_priority_evidence'
-        self.obligations.append(item)
-
-    def boundary_fact(self, row):
-        """边界只引用实际调用点或目标位置，预算不足时保留取证缺口。"""
-        row=dict(row); side=row['side']; graph=self.graphs[side]
-        anchor=None
-        if row.get('parent') in graph.methods:
-            anchor=dict(graph.methods[row['parent']])
-            call=next((edge['site'] for edge in graph.source_edges.get(row['parent'],())
-                       if row.get('symbol') in edge['targets']),None)
-            if call: anchor.update(line=call['line'],end_line=call['end_line'])
-        elif row.get('symbol') in graph.methods:
-            anchor=dict(graph.methods[row['symbol']])
-        elif row.get('symbol') in graph.classes:
-            anchor=dict(graph.classes[row['symbol']])
-        elif row.get('path'):
-            file=next((f for f in graph.index['files'] if f['path']==row['path']),None)
-            if file: anchor=dict(file,kind='boundary_location',line=1,end_line=1)
-        refs=[]
-        if anchor:
-            anchor.update(kind='boundary_location',end_line=min(anchor['end_line'],anchor['line']+3))
-            row['source_location']=dict(path=anchor['path'],start_line=anchor['line'],end_line=anchor['end_line'])
-            ref=self.evidence(side,anchor)
-            if ref: refs=[ref]
-        data=clean(row); identifier=stable(self.name,'analysis_boundary',data,refs)
-        fact=dict(id=identifier,kind='analysis_boundary',classification='risk_candidate',data=data,
-                  evidence_ids=refs,evidence_status='located' if refs else 'unavailable')
-        if identifier not in self.fact_ids:
-            self.facts.append(fact);self.fact_ids.add(identifier)
-        return row,fact
-
     def changed(self):
         old, new = self.graphs['baseline'], self.graphs['result']
         ignored = {symbol for symbol, row in new.methods.items()
@@ -789,8 +747,7 @@ class ProjectAnalysis:
                 return {k:row.get(k) for k in ('imports','annotations','extends','implements','class_kind')} if row else None
             if signature(a)!=signature(b):
                 self.critical_classes.add(owner)
-                fact=self.fact('class_binding_change',dict(owner=owner,before=signature(a),after=signature(b)),[('baseline',a),('result',b)])
-                self.obligation(fact,'class_binding',dict(owner=owner),dict(kind='review_class_binding'))
+                self.fact('class_binding_change',dict(owner=owner,before=signature(a),after=signature(b)),[('baseline',a),('result',b)])
                 imports=set((a or {}).get('imports',[]))^set((b or {}).get('imports',[]))
                 names={v.rsplit('.',1)[-1] for v in imports}
                 structural=any((a or {}).get(k)!=(b or {}).get(k) for k in ('annotations','extends','implements'))
@@ -808,9 +765,8 @@ class ProjectAnalysis:
                 methods.add(symbol)
                 for side,graph in (('baseline',old),('result',new)):
                     if symbol in graph.methods:self.critical_symbols[side].add(symbol)
-                fact = self.fact('method_change', dict(symbol=symbol, change='modified' if a and b else ('added' if b else 'deleted')),
-                                 [('baseline', a), ('result', b)])
-                self.obligation(fact, 'changed_behavior', dict(symbol=symbol), dict(kind='inspect_behavior'))
+                self.fact('method_change', dict(symbol=symbol, change='modified' if a and b else ('added' if b else 'deleted')),
+                          [('baseline', a), ('result', b)])
         changed_fields = []
         for key in sorted(set(old.fields) | set(new.fields)):
             a, b = old.fields.get(key), new.fields.get(key)
@@ -823,11 +779,10 @@ class ProjectAnalysis:
                                     if r['field']==key[0]+'#'+key[1] and r['source'] not in ignored})
                 for side,graph in (('baseline',old),('result',new)):
                     self.critical_symbols[side].update(s for s in consumers if s in graph.methods)
-                fact = self.fact('field_change', dict(owner=key[0], field=key[1], before=a.get('type') if a else None,
+                self.fact('field_change', dict(owner=key[0], field=key[1], before=a.get('type') if a else None,
                     after=b.get('type') if b else None, before_initializer=a.get('initializer') if a else None,
                     after_initializer=b.get('initializer') if b else None, consumers=consumers),
                     [('baseline', a), ('result', b)])
-                self.obligation(fact,'field_behavior',dict(owner=key[0],field=key[1]),dict(kind='inspect_field_consumers'))
                 methods.update(s for s in consumers if s not in ignored)
                 for graph in (old, new):
                     for edge in graph.edges:
@@ -977,11 +932,8 @@ class ProjectAnalysis:
                 if binding:
                     locations += [(side, self.graphs[side].methods[c['symbol']]) for c in binding['consumers']
                                   if c['symbol'] in selected[side]]
-            fact = self.fact('configuration', dict(before=summary(a), after=summary(b),
-                                                  change='added' if not a else ('removed' if not b else 'retained_or_consumers_changed')), locations)
-            if not a or not b or a['consumers'] != b['consumers']:
-                self.obligation(fact, 'configuration_change', dict(config=(b or a)['key']),
-                                dict(kind='check_affected_outputs'))
+            self.fact('configuration', dict(before=summary(a), after=summary(b),
+                      change='added' if not a else ('removed' if not b else 'retained_or_consumers_changed')), locations)
         return bindings
 
     def local_facts(self, side, symbols, required_symbols):
@@ -1051,9 +1003,8 @@ class ProjectAnalysis:
                         if fact:
                             output.append(fact)
                 if row['kind'] == 'boundary' and side == 'result' and symbol in required_symbols:
-                    fact = self.fact('flow_boundary', dict(symbol=symbol, reason=row['reason'], expression=row['expression']),
-                                     [(side, method)], 'risk_candidate')
-                    self.obligation(fact, 'review_boundary', dict(symbol=symbol), dict(kind='review_flow_boundary'))
+                    self.fact('flow_boundary', dict(symbol=symbol, reason=row['reason'], expression=row['expression']),
+                              [(side, method)], 'risk_candidate')
             returns = [r for r in rows if r['kind'] == 'return']
             if side == 'result' and returns:
                 sources = [dict(expression=r['expression'], guards=r['guards'],
@@ -1068,9 +1019,8 @@ class ProjectAnalysis:
                             and a.get('initializer',a.get('expression','')) not in ('','null')]
                     if len(writes)>1 and any(not a.get('guards') for a in writes[1:]):overwritten.append(variable)
                 if overwritten or (returned_variables and len(expressions)>1 and any('(' in x for x in expressions)):
-                    candidate = self.fact('return_override', dict(symbol=symbol, returns=sources,
-                                          reassigned_return_variables=overwritten), [(side, method)], 'risk_candidate')
-                    self.obligation(candidate, 'final_return', dict(symbol=symbol), dict(kind='check_final_response'))
+                    self.fact('return_override', dict(symbol=symbol, returns=sources,
+                              reassigned_return_variables=overwritten), [(side, method)], 'risk_candidate')
         return output
 
     def argument_changes(self, changed):
@@ -1090,14 +1040,11 @@ class ProjectAnalysis:
                     for position, (previous, current) in enumerate(zip(a['arguments'], b['arguments'])):
                         if compact(previous) == compact(current):
                             continue
-                        fact = self.fact('argument_source_change', dict(symbol=symbol, call=key[0], argument_index=position,
-                                          before=previous, after=current,
-                                          before_origins=old.origins(previous,symbol,a['order']),
-                                          after_origins=new.origins(current,symbol,b['order'])),
-                                         [('baseline',old.methods[symbol]),('result',new.methods[symbol])])
-                        self.obligation(fact, 'argument_source',
-                                        dict(symbol=symbol, call=key[0], argument_index=position),
-                                        dict(kind='verify_selected_argument', expression=current))
+                        self.fact('argument_source_change', dict(symbol=symbol, call=key[0], argument_index=position,
+                                  before=previous, after=current,
+                                  before_origins=old.origins(previous,symbol,a['order']),
+                                  after_origins=new.origins(current,symbol,b['order'])),
+                                  [('baseline',old.methods[symbol]),('result',new.methods[symbol])])
 
     def run(self):
         changed, fields = self.changed()
@@ -1116,8 +1063,7 @@ class ProjectAnalysis:
                 if not row:continue
                 unknown=[a['name'] for a in row['annotations'] if a['name'].rsplit('.',1)[-1] not in configured]
                 if unknown:
-                    fact=self.fact('annotation_binding_unconfigured',dict(owner=row['owner'],field=row['name'],annotations=unknown),[(side,row)],'risk_candidate')
-                    if side=='result':self.obligation(fact,'review_boundary',dict(field=row['name']),dict(kind='review_custom_annotation'))
+                    self.fact('annotation_binding_unconfigured',dict(owner=row['owner'],field=row['name'],annotations=unknown),[(side,row)],'risk_candidate')
         self.configurations(selected)
         for side, graph in self.graphs.items():
             referenced_names = set()
@@ -1153,11 +1099,9 @@ class ProjectAnalysis:
                 if row['kind'] == 'mapper':
                     linked = [s for s in selected[side] if s.startswith(row['owner']+'#'+row['name']+'(')]
                     if linked:
-                        fact = self.fact('mapper_statement', dict(side=side, namespace=row['owner'], name=row['name'],
-                                          statement=row['statement'], source=row['source'], dynamic=row['dynamic'],
-                                          mappings=row['mappings'], linked_symbols=linked), [(side,row)])
-                        if side == 'result' and row['dynamic']:
-                            self.obligation(fact,'mapper_dynamic_conditions',dict(statement=row['method']),dict(kind='inspect_sql_conditions'))
+                        self.fact('mapper_statement', dict(side=side, namespace=row['owner'], name=row['name'],
+                                  statement=row['statement'], source=row['source'], dynamic=row['dynamic'],
+                                  mappings=row['mappings'], linked_symbols=linked), [(side,row)])
                 if row['kind'] == 'field' and row.get('initializer') and row['name'] in referenced_names:
                     if test_source(row['path']) and (row['owner'],row['name']) not in self.graphs['baseline'].fields:
                         continue
@@ -1168,13 +1112,9 @@ class ProjectAnalysis:
         self.local_facts('baseline', selected['baseline'], required_symbols)
         self.local_facts('result', selected['result'], required_symbols)
         self.argument_changes(changed)
-        boundaries=[]
         return dict(name=self.name, repository=self.repo,
             snapshots={side:graph.index['tree'] for side,graph in self.graphs.items()},
             facts=sorted(self.facts,key=lambda f:f['id']),relations=sorted(self.relations,key=lambda r:r['id']),
-            obligations=sorted(self.obligations,key=lambda o:o['id']),
-            field_label_candidates=[],
-            boundaries=sorted(boundaries,key=lambda r:json.dumps(r,sort_keys=True)),
             scope_errors=sorted(set(self.scope_errors)),
             critical_evidence_omissions=sorted(self.critical_evidence_omissions),
             stats={side:dict(graph.index['stats'],selected_methods=len(selected[side])) for side,graph in self.graphs.items()}), list(self.context.values())
