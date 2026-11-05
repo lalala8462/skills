@@ -6,7 +6,7 @@ import re
 from functools import lru_cache
 from source_index import stable, source_lines
 
-VERSION = '1.8.2'
+VERSION = '2.0.0'
 COMMON_RULES = dict(version=1, config_annotations=['Value', 'ConfigurationProperties'],
                     config_scopes={}, aliases=['JSONField', 'JsonProperty'],
                     relation_review_tokens=[], limits={})
