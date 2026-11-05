@@ -205,7 +205,6 @@ def main(argv=None):
         template=Path(a.template).read_text(encoding='utf-8-sig')
         errors,warnings=validate(candidate_text,template,a.expect)
         analysis=json.loads(Path(a.analysis).read_text(encoding='utf-8-sig'))
-        errors.extend(validate_boundary_summary(candidate_text,analysis))
         case_data=json.loads(Path(a.cases).read_text(encoding='utf-8-sig'))
         from scope_validation import validate_scope_files
         validate_scope_files(a.analysis,a.review,a.cases)
@@ -252,11 +251,6 @@ def validate_case_counts(text,cases,analysis):
             errors.append('报告数量与用例材料不一致: '+label)
     return errors
 
-
-
-def validate_boundary_summary(text,analysis):
-    """分析边界由 hard_errors 和报告验证情况直接说明。"""
-    return []
 
 
 if __name__=='__main__':
