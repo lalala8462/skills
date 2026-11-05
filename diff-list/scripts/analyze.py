@@ -59,6 +59,16 @@ def validate_project(spec):
         raise ValueError('range requires base and head')
 
 
+def compact_git_evidence(evidence):
+    """保留快审需要的 Git 元数据，移除 analysis.json 中的大段 diff 文本。"""
+    data=clean(evidence)
+    for item in data.get('selection',[]):
+        item.pop('diff',None)
+    net=data.get('net_effect') or {}
+    net.pop('net_diff',None)
+    return data
+
+
 def analyze_project(spec,rules,limits,parser,cache):
     validate_project(spec)
     root,default_name=prepare_repo(spec['repo'])
@@ -72,7 +82,7 @@ def analyze_project(spec,rules,limits,parser,cache):
     effect=evidence['net_effect']
     config_pairs=effect.pop('config_sources',[])
     skipped=effect.pop('config_skipped',[])
-    base=dict(name=name,repository=spec['repo'],analysis_clone=str(root),git=clean(evidence),
+    base=dict(name=name,repository=spec['repo'],analysis_clone=str(root),git=compact_git_evidence(evidence),
               analyzer_version=VERSION)
     if effect['status']=='review_required':
         base.update(snapshots={},change_seeds=[],facts=[],relations=[],hard_errors=[effect['reason']],stats={})
