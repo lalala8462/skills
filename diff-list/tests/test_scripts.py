@@ -111,7 +111,7 @@ class DiffListTest(unittest.TestCase):
                                     'related_regression':[], 'boundary':[]}}
             rendered,_,_=generator.render(template,report_data,cases,'webapi-cases.xlsx')
             analysis={'projects':[{'name':'webapi','git':{'selection':[
-                {'type':'commit','sha':sha}]},'obligations':[]}]}
+                {'type':'commit','sha':sha}]}}]}
             self.assertEqual(generator.preflight(rendered,template,analysis,cases,[]),[])
             broken_mermaid=rendered.replace('```mermaid','```text')
             errors=generator.preflight(broken_mermaid,template,analysis,cases,[])
@@ -812,7 +812,7 @@ class AdditionalRegressionTests(unittest.TestCase):
         exporter=module('export_test_cases')
         for data in ({'cases':[]},{'focus_cases':[],'regular_cases':[]}):
             with self.assertRaises(ValueError):exporter.normalize(data,fixture_analysis())
-        data=self.export_input();data['purpose_cases']['acceptance'][0]['coverage_links']=[]
+        data=self.export_input();data['purpose_cases']['acceptance'][0]['unexpected_field']=[]
         with self.assertRaisesRegex(ValueError,'unsupported fields'):
             exporter.normalize(data,fixture_analysis())
 
