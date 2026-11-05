@@ -353,7 +353,66 @@ def verify_catalog(catalog, analysis=None):
 
 
 def validate_cases(data, analysis=None):
-    """校验唯一承载、全部数据组、结构断言及原始覆盖要求的保留。"""
+    """校验默认直接用例格式；schema_version=2 仅作为旧流程兼容。"""
+    if not isinstance(data, dict):
+        raise ValueError('current four-purpose cases must be an object')
+    version=data.get('schema_version')
+    if version==2:
+        return _validate_compiled_cases(data, analysis)
+    fields(data, ('schema_version','analysis_id','purpose_cases'),
+           ('schema_version','analysis_id','purpose_cases'), 'direct four-purpose cases')
+    if type(version)!=int or version!=3:
+        raise ValueError('direct four-purpose cases require schema_version=3')
+    analysis_id=text(data['analysis_id'],'analysis_id')
+    if analysis is not None and analysis.get('analysis_id')!=analysis_id:
+        raise ValueError('test cases belong to a different analysis')
+    groups=data.get('purpose_cases')
+    if not isinstance(groups,dict) or set(groups)!=set(PURPOSES):
+        raise ValueError('purpose_cases requires exactly four purpose arrays')
+    known_facts={}
+    if analysis is not None:
+        known_facts={fact['id']:fact for project in analysis.get('projects',[]) for fact in project.get('facts',[])}
+    seen=set();result=[]
+    for purpose in PURPOSES:
+        if not isinstance(groups[purpose],list):
+            raise ValueError('purpose case group must be an array')
+        for case in groups[purpose]:
+            case_fields=('case_id','title','preconditions','steps','expected','observable_evidence','fact_ids','evidence_ids')
+            fields(case,case_fields,case_fields,'case')
+            case_id=text(case['case_id'],'case_id')
+            if case_id in seen:
+                raise ValueError('duplicate case_id: '+case_id)
+            seen.add(case_id)
+            text(case['title'],'title');text(case['preconditions'],'preconditions')
+            if not isinstance(case['steps'],list) or not case['steps']:
+                raise ValueError('steps requires a nonempty array')
+            for value in case['steps']: text(value,'steps')
+            if not isinstance(case['expected'],list) or not case['expected']:
+                raise ValueError('expected requires a nonempty array')
+            for value in case['expected']: text(value,'expected')
+            observations=case['observable_evidence']
+            if not isinstance(observations,list) or not observations:
+                raise ValueError('observable_evidence requires a nonempty array')
+            for item in observations:
+                fields(item,('surface','target','assertion'),('surface','target','assertion'),'observable evidence')
+                text(item['surface'],'observable_evidence.surface')
+                text(item['target'],'observable_evidence.target')
+                text(item['assertion'],'observable_evidence.assertion')
+            fact_ids=strings(case['fact_ids'],'fact_ids')
+            evidence_ids=strings(case['evidence_ids'],'evidence_ids')
+            if analysis is not None:
+                unknown=[identifier for identifier in fact_ids if identifier not in known_facts]
+                if unknown:
+                    raise ValueError('unknown case fact: '+unknown[0])
+                allowed={identifier for fact_id in fact_ids for identifier in known_facts[fact_id].get('evidence_ids',[])}
+                if not set(evidence_ids)<=allowed:
+                    raise ValueError('case evidence must belong to referenced facts: '+case_id)
+            result.append(case)
+    return result
+
+
+def _validate_compiled_cases(data, analysis=None):
+    """兼容旧版测试点编译结果；默认流程不再依赖。"""
     fields(data, ('schema_version','test_point_catalog','purpose_cases'),
            ('schema_version','test_point_catalog','purpose_cases'), 'current four-purpose cases')
     if type(data['schema_version'])!=int or data['schema_version'] != 2:
@@ -432,6 +491,8 @@ def render_condition(row):
 
 def case_material(data, case):
     """把固定条件、全部数据组和结构断言写入可读用例，不输出内部编号。"""
+    if data.get('schema_version')==3:
+        return '', ''
     points = {p['id']: p for p in data['test_point_catalog']['points']}
     selected = [points[l['point_id']] for l in case['test_point_links']]
     names = {'equals': '等于', 'not_equals': '不等于', 'source_is': '来源为', 'in': '属于集合',
