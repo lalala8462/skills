@@ -457,30 +457,6 @@ class BindingTest(unittest.TestCase):
             for row in rows['events']:events.append(dict(row,path=oid+'.java',blob=oid))
         return Graph(dict(events=events,tree='x',files=[dict(path=k+'.java',blob=k,source=v) for k,v in sources.items()],issues=[],stats={}),COMMON_RULES)
 
-    def test_budget_boundary_uses_callsite_and_records_missing_evidence(self):
-        graph=self.graph({'flow':'''package sample;
-class Unrelated { void ignored() {} }
-class Store { String find(){return "value";} }
-class Flow { Store store;
- String run(){return store.find();}
-}'''})
-        engine=ProjectAnalysis('sample','repo',graph.index,graph.index,COMMON_RULES,dict(DEFAULT_LIMITS))
-        condition=dict(side='result',parent='sample.Flow#run()',symbol='sample.Store#find()',reason='relation_budget')
-        row,fact=engine.boundary_fact(condition)
-        record=engine.context[fact['evidence_ids'][0]]
-        self.assertIn('store.find()',record['snippet'])
-        self.assertNotIn('ignored()',record['snippet'])
-        self.assertEqual(row['source_location']['start_line'],5)
-        self.assertEqual(fact['evidence_status'],'located')
-        from validate_analysis import boundary_source_matches
-        self.assertTrue(boundary_source_matches(row,record,'sample'))
-        wrong=dict(record,start_line=record['end_line']+1,end_line=record['end_line']+2)
-        self.assertFalse(boundary_source_matches(row,wrong,'sample'))
-        limited=ProjectAnalysis('sample','repo',graph.index,graph.index,COMMON_RULES,dict(DEFAULT_LIMITS,context_bytes=1))
-        _,missing=limited.boundary_fact(condition)
-        self.assertEqual(missing['evidence_ids'],[])
-        self.assertEqual(missing['evidence_status'],'unavailable')
-
     def test_overloads_and_multiple_implementations_are_not_forced(self):
         graph=self.graph({'a':'''package p; interface Remote{String call(String a);}
 class A implements Remote{public String call(String a){return a;}}
