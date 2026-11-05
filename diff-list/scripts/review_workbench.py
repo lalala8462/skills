@@ -381,74 +381,68 @@ def normal_flow_review(method_groups, relation_groups, facts, review):
 
 
 def fast10_view(analysis, context=None):
-    """只输出快审队列及其追溯，不把全量候选带入人工工作区。"""
-    full=grouped(analysis,context)
-    analysis_projects={project['name']:project for project in analysis['projects']}
+    """只输出本次净变化、其直接关系和对应源码事实；不再先构造全量复核队列再截断。"""
+    if analysis.get('schema_version') != 1 or analysis.get('analyzer_version') != VERSION:
+        raise ValueError('unsupported analysis schema/analyzer version')
     compact_projects=[]
-    for project in full['projects']:
-        review=project['fast10_review']
-        queued_symbols={item['symbol'] for item in review['queued_method_groups']}
-        queued_ids={identifier for item in review['queued_method_groups']
-                    for identifier in item['queued_obligation_ids']}
-        queued_method_ids=set(queued_ids)
-        queued_signatures={item['signature'] for item in review['queued_relation_groups']}
-        source=analysis_projects[project['name']]
-        facts={fact['id']:fact for fact in source['facts']}
-        relation_members=collections.defaultdict(list)
-        for item in source['obligations']:
-            if not item.get('required',True) or item['dimension']!='review_relation':
+    primary_kinds={'method_change','field_change','class_binding_change','configuration','argument_source_change'}
+    supporting_kinds={'branch','switch_branch','membership_filter','return_sources','return_override','field_source',
+                      'flow_boundary','mapper_statement','unresolved_relation','annotation_binding_unconfigured',
+                      'entrypoint','constant_or_collection'}
+    for source in analysis['projects']:
+        facts=source.get('facts',[])
+        primary=[fact for fact in facts if fact.get('kind') in primary_kinds]
+        changed_symbols={fact.get('data',{}).get('symbol') for fact in primary
+                         if fact.get('data',{}).get('symbol')}
+        for fact in primary:
+            if fact.get('kind')=='field_change':
+                changed_symbols.update(fact.get('data',{}).get('consumers') or [])
+        primary_evidence={identifier for fact in primary for identifier in fact.get('evidence_ids',[])}
+        direct_relations=[relation for relation in source.get('relations',[])
+                          if relation.get('source') in changed_symbols
+                          or any(target in changed_symbols for target in relation.get('targets',[]))]
+        relation_evidence={identifier for relation in direct_relations for identifier in relation.get('evidence_ids',[])}
+        visible=[]
+        for fact in facts:
+            if fact in primary:
+                visible.append(fact);continue
+            if fact.get('kind') not in supporting_kinds:
                 continue
-            fact=facts[item['fact_ids'][0]]
-            signature=relation_review_signature(fact)
-            if signature not in queued_signatures:
+            data=fact.get('data',{})
+            symbol=data.get('symbol')
+            if symbol in changed_symbols or set(fact.get('evidence_ids',[])) & (primary_evidence|relation_evidence):
+                visible.append(fact)
+        visible_ids={fact['id'] for fact in visible}
+        evidence_ids=sorted({identifier for fact in visible for identifier in fact.get('evidence_ids',[])}
+                            | relation_evidence)
+        flow_groups={}
+        for symbol in sorted(changed_symbols):
+            related=[fact for fact in visible if fact.get('data',{}).get('symbol')==symbol
+                     or symbol in (fact.get('data',{}).get('consumers') or [])]
+            if not related:
                 continue
-            data=fact.get('data',{});call=data.get('call',{})
-            relation_members[signature].append(dict(obligation_id=item['id'],symbol=data.get('symbol'),
-                expression=call.get('expression'),fact_ids=item['fact_ids'],evidence_ids=item['evidence_ids']))
-        relation_groups=[]
-        for signature,members in sorted(relation_members.items()):
-            member_limit=review['max_members_per_relation_group']
-            queued_members=representative_relation_members(members,member_limit)
-            queued_member_ids={item['obligation_id'] for item in queued_members}
-            deferred_members=[dict(obligation_id=item['obligation_id'],symbol=item['symbol'],
-                evidence_ids=item['evidence_ids']) for item in members if item['obligation_id'] not in queued_member_ids]
-            relation_groups.append(dict(signature=signature,member_count=len(members),members=queued_members,
-                deferred_member_count=len(deferred_members),deferred_members=deferred_members))
-            queued_ids.update(member['obligation_id'] for member in queued_members)
-        method_groups=[]
-        for group in project['groups']:
-            if group['symbol'] not in queued_symbols:
-                continue
-            obligations=[item for item in group['obligations']
-                         if item['id'] in queued_method_ids and item['dimension']!='review_relation']
-            if obligations:
-                method_groups.append(dict(symbol=group['symbol'],obligations=obligations))
-        boundary_batches=[batch for batch in project['boundary_review_batches']
-                          if any(member['obligation_id'] in queued_method_ids for member in batch['members'])]
-        unpaired=[batch for batch in project['unpaired_boundaries']
-                  if any(member['obligation_id'] in queued_method_ids for member in batch['members'])]
-        source_facts={fact['id']:fact for fact in source['facts']}
-        flow_review=normal_flow_review(method_groups,relation_groups,source_facts,review)
-        queued_fact_ids=set(flow_review['visible_fact_ids'])
-        queued_facts=[fact for fact in source['facts'] if fact['id'] in queued_fact_ids]
-        fast10_summary=dict(time_budget_minutes=review['time_budget_minutes'],
-            total_obligation_count=review['total_obligation_count'],
-            supporting_obligation_count=flow_review['supporting_obligation_count'],
-            deferred_obligation_count=review['deferred_obligation_count'],
-            selected_method_group_count=review['queued_method_group_count'],
-            selected_relation_group_count=review['queued_relation_group_count'],
-            normal_flow_group_count=flow_review['group_count'],
-            unassigned_relation_member_count=flow_review['unassigned_relation_member_count'])
-        compact_projects.append(dict(name=project['name'],normal_flow_review=flow_review,
-            boundary_review_batches=boundary_batches,
-            unpaired_boundaries=unpaired,fast10_review=fast10_summary,
-            facts=queued_facts,
+            name=normal_flow_name(symbol)
+            group=flow_groups.setdefault(name,dict(name=name,methods=set(),fact_ids=set(),evidence_ids=set()))
+            group['methods'].add(symbol)
+            group['fact_ids'].update(fact['id'] for fact in related)
+            group['evidence_ids'].update(identifier for fact in related for identifier in fact.get('evidence_ids',[]))
+        groups=[dict(name=value['name'],method_count=len(value['methods']),methods=sorted(value['methods']),
+                     fact_ids=sorted(value['fact_ids']),evidence_ids=sorted(value['evidence_ids']))
+                for value in sorted(flow_groups.values(),key=lambda item:item['name'])]
+        normal=dict(group_count=len(groups),groups=groups,
+                    supporting_fact_ids=sorted(visible_ids),visible_fact_ids=sorted(visible_ids),
+                    visible_fact_count=len(visible_ids),evidence_ids=evidence_ids,
+                    note='范围直接来自本次净变化及一层直接关系；业务名称只用于展示归组，不参与是否入选。')
+        summary=dict(time_budget_minutes=10,changed_method_count=len(changed_symbols),
+                     primary_change_fact_count=len(primary),selected_fact_count=len(visible),
+                     direct_relation_count=len(direct_relations),selected_evidence_count=len(evidence_ids))
+        compact_projects.append(dict(name=source['name'],normal_flow_review=normal,
+            fast10_review=summary,facts=visible,direct_relations=direct_relations,
             hard_errors=source.get('hard_errors',[]),scope_errors=source.get('scope_errors',[]),
             critical_evidence_omissions=source.get('critical_evidence_omissions',[]),
             stats=source.get('stats',{})))
-    return dict(analysis_id=full['analysis_id'],fast10_mode=True,projects=compact_projects,
-        note='默认按业务流候选组织人工复核；支持义务与证据保留追溯，未入选义务仍在完整分析材料中，不代表已复核或无影响。')
-
+    return dict(analysis_id=analysis['analysis_id'],fast10_mode=True,projects=compact_projects,
+        note='快审只消费本次净变化、直接一层关系和对应事实；不创建额外分支/关系测试义务。')
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
