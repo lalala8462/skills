@@ -31,7 +31,7 @@ def render(template, report_data, cases, excel_name):
     if any(not isinstance(value, str) or not value.strip() for value in sections.values()):
         raise ValueError('every report section must contain reviewed text or the explicit word 无')
 
-    from test_points import PURPOSES, PURPOSE_NAMES
+    from case_contract import PURPOSES, PURPOSE_NAMES
     groups = cases.get('purpose_cases')
     if not isinstance(groups, dict) or set(groups) != set(PURPOSES):
         raise ValueError('cases must contain exactly the four current purpose arrays')
@@ -88,10 +88,9 @@ def preflight(rendered, template, analysis, cases, expected):
     if replaced != 1 or rendered.count(marker) != 1 or rendered.count(status) != 1:
         return ['生成候选缺少唯一且完整的草稿标记']
 
-    from validate_report import validate, validate_boundary_summary, validate_case_counts
+    from validate_report import validate, validate_case_counts
     mappings = expected or expected_project_shas(analysis)
     errors, _ = validate(candidate_text, template, mappings)
-    errors.extend(validate_boundary_summary(candidate_text, analysis))
     errors.extend(validate_case_counts(candidate_text, cases, analysis))
     if not mappings:
         errors.append('无法从 analysis.json 推导项目与 SHA；请传入 --expect 项目名=40位SHA')
@@ -102,12 +101,11 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--data', required=True, help='结构化报告正文 JSON：sections 按模板标题映射 Markdown 内容')
     parser.add_argument('--analysis', required=True, help='本次固定分析结果')
-    parser.add_argument('--review', required=True, help='本次快审或正式复核结果')
+    parser.add_argument('--review', required=True, help='本次快审结果')
     parser.add_argument('--cases', required=True, help='本次四类结构化用例 JSON')
     parser.add_argument('--excel', help='已生成的独立 Excel 路径；报告内只写文件名')
     parser.add_argument('--template', default=str(Path(__file__).resolve().parents[1] / 'assets' / 'diff-list-template.md'))
     parser.add_argument('--output', required=True, help='新建报告候选路径；不得指向已交付报告')
-    parser.add_argument('--scope-only', action='store_true', help='只校验快审选中范围')
     parser.add_argument('--expect', action='append', default=[],
                         help='项目名=40位SHA；可重复，未提供时从 analysis.json 推导')
     parser.add_argument('--replace-draft', action='store_true',
@@ -118,15 +116,9 @@ def main(argv=None):
         analysis = json.loads(Path(args.analysis).read_text(encoding='utf-8-sig'))
         cases = json.loads(Path(args.cases).read_text(encoding='utf-8-sig'))
         template = Path(args.template).read_text(encoding='utf-8-sig')
-        if args.scope_only:
-            from scope_validation import validate_scope_files
-            validate_scope_files(args.analysis, args.review, args.cases)
-        else:
-            from validate_analysis import validate_files
-            errors, _ = validate_files(args.analysis, args.review, args.cases)
-            if errors:
-                raise ValueError('coverage validation failed: ' + '; '.join(errors[:8]))
-        from test_points import PURPOSES
+        from scope_validation import validate_scope_files
+        validate_scope_files(args.analysis,args.review,args.cases)
+        from case_contract import PURPOSES
         excel_path = Path(args.excel) if args.excel else None
         purpose_counts = [len(cases['purpose_cases'][p]) for p in PURPOSES]
         if sum(purpose_counts):

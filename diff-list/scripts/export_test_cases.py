@@ -76,25 +76,19 @@ def _case(item, ids):
 
 def normalize(data, analysis):
     """只接受当前四类用例；源码和覆盖校验由交付入口先执行。"""
-    from test_points import PURPOSES, case_material, validate_cases
+    from case_contract import PURPOSES, validate_cases
     validate_cases(data, analysis)
     return _normalize_validated(data)
 
 
 def _normalize_validated(data):
     """仅供同一调用中已校验的对象使用，不缓存跨调用的校验结果。"""
-    from test_points import PURPOSES, case_material
+    from case_contract import PURPOSES
     ids, groups = set(), {}
     for purpose in PURPOSES:
         rows = []
         for item in sorted(data['purpose_cases'][purpose], key=lambda c: c.get('case_id', '')):
-            material, assertions = case_material(data, item)
-            preconditions=_string(item.get('preconditions'), 'preconditions')
-            expected=_lines(item.get('expected'), 'expected')
-            if material: preconditions+='\n'+material
-            if assertions: expected+='\n'+assertions
-            expanded = dict(item, preconditions=preconditions, expected=expected)
-            rows.append(_case(expanded, ids))
+            rows.append(_case(item, ids))
         groups[purpose] = rows
     if not any(groups.values()):
         raise ValueError('no test cases to export')
@@ -251,7 +245,7 @@ def _export_template(rows, target, template, names, purposes):
 def export(rows, target, template=None):
     target = Path(target)
     target.parent.mkdir(parents=True, exist_ok=True)
-    from test_points import PURPOSES, PURPOSE_NAMES
+    from case_contract import PURPOSES, PURPOSE_NAMES
     if not isinstance(rows,dict) or set(rows)!={'purposes'} or not isinstance(rows['purposes'],dict) or set(rows['purposes'])!=set(PURPOSES):
         raise ValueError('export requires normalized current four-purpose rows')
     names = PURPOSE_NAMES
@@ -308,25 +302,21 @@ def main(argv=None):
     parser.add_argument('--output', required=True, help='New .xlsx output path')
     parser.add_argument('--analysis', required=True, help='本次当前版本生成的 analysis.json')
     parser.add_argument('--review', required=True, help='本次源码补查与处置记录')
-    parser.add_argument('--scope-only', action='store_true',
-                        help='只校验快审选中的范围，不要求清空范围外覆盖义务')
     parser.add_argument('--template', help='可选的既有四表 Excel 模板；保留模板工作表、列宽和单元格样式')
     args = parser.parse_args(argv)
     try:
         if Path(args.output).suffix.lower() != '.xlsx':
             raise ValueError('output must end with .xlsx')
         cases=json.loads(Path(args.input).read_text(encoding='utf-8-sig'))
-        if args.scope_only:
-            from scope_validation import validate_scope_files
-            validate_scope_files(args.analysis,args.review,args.input)
-        else:
-            from validate_analysis import validate_files
-            errors,_=validate_files(args.analysis,args.review,args.input)
-            if errors:
-                raise ValueError('Coverage validation failed: '+'; '.join(errors[:8]))
+        from scope_validation import validate_scope_files
+        validate_scope_files(args.analysis,args.review,args.input)
+        from validate_analysis import validate_files
+        errors,_=validate_files(args.analysis,args.review,args.input)
+        if errors:
+            raise ValueError('Static reference validation failed: '+'; '.join(errors[:8]))
         rows = _normalize_validated(cases)
         count = export(rows, args.output, args.template)
-        from test_points import PURPOSES, PURPOSE_NAMES
+        from case_contract import PURPOSES, PURPOSE_NAMES
         print('EXPORTED: ' + ', '.join('{}={}'.format(name, count[p]) for p, name in zip(PURPOSES, PURPOSE_NAMES))
               + ', total={} -> {}'.format(count['total'], Path(args.output).resolve()))
         return 0

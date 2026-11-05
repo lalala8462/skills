@@ -187,8 +187,6 @@ def main(argv=None):
     p.add_argument('--analysis',required=True,help='本次当前版本生成的固定取证结果')
     p.add_argument('--review',required=True,help='本次模型源码补查与处置记录')
     p.add_argument('--cases',required=True,help='当前四类用例JSON')
-    p.add_argument('--scope-only',action='store_true',
-                   help='校验快审所选范围，不要求全量覆盖闭环')
     p.add_argument('--finalize',action='store_true',
                    help='仅在所有校验通过后清除草稿标记并原子写回正式报告')
     a=p.parse_args(argv)
@@ -207,24 +205,14 @@ def main(argv=None):
         template=Path(a.template).read_text(encoding='utf-8-sig')
         errors,warnings=validate(candidate_text,template,a.expect)
         analysis=json.loads(Path(a.analysis).read_text(encoding='utf-8-sig'))
-        errors.extend(validate_boundary_summary(candidate_text,analysis))
         case_data=json.loads(Path(a.cases).read_text(encoding='utf-8-sig'))
-        if a.scope_only:
-            from scope_validation import validate_scope_files
-            validate_scope_files(a.analysis,a.review,a.cases)
-            if case_data.get('schema_version')==3:
-                from validate_analysis import validate_files
-                source_errors,source_warnings=validate_files(a.analysis,a.review,a.cases)
-                errors.extend(source_errors);warnings.extend(source_warnings)
-            warnings.append('仅校验快审选定范围；未展开远距离调用覆盖')
-            errors.extend(validate_case_counts(candidate_text,case_data,analysis))
-        else:
-            from validate_analysis import validate_files
-            coverage_errors,coverage_warnings=validate_files(a.analysis,a.review,a.cases)
-            errors.extend(coverage_errors);warnings.extend(coverage_warnings)
-            if not coverage_errors:
-                errors.extend(validate_case_counts(candidate_text,case_data,analysis))
-                warnings.append('覆盖声明校验通过，不代表业务测试已执行')
+        from scope_validation import validate_scope_files
+        validate_scope_files(a.analysis,a.review,a.cases)
+        from validate_analysis import validate_files
+        source_errors,source_warnings=validate_files(a.analysis,a.review,a.cases)
+        errors.extend(source_errors);warnings.extend(source_warnings)
+        errors.extend(validate_case_counts(candidate_text,case_data,analysis))
+        warnings.append('已校验当前快审范围和最终引用源码证据')
     except (OSError,UnicodeError,ValueError,KeyError,TypeError,IndexError) as exc:
         print('ERROR: '+str(exc),file=sys.stderr)
         return 2
@@ -249,7 +237,7 @@ def main(argv=None):
 
 def validate_case_counts(text,cases,analysis):
     """有用例材料时，报告数量必须与实际导出结果一致。"""
-    from test_points import PURPOSES,PURPOSE_NAMES
+    from case_contract import PURPOSES,PURPOSE_NAMES
     counts={name+'用例数量':len(cases['purpose_cases'][p]) for p,name in zip(PURPOSES,PURPOSE_NAMES)}
     section=sections(text,[]).get('## 5. 测试用例导出','')
     total=sum(counts.values())
@@ -263,20 +251,6 @@ def validate_case_counts(text,cases,analysis):
             errors.append('报告数量与用例材料不一致: '+label)
     return errors
 
-
-def validate_boundary_summary(text,analysis):
-    """报告须披露被汇总的分析边界数量，避免将未展开误写成无影响。"""
-    count=sum(1 for project in analysis.get('projects',[]) for item in project.get('obligations',[])
-              if item.get('dimension')=='review_analysis_boundary' and not item.get('required',True))
-    if count==0:
-        return []
-    section=sections(text,[]).get('## 6. 验证情况','')
-    match=re.search(r'未逐项复核分析边界\s*[:：]\s*(0|[1-9]\d*)\s*条?',section)
-    if not match or int(match.group(1))!=count:
-        return ['验证情况须列出准确的未逐项复核分析边界数量：{}条'.format(count)]
-    if count and not re.search(r'不代表(?:已)?(?:验证)?无影响|未核实不代表无影响',section):
-        return ['存在未逐项复核分析边界时须说明它们不代表无影响']
-    return []
 
 
 if __name__=='__main__':

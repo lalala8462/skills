@@ -234,8 +234,7 @@ def analyze_project(spec,rules,limits,parser,cache):
     base=dict(name=name,repository=spec['repo'],analysis_clone=str(root),git=clean(evidence),
               history=timeline,method_timeline=group_method_timeline(timeline),analyzer_version=VERSION)
     if effect['status']=='review_required':
-        base.update(snapshots={},facts=[],relations=[],obligations=[],boundaries=[],field_label_candidates=[],
-                    hard_errors=[effect['reason']],stats={})
+        base.update(snapshots={},change_seeds=[],facts=[],relations=[],hard_errors=[effect['reason']],stats={})
         return base,[],None
     before=build_index(root,effect['baseline_tree'],limits,parser,cache)
     after=build_index(root,effect['result_tree'],limits,parser,cache)
@@ -300,16 +299,13 @@ def analyze_project(spec,rules,limits,parser,cache):
             identifier=stable(name,kind,data,sorted(refs))
             fact=dict(id=identifier,kind=kind,classification='source_fact' if 'key' in candidate else 'risk_candidate',data=data,evidence_ids=sorted(refs))
             if identifier not in engine.fact_ids:engine.facts.append(fact);engine.fact_ids.add(identifier)
-            engine.obligation(fact,'configuration_file' if 'key' in candidate else 'review_boundary',
-                dict(path=candidate['path'],key=candidate.get('key')),dict(kind='verify_configuration_change'))
     if evidence.get('commit_review',{}).get('review_required') or any(row.get('kind')=='history_boundary' for row in timeline):
         row=next(iter(engine.graphs['result'].methods.values()),None)
-        fact=engine.fact('history_boundary',dict(reasons=evidence['commit_review'].get('review_reasons',[]),
-                         omissions=[row for row in timeline if row.get('kind')=='history_boundary']),
-                         [('result',row)],'risk_candidate') if row else None
-        engine.obligation(fact,'review_history',dict(selection='explicit_revisions'),dict(kind='review_history_scope'))
+        if row:
+            engine.fact('history_boundary',dict(reasons=evidence['commit_review'].get('review_reasons',[]),
+                        omissions=[item for item in timeline if item.get('kind')=='history_boundary']),
+                        [('result',row)],'risk_candidate')
     result['facts']=sorted(engine.facts,key=lambda f:f['id'])
-    result['obligations']=sorted(engine.obligations,key=lambda o:o['id'])
     context=list(engine.context.values())
     return result,context,engine.graphs['result']
 
@@ -367,10 +363,10 @@ def run(specs,outdir,rules_file=None):
             projects.append(project); contexts.extend(context); graphs.append(graph)
     finally:
         parser.close()
-    analysis=dict(schema_version=1,analyzer_version=VERSION,rules=rules,limits=limits,
+    analysis=dict(schema_version=2,analyzer_version=VERSION,rules=rules,limits=limits,
                   status='needs_review',context_file='context.jsonl',projects=projects,
                   cross_project_relations=cross_project_links(projects,graphs),
-                  note='Static source evidence and coverage declarations; not runtime or business validation.')
+                  note='Static source evidence for AI review; not runtime or business validation.')
     analysis['analysis_id']=stable(VERSION,rules,[(p['name'],p['repository'],p['snapshots']) for p in projects])
     outdir.mkdir(parents=True,exist_ok=True)
     with (outdir/'context.jsonl').open('x',encoding='utf-8') as out:
@@ -399,9 +395,8 @@ def main(argv=None):
             specs=[dict(repo=args.repo,**({'revisions':args.rev} if args.rev else {'range':dict(base=args.base,head=args.head)}))]
         analysis=run(specs,args.outdir,args.rules)
         print(str((Path(args.outdir)/'analysis.json').resolve()))
-        print('Collected: projects={}, facts={}, obligations={}; review still required'.format(
-            len(analysis['projects']),sum(len(p['facts']) for p in analysis['projects']),
-            sum(len(p['obligations']) for p in analysis['projects'])))
+        print('Collected: projects={}, facts={}; review still required'.format(
+            len(analysis['projects']),sum(len(p['facts']) for p in analysis['projects'])))
         return 2 if any(project['hard_errors'] for project in analysis['projects']) else 0
     except (ValueError,OSError,KeyError,TypeError) as exc:
         print('ERROR: '+str(exc),file=sys.stderr);return 2
