@@ -22,13 +22,13 @@ def validate_scope_data(analysis,review,cases):
         allowed_evidence.update(project.get('normal_flow_review',{}).get('evidence_ids') or [])
         allowed_evidence.update(identifier for relation in project.get('direct_relations',[])
                                 for identifier in relation.get('evidence_ids',[]))
-    if not allowed_facts:
-        raise ValueError('fast10 review has no selected facts')
     for purpose in PURPOSES:
         for case in cases['purpose_cases'][purpose]:
-            if not set(case.get('fact_ids') or [])<=allowed_facts:
+            fact_ids=set(case.get('fact_ids') or [])
+            evidence_ids=set(case.get('evidence_ids') or [])
+            if not fact_ids<=allowed_facts:
                 raise ValueError('case references facts outside fast10 selection: '+case.get('case_id',''))
-            if not set(case.get('evidence_ids') or [])<=allowed_evidence:
+            if not evidence_ids<=allowed_evidence:
                 raise ValueError('case references evidence outside fast10 selection: '+case.get('case_id',''))
     return True
 
