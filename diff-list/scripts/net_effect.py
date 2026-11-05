@@ -16,9 +16,8 @@ def _run(cmd, *, stdin=None):
     return process.returncode, process.stdout, process.stderr.decode('utf-8', 'replace').strip()
 
 
-def compose(repo, selected, capture_java=False, capture_config=False,
-            max_java_files=80, max_java_bytes=300000, max_config_files=100, max_config_bytes=300000,
-            persist_snapshot=False):
+def compose(repo, selected, capture_config=False,
+            max_config_files=100, max_config_bytes=300000, persist_snapshot=False):
     """selected: ordered [{sha, parent}]. Strictly apply their patches only.
 
     Uses a temporary shared clone with an isolated index. No checked-out source
@@ -109,39 +108,6 @@ def compose(repo, selected, capture_java=False, capture_config=False,
                 change_kinds[target_name] = kind
                 if len(columns) == 3 and kind == 'R':
                     rename_map[target_name] = columns[1]
-        if capture_java:
-            result['java_sources'] = []
-            result['java_skipped'] = []
-            candidates = [name for name in result['changed_files'] if name.endswith('.java')]
-            for name in candidates[max_java_files:]:
-                result['java_skipped'].append({'path': name, 'reason': 'file count limit'})
-            for name in candidates[:max_java_files]:
-                kind = change_kinds.get(name, 'M')
-                before = git('show', baseline + ':' + rename_map.get(name, name))
-                after = git('show', ':' + name)
-                if before.returncode != 0 and kind != 'A':
-                    result['java_skipped'].append({
-                        'path': name,
-                        'reason': 'cannot read baseline blob: ' + before.stderr.decode('utf-8', 'replace').strip()[:300]})
-                    continue
-                if after.returncode != 0 and kind != 'D':
-                    result['java_skipped'].append({
-                        'path': name,
-                        'reason': 'cannot read target blob: ' + after.stderr.decode('utf-8', 'replace').strip()[:300]})
-                    continue
-                before_data = before.stdout if before.returncode == 0 else b''
-                after_data = after.stdout if after.returncode == 0 else b''
-                if max(len(before_data), len(after_data)) > max_java_bytes:
-                    result['java_skipped'].append({'path': name, 'reason': 'file size limit'})
-                    continue
-                try:
-                    before_text = before_data.decode('utf-8')
-                    after_text = after_data.decode('utf-8')
-                except UnicodeDecodeError:
-                    result['java_skipped'].append({'path': name, 'reason': 'non-UTF-8 source'})
-                    continue
-                result['java_sources'].append({'path': name, 'before': before_text,
-                                               'after': after_text})
         if capture_config:
             result['config_sources'] = []
             result['config_skipped'] = []
