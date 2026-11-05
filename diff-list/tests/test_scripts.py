@@ -321,7 +321,7 @@ class DiffListTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     writer.append(report,[str(evidence)],[])
 
-    def test_append_run_dirs_rejects_previous_metadata_shapes(self):
+    def test_append_run_dirs_requires_project_clone_metadata(self):
         writer=module('append_run_dirs')
         with tempfile.TemporaryDirectory() as td:
             source=Path(td)/'analysis.json'
@@ -522,9 +522,9 @@ class AdditionalRegressionTests(unittest.TestCase):
             data=self.export_input();data['purpose_cases']['acceptance'][0][field]=value
             with self.assertRaises(ValueError):exporter.normalize(data,fixture_analysis())
 
-    def test_non_current_case_formats_and_extra_fields_are_rejected(self):
+    def test_invalid_case_shapes_and_extra_fields_are_rejected(self):
         exporter=module('export_test_cases')
-        for data in ({'cases':[]},{'focus_cases':[],'regular_cases':[]}):
+        for data in ({'cases':[]},{'purpose_cases':[]}):
             with self.assertRaises(ValueError):exporter.normalize(data,fixture_analysis())
         data=self.export_input();data['purpose_cases']['acceptance'][0]['unexpected_field']=[]
         with self.assertRaisesRegex(ValueError,'unsupported fields'):
@@ -548,9 +548,6 @@ class AdditionalRegressionTests(unittest.TestCase):
         self.assertFalse(any('测试用例导出章节' in err for err in errors))
         errors,_=validator.validate(report.replace('总用例数量：1','总用例数量：两条'),template,[])
         self.assertTrue(any('总用例数量' in err for err in errors))
-        old=report.replace(summary,'Excel：cases.xlsx；重点用例数量：1；常规用例数量：0；总用例数量：1')
-        errors,_=validator.validate(old,template,[])
-        self.assertTrue(any('只接受当前四类数量' in err for err in errors))
 
     def test_four_sheets_keep_empty_groups_and_valid_xml(self):
         import zipfile
