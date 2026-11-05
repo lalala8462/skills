@@ -392,7 +392,7 @@ class DiffListTest(unittest.TestCase):
                 report=Path(td)/'report.md'
                 report.write_text('# Report\n## 6. 验证情况\n静态分析。\n',encoding='utf-8')
                 evidence=Path(td)/'evidence.json'
-                evidence.write_text(json.dumps({'schema_version':1,'analyzer_version':module('analysis_engine').VERSION,
+                evidence.write_text(json.dumps({'schema_version':2,'analyzer_version':module('analysis_engine').VERSION,
                     'projects':[{'analysis_clone':str(clone)}]}),
                                     encoding='utf-8')
                 dirs=writer.append(report,[str(evidence)],[str(clone)])
@@ -407,7 +407,7 @@ class DiffListTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             source=Path(td)/'analysis.json'
             for payload in ({'analysis_clone':'unused'},
-                    {'schema_version':1,'analyzer_version':module('analysis_engine').VERSION,
+                    {'schema_version':2,'analyzer_version':module('analysis_engine').VERSION,
                      'projects':[{'repository':'unused'}]}):
                 source.write_text(json.dumps(payload),encoding='utf-8')
                 with self.assertRaises(ValueError):writer.input_clones(source)
