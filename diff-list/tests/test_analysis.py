@@ -289,85 +289,27 @@ class Handler {
         for project in result['projects']:
             self.assertEqual(project['snapshots']['result'],git(self.source,'rev-parse',self.after+'^{tree}'))
 
-    @staticmethod
-    def all_cases(data):
-        from test_points import PURPOSES
-        return [case for purpose in PURPOSES for case in data['purpose_cases'][purpose]]
-
-    @staticmethod
-    def empty_cases(analysis):
-        from test_points import compile_plan,PURPOSES
-        catalog=compile_plan(dict(version=1,analysis_id=analysis['analysis_id'],requirements=[],rules=[],impacts=[],candidates=[]),analysis)
-        return dict(schema_version=2,test_point_catalog=catalog,purpose_cases={p:[] for p in PURPOSES})
-
-    def closed_cases(self,exclude=()):
-        from test_points import compile_plan,PURPOSES
-        from coverage_constraints import source_contract
-        project=self.analysis['projects'][0]
-        facts={f['id']:f for f in project['facts']}
-        plan=dict(version=1,analysis_id=self.analysis['analysis_id'],requirements=[],rules=[],impacts=[],candidates=[])
-        case_rows=[]
-        for i,item in enumerate(project['obligations']):
-            if item['id'] in exclude:continue
-            rule_id='rule-'+str(i);purpose=PURPOSES[i%4]
-            plan['rules'].append(dict(id=rule_id,project=project['name'],kind='boundary',subject=item['id'],
-                operation='fixture.coverage',core=True,fact_ids=item['fact_ids'],evidence_ids=item['evidence_ids']))
-            basis=dict(kind=purpose)
-            if purpose=='acceptance':
-                basis['requirement_id']='req-'+str(i)
-                plan['requirements'].append(dict(id=basis['requirement_id'],rule_ids=[rule_id],
-                    source=dict(kind='confirmed_constraint',reference='离线夹具验证规则',statement='验证结构关联完整保留')))
-            elif purpose in ('core_regression','related_regression'):
-                basis['impact_id']='impact-'+str(i)
-                plan['impacts'].append(dict(id=basis['impact_id'],project=project['name'],rule_ids=[rule_id],
-                    fact_ids=item['fact_ids'],evidence_ids=item['evidence_ids'],description='离线夹具的源码义务关联'))
-            alternatives,constraint=source_contract(item,facts)
-            plan['candidates'].append(dict(id='candidate-'+str(i),rule_id=rule_id,
-                entry=dict(kind='method',target='fixture.coverage'),conditions=alternatives[0] if alternatives else [],
-                observation=dict(surface='接口',target='交易响应及实际调用次数'),
-                expected=constraint or dict(kind='equals',value=item['assertion']),purposes=[basis],obligation_ids=[item['id']]))
-            messages=item['assertion'].get('errors',[])
-            expected='核对指定交易字段和调用次数'+('；'+'；'.join(messages) if messages else '')
-            case_rows.append((i,dict(case_id='C'+str(i),title='检查覆盖项'+str(i),
-                preconditions='已准备覆盖项中的触发数据',steps=['触发对应分支并检查结果'],expected=[expected],
-                observable_evidence=[dict(surface='接口',target='交易响应及实际调用次数',assertion=expected)],
-                coverage_links=[dict(obligation_id=item['id'],condition=item['condition'],assertion=item['assertion'],
-                    fact_ids=item['fact_ids'],evidence_ids=item['evidence_ids'],observable_evidence_indices=[0])])) )
-        catalog=compile_plan(plan,self.analysis)
-        points={p['candidate_ids'][0]:p for p in catalog['points']}
+    def direct_cases(self,fact=None):
+        from case_contract import PURPOSES
+        from review_workbench import fast10_view
         groups={purpose:[] for purpose in PURPOSES}
-        for i,case in case_rows:
-            point=points['candidate-'+str(i)]
-            case['observable_evidence'][0]['constraint']=point['expected']
-            case['test_point_links']=[dict(point_id=point['id'],conditions=point['conditions'],
-                expected=point['expected'],data_group_ids=[],observable_evidence_indices=[0])]
-            groups[point['purpose']].append(case)
-        data=json.loads(json.dumps(dict(schema_version=2,test_point_catalog=catalog,purpose_cases=groups)))
-        return data,dict(analysis_id=self.analysis['analysis_id'],dispositions=[])
-
-    def test_strict_coverage_and_source_integrity(self):
-        cases,review=self.closed_cases()
-        errors,_=validate(self.analysis,self.context,review,cases)
-        self.assertEqual(errors,[])
-        self.all_cases(cases)[0]['coverage_links']=[]
-        errors,_=validate(self.analysis,self.context,review,cases)
-        self.assertTrue(any('lost source coverage links' in e for e in errors))
+        if fact is None:
+            fact=next(f for f in self.analysis['projects'][0]['facts']
+                      if f['kind']=='method_change' and f['evidence_ids'])
+        groups['acceptance'].append(dict(
+            case_id='DIRECT-001',
+            title='验证本次方法行为变化',
+            preconditions='准备可触发该方法的有效业务数据',
+            steps=['发起对应业务请求','检查接口结果和持久化结果'],
+            expected=['本次修改后的行为生效，且相关业务结果可观察'],
+            observable_evidence=[dict(surface='接口',target='业务响应',
+                                      assertion='响应字段与本次修改后的源码行为一致')],
+            fact_ids=[fact['id']],evidence_ids=[fact['evidence_ids'][0]]))
+        return dict(schema_version=3,analysis_id=self.analysis['analysis_id'],purpose_cases=groups),fast10_view(self.analysis)
 
     def test_direct_cases_validate_only_referenced_source_evidence(self):
-        from review_workbench import fast10_view
         from export_test_cases import normalize
-        from test_points import PURPOSES
-        fact=next(f for f in self.analysis['projects'][0]['facts']
-                  if f['kind']=='method_change' and f['evidence_ids'])
-        case=dict(case_id='DIRECT-001',title='验证本次方法行为变化',preconditions='准备可触发该方法的有效业务数据',
-                  steps=['发起对应业务请求','检查接口结果和持久化结果'],
-                  expected=['本次修改后的行为生效，且相关业务结果可观察'],
-                  observable_evidence=[dict(surface='接口',target='业务响应',
-                                            assertion='响应字段与本次修改后的源码行为一致')],
-                  fact_ids=[fact['id']],evidence_ids=[fact['evidence_ids'][0]])
-        data=dict(schema_version=3,analysis_id=self.analysis['analysis_id'],
-                  purpose_cases={purpose:([case] if purpose=='acceptance' else []) for purpose in PURPOSES})
-        review=fast10_view(self.analysis)
+        data,review=self.direct_cases()
         errors,_=validate(self.analysis,self.context,review,data)
         self.assertEqual(errors,[])
         self.assertEqual(len(normalize(data,self.analysis)['purposes']['acceptance']),1)
@@ -375,29 +317,11 @@ class Handler {
         errors,_=validate(self.analysis,self.context,review,broken)
         self.assertTrue(any('requires referenced evidence' in error for error in errors))
         tampered=copy.deepcopy(self.analysis)
-        target=next(f for f in tampered['projects'][0]['facts'] if f['id']==fact['id'])
+        fact_id=data['purpose_cases']['acceptance'][0]['fact_ids'][0]
+        target=next(f for f in tampered['projects'][0]['facts'] if f['id']==fact_id)
         target['data']['change']='tampered'
         errors,_=validate(tampered,self.context,review,data)
-        self.assertTrue(any('referenced fact identity mismatch' in error for error in errors))
-
-    def test_weak_label_candidates_do_not_block_valid_delivery(self):
-        from export_test_cases import main as export_main
-        from review_workbench import grouped
-        analysis=copy.deepcopy(self.analysis)
-        analysis['projects'][0]['field_label_candidates'].extend(dict(side='result',symbol='Other#write{}()'.format(i),
-            path='Other.java',label='orderNo',receiver_type='Other',reason='same_label_not_confirmed_connection') for i in range(324))
-        cases,review=self.closed_cases()
-        errors,_=validate(analysis,self.context,review,cases)
-        self.assertEqual(errors,[])
-        self.assertIn('弱线索',grouped(analysis)['note'])
-        out=self.base/'weak-label-delivery';out.mkdir()
-        for filename,value in [('analysis.json',analysis),('review.json',review),('cases.json',cases)]:
-            (out/filename).write_text(json.dumps(value,ensure_ascii=False),encoding='utf-8')
-        (out/'context.jsonl').write_text('\n'.join(json.dumps(row,ensure_ascii=False) for row in self.context),encoding='utf-8')
-        target=out/'cases.xlsx'
-        self.assertEqual(export_main(['--input',str(out/'cases.json'),'--output',str(target),
-            '--analysis',str(out/'analysis.json'),'--review',str(out/'review.json')]),0)
-        self.assertTrue(target.is_file())
+        self.assertTrue(any('fact identity mismatch' in error for error in errors))
 
     def test_fast10_review_uses_net_changes_and_direct_relations_without_caps(self):
         from analysis_engine import VERSION
@@ -414,11 +338,9 @@ class Handler {
                                   evidence_ids=[],site=dict(name='queryById',receiver='dao',
                                   expression='dao.queryById(value{})'.format(index),arguments=['value{}'.format(index)])))
         analysis=dict(schema_version=1,analyzer_version=VERSION,analysis_id='fast10-test',
-            projects=[dict(name='sample',facts=facts,relations=relations,obligations=[],
-                           boundaries=[],field_label_candidates=[],hard_errors=[],scope_errors=[],
-                           critical_evidence_omissions=[],stats={})])
+            projects=[dict(name='sample',facts=facts,relations=relations,hard_errors=[],stats={})])
         compact=fast10_view(analysis)['projects'][0]
-        self.assertEqual(compact['fast10_review']['changed_method_count'],12)
+        self.assertEqual(compact['fast10_review']['changed_symbol_count'],12)
         self.assertEqual(compact['fast10_review']['primary_change_fact_count'],12)
         self.assertEqual(compact['fast10_review']['direct_relation_count'],12)
         self.assertNotIn('max_method_groups',compact['fast10_review'])
@@ -449,9 +371,7 @@ class Handler {
                         evidence_ids=['method-evidence'],site=dict(name='list',receiver='store',
                         expression='store.list(orderNo)',arguments=['orderNo']))]
         analysis=dict(schema_version=1,analyzer_version=VERSION,analysis_id='fast10-supporting-test',
-            projects=[dict(name='sample',facts=facts,relations=relations,obligations=[],
-                           boundaries=[],field_label_candidates=[],hard_errors=[],scope_errors=[],
-                           critical_evidence_omissions=[],stats={})])
+            projects=[dict(name='sample',facts=facts,relations=relations,hard_errors=[],stats={})])
         compact=fast10_view(analysis)['projects'][0]
         kinds={fact['kind'] for fact in compact['facts']}
         self.assertIn('configuration_file_change',kinds)
@@ -466,19 +386,17 @@ class Handler {
             facts.append(dict(id='change-fact-{}'.format(index),kind='method_change',classification='source_fact',
                               data=dict(symbol=symbol,change='added'),evidence_ids=[]))
         analysis=dict(schema_version=1,analyzer_version=VERSION,analysis_id='fast10-priority-test',
-            projects=[dict(name='sample',facts=facts,relations=[],obligations=[],
-                           boundaries=[],field_label_candidates=[],hard_errors=[],scope_errors=[],
-                           critical_evidence_omissions=[],stats={})])
+            projects=[dict(name='sample',facts=facts,relations=[],hard_errors=[],stats={})])
         compact=fast10_view(analysis)['projects'][0]
         methods={method for group in compact['normal_flow_review']['groups'] for method in group['methods']}
         self.assertEqual(methods,{'sample.enums.ATypeEnum#mapDao()','sample.ZPayService#aggregatePay()'})
-        self.assertEqual(compact['fast10_review']['changed_method_count'],2)
+        self.assertEqual(compact['fast10_review']['changed_symbol_count'],2)
 
-    def delivery_report(self, out, data):
-        from test_points import PURPOSES,PURPOSE_NAMES
+    def delivery_report(self,out,data):
+        from case_contract import PURPOSES,PURPOSE_NAMES
         counts=[len(data['purpose_cases'][purpose]) for purpose in PURPOSES]
-        summary='Excel：cases.xlsx；'+'；'.join(name+'用例数量：'+str(count) for name,count in zip(PURPOSE_NAMES,counts))
-        summary+='；总用例数量：'+str(sum(counts))
+        summary='Excel：cases.xlsx；'+'；'.join(name+'用例数量：'+str(count)
+            for name,count in zip(PURPOSE_NAMES,counts))+'；总用例数量：'+str(sum(counts))
         content={'## 1. 分析范围':self.analysis['projects'][0]['name']+' '+self.after,
                  '## 5. 测试用例导出':summary,'## 6. 验证情况':'仅完成静态分析与用例设计。'}
         lines=[]
@@ -488,184 +406,50 @@ class Handler {
         report=out/'report.md';report.write_text('\n'.join(lines),encoding='utf-8')
         return report
 
-    def test_four_purpose_catalog_integrates_with_fixed_source_coverage(self):
-        from export_test_cases import normalize,main as export_main
-        data,review=self.closed_cases()
-        errors,_=validate(self.analysis,self.context,review,data)
-        self.assertEqual(errors,[])
-        self.assertEqual(sum(len(rows) for rows in normalize(data, self.analysis)['purposes'].values()),len(self.all_cases(self.closed_cases()[0])))
-        out=self.base/'four-purpose-delivery';out.mkdir()
-        for filename,value in [('analysis.json',self.analysis),('review.json',review),('cases.json',data)]:
-            (out/filename).write_text(json.dumps(value,ensure_ascii=False),encoding='utf-8')
-        (out/'context.jsonl').write_text('\n'.join(json.dumps(r,ensure_ascii=False) for r in self.context),encoding='utf-8')
-        report=self.delivery_report(out,data)
-        self.assertEqual(export_main(['--input',str(out/'cases.json'),'--output',str(out/'cases.xlsx'),
-            '--analysis',str(out/'analysis.json'),'--review',str(out/'review.json')]),0)
-        from validate_report import main as report_main
-        self.assertEqual(report_main([str(report),'--analysis',str(out/'analysis.json'),
-            '--review',str(out/'review.json'),'--cases',str(out/'cases.json')]),0)
-        data['purpose_cases']['acceptance'].pop()
-        errors,_=validate(self.analysis,self.context,review,data)
-        self.assertTrue(any('uncovered test points' in e for e in errors))
-
-    def test_reviewed_change_passes_coverage_and_excel_export(self):
-        from test_points import compile_plan
+    def test_direct_cases_integrate_with_excel_and_report(self):
         from export_test_cases import main as export_main
-        data,review=self.closed_cases()
-        plan=copy.deepcopy(data['test_point_catalog']['plan'])
-        plan['requirements'][0]['source']['kind']='reviewed_change'
-        data['test_point_catalog']=compile_plan(plan,self.analysis)
+        data,review=self.direct_cases()
         errors,_=validate(self.analysis,self.context,review,data)
         self.assertEqual(errors,[])
-        out=self.base/'reviewed-change-delivery';out.mkdir()
+        out=self.base/'direct-delivery';out.mkdir()
         for filename,value in [('analysis.json',self.analysis),('review.json',review),('cases.json',data)]:
             (out/filename).write_text(json.dumps(value,ensure_ascii=False),encoding='utf-8')
         (out/'context.jsonl').write_text('\n'.join(json.dumps(r,ensure_ascii=False) for r in self.context),encoding='utf-8')
         report=self.delivery_report(out,data)
         self.assertEqual(export_main(['--input',str(out/'cases.json'),'--output',str(out/'cases.xlsx'),
             '--analysis',str(out/'analysis.json'),'--review',str(out/'review.json')]),0)
-        self.assertTrue((out/'cases.xlsx').is_file())
         from validate_report import main as report_main
         self.assertEqual(report_main([str(report),'--analysis',str(out/'analysis.json'),
             '--review',str(out/'review.json'),'--cases',str(out/'cases.json')]),0)
 
-    def test_old_case_formats_are_rejected_by_analysis_validation(self):
-        review=dict(analysis_id=self.analysis['analysis_id'],dispositions=[])
+    def test_non_current_case_formats_are_rejected_by_analysis_validation(self):
+        from review_workbench import fast10_view
+        review=fast10_view(self.analysis)
         for cases in ({'cases':[]},{'focus_cases':[],'regular_cases':[]}):
             errors,_=validate(self.analysis,self.context,review,cases)
-            self.assertTrue(any('four-purpose cases' in e for e in errors),errors)
+            self.assertTrue(any('invalid test cases' in error for error in errors),errors)
 
-    def test_coverage_cannot_point_to_another_observation(self):
-        data,review=self.closed_cases()
-        case=next(c for rows in data['purpose_cases'].values() for c in rows)
-        case['observable_evidence'].append(dict(surface='其他',target='无关字段',assertion='该观察与当前测试点无关联'))
-        case['coverage_links'][0]['observable_evidence_indices']=[1]
-        errors,_=validate(self.analysis,self.context,review,data)
-        self.assertTrue(any('corresponding test point' in e for e in errors))
-
-    def test_wrong_fact_condition_and_result_are_rejected(self):
-        for field,bad in [('fact_ids',['not-a-fact']),('condition',{'value':'wrong'}),('assertion',{'errors':['wrong']})]:
-            cases,review=self.closed_cases()
-            self.all_cases(cases)[0]['coverage_links'][0][field]=bad
-            errors,_=validate(self.analysis,self.context,review,cases)
-            self.assertTrue(any('mismatch' in e for e in errors),field)
-
-    def test_constant_only_change_seeds_readers_and_blocks_empty_coverage(self):
+    def test_constant_only_change_seeds_direct_reader_scope(self):
         source='class Limit { static final int MAX=1; boolean allowed(int n){return n<=MAX;} }'
         commit(self.source,{'src/Limit.java':source},'limit baseline')
         head=commit(self.source,{'src/Limit.java':source.replace('MAX=1','MAX=2')},'limit changed')
-        result,context=self.analyze([head])
+        result,_=self.analyze([head])
         project=result['projects'][0]
         field=next(f for f in project['facts'] if f['kind']=='field_change' and f['data']['field']=='MAX')
         self.assertEqual(field['data']['after_initializer'],'2')
         self.assertIn('Limit#allowed(int)',field['data']['consumers'])
         self.assertGreater(project['stats']['result']['selected_methods'],0)
-        self.assertTrue(any(o['dimension']=='field_behavior' and field['id'] in o['fact_ids'] for o in project['obligations']))
-        from test_points import compile_plan,PURPOSES
-        catalog=compile_plan(dict(version=1,analysis_id=result['analysis_id'],requirements=[],rules=[],impacts=[],candidates=[]),result)
-        cases=dict(schema_version=2,test_point_catalog=catalog,purpose_cases={p:[] for p in PURPOSES})
-        errors,_=validate(result,context,dict(analysis_id=result['analysis_id'],dispositions=[]),cases)
-        self.assertTrue(any('unhandled obligation' in e for e in errors))
+        self.assertNotIn('obligations',project)
 
-    def test_tampered_source_and_wrong_revision_are_rejected(self):
-        cases,review=self.closed_cases()
-        for field in ('snippet','tree'):
-            context=copy.deepcopy(self.context)
-            context[0][field]='bad'
-            errors,_=validate(self.analysis,context,review,cases)
-            self.assertTrue(any('mismatch' in e or 'verify' in e for e in errors),field)
+    def test_tampered_referenced_source_is_rejected(self):
+        data,review=self.direct_cases()
+        context=copy.deepcopy(self.context)
+        referenced=data['purpose_cases']['acceptance'][0]['evidence_ids'][0]
+        row=next(item for item in context if item['id']==referenced)
+        row['snippet']='bad'
+        errors,_=validate(self.analysis,context,review,data)
+        self.assertTrue(any('evidence content mismatch' in error for error in errors))
 
-    def test_legacy_exception_requires_evidence_and_retains_model_provenance(self):
-        cases,review=self.closed_cases()
-        obligations={o['id']:o for o in self.analysis['projects'][0]['obligations']}
-        case=next(c for c in self.all_cases(cases)
-                  if obligations[c['coverage_links'][0]['obligation_id']]['dimension']=='mapper_dynamic_conditions')
-        link=case['coverage_links'][0]
-        cases,review=self.closed_cases(exclude={link['obligation_id']})
-        disposition=dict(obligation_id=link['obligation_id'],status='reviewed_boundary',
-            conclusion='已读取动态 SQL 声明并核对本次静态条件。',
-            limitations='仅核实静态 Mapper 条件，未执行真实数据库查询。',
-            evidence_ids=link['evidence_ids'],review_kind='model_source_review')
-        review['dispositions']=[disposition]
-        errors,_=validate(self.analysis,self.context,review,cases)
-        self.assertEqual(errors,[])
-        review['dispositions'][0]['evidence_ids']=[]
-        errors,_=validate(self.analysis,self.context,review,cases)
-        self.assertTrue(any('review evidence' in e for e in errors))
-
-
-class BoundaryBatchTest(unittest.TestCase):
-    def test_batch_closes_both_obligations_and_rejects_overlap(self):
-        from analysis_engine import VERSION
-        from test_points import compile_plan,PURPOSES
-        rules={}; snapshots={'baseline':'a'*40,'result':'b'*40}; project='sample'; repo='repo'
-        analysis_id=stable(VERSION,rules,[(project,repo,snapshots)])
-        facts=[]; obligations=[]; context=[]; members=[]
-        for side in ('baseline','result'):
-            condition=dict(side=side,parent='sample.Flow#run()',symbol='sample.Store#find()',reason='relation_budget')
-            ref='source-'+side
-            context.append(dict(id=ref,project=project,side=side,path='src/sample/Flow.java',snippet='void run() {}'))
-            fid=stable(project,'analysis_boundary',condition,[ref])
-            facts.append(dict(id=fid,kind='analysis_boundary',data=condition,evidence_ids=[ref]))
-            assertion=dict(kind='document_limit')
-            oid=stable(project,fid,'review_analysis_boundary',condition,assertion)
-            obligations.append(dict(id=oid,fact_ids=[fid],evidence_ids=[ref],dimension='review_analysis_boundary',
-                                    condition=condition,assertion=assertion,required=True))
-            members.append(dict(obligation_id=oid,evidence_ids=[ref]))
-        project_data=dict(name=project,repository=repo,snapshots=snapshots,hard_errors=[],facts=facts,
-                          obligations=obligations,boundaries=[o['condition'] for o in obligations])
-        analysis=dict(schema_version=1,analyzer_version=VERSION,rules=rules,analysis_id=analysis_id,projects=[project_data])
-        plan=dict(version=1,analysis_id=analysis_id,requirements=[],rules=[],impacts=[],candidates=[])
-        cases=dict(schema_version=2,test_point_catalog=compile_plan(plan,analysis),purpose_cases={p:[] for p in PURPOSES})
-        batch=dict(status='reviewed_boundary',review_kind='model_source_review',conclusion='已核对两侧调用关系和目标位置。',
-                   limitations='实际运行时绑定仍未验证。',members=members)
-        review=dict(analysis_id=analysis_id,dispositions=[],boundary_batches=[batch])
-        errors,_=validate(analysis,context,review,cases,verify_sources=False)
-        self.assertEqual(errors,[])
-        metadata=copy.deepcopy(analysis); metadata_review=copy.deepcopy(review)
-        missing_fact=metadata['projects'][0]['facts'][0]; missing=metadata['projects'][0]['obligations'][0]
-        missing_fact['evidence_ids']=[];missing_fact['evidence_status']='unavailable'
-        missing_fact['id']=stable(project,'analysis_boundary',missing_fact['data'],[])
-        missing['fact_ids']=[missing_fact['id']];missing['evidence_ids']=[]
-        missing['id']=stable(project,missing_fact['id'],missing['dimension'],missing['condition'],missing['assertion'])
-        metadata_review['boundary_batches'][0]['members'][0]['obligation_id']=missing['id']
-        errors,_=validate(metadata,context,metadata_review,cases,verify_sources=False)
-        self.assertEqual(errors,[])
-        metadata_review['boundary_batches'][0]['members'][0]['evidence_ids']=[]
-        errors,_=validate(metadata,context,metadata_review,cases,verify_sources=False)
-        self.assertTrue(any('invalid boundary batch' in error for error in errors))
-        review['dispositions'].append(dict(obligation_id=members[0]['obligation_id'],evidence_ids=members[0]['evidence_ids'],
-            status=batch['status'],review_kind=batch['review_kind'],conclusion=batch['conclusion'],limitations=batch['limitations']))
-        errors,_=validate(analysis,context,review,cases,verify_sources=False)
-        self.assertTrue(any('duplicate disposition' in error for error in errors))
-
-    def test_batches_preserve_each_snapshot_and_require_relevant_evidence(self):
-        from validate_analysis import expand_boundary_batches
-        condition=dict(parent='sample.Flow#run()',symbol='sample.Store#find()',reason='relation_budget')
-        obligations={side:dict(dimension='review_analysis_boundary',
-            condition=dict(condition,side=side),fact_ids=['fact-'+side],evidence_ids=['anchor-'+side])
-            for side in ('baseline','result')}
-        evidence={}
-        for side in obligations:
-            evidence['anchor-'+side]=dict(project='sample',side=side,path='src/Other.java',snippet='class Other {}')
-            evidence['source-'+side]=dict(project='sample',side=side,path='src/sample/Flow.java',snippet='void run() {}')
-        members=[dict(obligation_id=side,evidence_ids=['anchor-'+side,'source-'+side]) for side in obligations]
-        batch=dict(status='reviewed_boundary',review_kind='model_source_review',
-                   conclusion='已核对两侧调用关系和目标位置。',limitations='实际运行时绑定仍未验证。',members=members)
-        review=dict(boundary_batches=[batch])
-        expanded=expand_boundary_batches(review,obligations,evidence)
-        self.assertEqual([x['obligation_id'] for x in expanded],['baseline','result'])
-        self.assertEqual(expanded[1]['evidence_ids'],['anchor-result','source-result'])
-        for mutate in ('missing_source','wrong_side','different_reason','duplicate','different_project'):
-            bad_review=copy.deepcopy(review); bad_obligations=copy.deepcopy(obligations); bad_evidence=copy.deepcopy(evidence)
-            if mutate=='missing_source': bad_review['boundary_batches'][0]['members'][1]['evidence_ids']=['anchor-result']
-            if mutate=='wrong_side': bad_evidence['source-result']['side']='baseline'
-            if mutate=='different_reason': bad_obligations['result']['condition']['reason']='context_budget'
-            if mutate=='duplicate': bad_review['boundary_batches'][0]['members'][1]['obligation_id']='baseline'
-            if mutate=='different_project':
-                bad_evidence['anchor-result']['project']='other';bad_evidence['source-result']['project']='other'
-            with self.assertRaises(ValueError,msg=mutate):
-                expand_boundary_batches(bad_review,bad_obligations,bad_evidence)
 
 
 class BindingTest(unittest.TestCase):
