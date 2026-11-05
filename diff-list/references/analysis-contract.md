@@ -32,6 +32,7 @@
 - `repository`
 - `analysis_clone`
 - `snapshots.baseline/result`
+- `change_seeds`：本次最终变化确定出的分析起点方法
 - `git`
 - `history`
 - `method_timeline`
