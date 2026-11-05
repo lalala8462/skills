@@ -41,18 +41,10 @@ def fast10_view(analysis):
     for source in analysis.get('projects',[]):
         facts=source.get('facts',[])
         primary=[fact for fact in facts if fact.get('kind') in primary_kinds]
-        changed_symbols={fact.get('data',{}).get('symbol') for fact in primary
-                         if fact.get('data',{}).get('symbol')}
-        for fact in primary:
-            if fact.get('kind')=='field_change':
-                changed_symbols.update(fact.get('data',{}).get('consumers') or [])
-        changed_symbols.discard(None)
-
-        direct_relations=[relation for relation in source.get('relations',[])
-                          if relation.get('source') in changed_symbols
-                          or any(target in changed_symbols for target in relation.get('targets',[]))]
+        change_seeds=set(source.get('change_seeds') or [])
+        direct_relations=list(source.get('relations') or [])
         selected_relation_ids.update(relation.get('id') for relation in direct_relations if relation.get('id'))
-        direct_symbols=set(changed_symbols)
+        direct_symbols=set(change_seeds)
         for relation in direct_relations:
             direct_symbols.add(relation.get('source'))
             direct_symbols.update(relation.get('targets') or [])
@@ -77,7 +69,7 @@ def fast10_view(analysis):
         evidence_ids=sorted({identifier for fact in visible for identifier in fact.get('evidence_ids',[])}
                             | relation_evidence)
         flow_groups={}
-        for symbol in sorted(changed_symbols):
+        for symbol in sorted(change_seeds):
             related=[fact for fact in visible if fact.get('data',{}).get('symbol')==symbol
                      or symbol in (fact.get('data',{}).get('consumers') or [])]
             if not related:
@@ -101,7 +93,7 @@ def fast10_view(analysis):
                 evidence_ids=evidence_ids,
                 note='范围来自本次净变化及一层直接关系；业务名称仅用于展示归组。'),
             fast10_review=dict(
-                changed_symbol_count=len(changed_symbols),
+                change_seed_count=len(change_seeds),
                 primary_change_fact_count=len(primary),
                 selected_fact_count=len(visible),
                 direct_relation_count=len(direct_relations),
