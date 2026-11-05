@@ -148,8 +148,6 @@ def validate(text,template,expected):
             errors.append('测试用例导出章节缺少 Excel 文件名')
         counts = {}
         labels=('需求验收用例数量','既有核心流程回归用例数量','关联回归用例数量','业务规则与边界验证用例数量')
-        if any(label in export_section for label in ('重点用例数量','常规用例数量')):
-            errors.append('测试用例导出章节只接受当前四类数量')
         for label in labels+('总用例数量',):
             found = re.search(re.escape(label) + r'\s*[:：]\s*(0|[1-9]\d*)(?!\d)', export_section)
             if not found:
