@@ -1107,6 +1107,7 @@ class ProjectAnalysis:
         self.argument_changes(changed)
         return dict(name=self.name, repository=self.repo,
             snapshots={side:graph.index['tree'] for side,graph in self.graphs.items()},
+            change_seeds=sorted(changed),
             facts=sorted(self.facts,key=lambda f:f['id']),relations=sorted(self.relations,key=lambda r:r['id']),
             scope_errors=sorted(set(self.scope_errors)),
             critical_evidence_omissions=sorted(self.critical_evidence_omissions),
