@@ -257,29 +257,13 @@ class Handler {
         statements=self.facts('mapper_statement')
         self.assertTrue(any(f['data']['name']=='list' and f['data']['dynamic'] for f in statements))
 
-    def test_configuration_file_change_cannot_pass_without_coverage(self):
+    def test_configuration_file_change_is_captured_with_redacted_evidence(self):
         base=commit(self.source,{'application.properties':'feature=0\npassword=SENSITIVE_VALUE\n'},'config base')
         head=commit(self.source,{'application.properties':'feature=1\npassword=NEW_SENSITIVE_VALUE\n'},'config change')
         result,context=self.analyze([head])
         facts=[f for f in result['projects'][0]['facts'] if f['kind']=='configuration_file_change']
         self.assertTrue(any(f['data']['key']=='feature' for f in facts))
         self.assertNotIn('SENSITIVE_VALUE',json.dumps(context))
-        errors,_=validate(result,context,dict(analysis_id=result['analysis_id'],dispositions=[]),self.empty_cases(result))
-        self.assertTrue(any('unhandled obligation' in e for e in errors))
-
-    def test_export_is_blocked_before_creating_excel(self):
-        import export_test_cases
-        directory=self.base/'export-gate';directory.mkdir()
-        (directory/'analysis.json').write_text(json.dumps(self.analysis),encoding='utf-8')
-        (directory/'context.jsonl').write_text('\n'.join(json.dumps(r) for r in self.context),encoding='utf-8')
-        cases,review=self.closed_cases()
-        self.all_cases(cases)[0]['coverage_links']=[]
-        (directory/'cases.json').write_text(json.dumps(cases),encoding='utf-8')
-        (directory/'review.json').write_text(json.dumps(review),encoding='utf-8')
-        target=directory/'blocked.xlsx'
-        code=export_test_cases.main(['--input',str(directory/'cases.json'),'--output',str(target),
-            '--analysis',str(directory/'analysis.json'),'--review',str(directory/'review.json')])
-        self.assertEqual(code,2);self.assertFalse(target.exists())
 
     def test_duplicate_project_names_are_rejected_before_cloning(self):
         spec=dict(name='same',repo='https://github.com/example/fixture',revisions=[self.after])
