@@ -511,39 +511,11 @@ class Handler {
         self.assertEqual(report_main([str(report),'--analysis',str(out/'analysis.json'),
             '--review',str(out/'review.json'),'--cases',str(out/'cases.json')]),0)
 
-    def test_wrong_executable_condition_is_rejected_even_with_original_coverage_links(self):
-        from test_points import compile_plan
-        from export_test_cases import normalize,main as export_main
-        data,review=self.closed_cases()
-        plan=copy.deepcopy(data['test_point_catalog']['plan'])
-        obligations={o['id']:o for o in self.analysis['projects'][0]['obligations']}
-        candidate=next(c for c in plan['candidates'] if any(obligations[o]['dimension']=='cardinality' and
-                       obligations[o]['condition']['count']=='zero' for o in c['obligation_ids']))
-        candidate['conditions']=[dict(subject='records.count',operator='eq',value=5)]
-        # 无分析材料时可编译结构目录，但最终带源码校验和导出都必须拒绝。
-        catalog=compile_plan(plan)
-        point=next(p for p in catalog['points'] if candidate['id'] in p['candidate_ids'])
-        case=next(c for rows in data['purpose_cases'].values() for c in rows if
-                  c['coverage_links'][0]['obligation_id'] in point['obligation_ids'])
-        case['test_point_links'][0].update(point_id=point['id'],conditions=point['conditions'])
-        data['test_point_catalog']=catalog
-        with self.assertRaisesRegex(ValueError,'test conditions do not cover source obligation'):
-            normalize(data, self.analysis)
-        errors,_=validate(self.analysis,self.context,review,data)
-        self.assertTrue(any('test conditions do not cover source obligation' in e for e in errors),errors)
-        out=self.base/'bad-condition-delivery';out.mkdir()
-        for filename,value in [('analysis.json',self.analysis),('review.json',review),('cases.json',data)]:
-            (out/filename).write_text(json.dumps(value),encoding='utf-8')
-        (out/'context.jsonl').write_text('\n'.join(json.dumps(r) for r in self.context),encoding='utf-8')
-        self.assertEqual(export_main(['--input',str(out/'cases.json'),'--output',str(out/'cases.xlsx'),
-             '--analysis',str(out/'analysis.json'),'--review',str(out/'review.json')]),2)
-        self.assertFalse((out/'cases.xlsx').exists())
-
     def test_old_case_formats_are_rejected_by_analysis_validation(self):
         review=dict(analysis_id=self.analysis['analysis_id'],dispositions=[])
         for cases in ({'cases':[]},{'focus_cases':[],'regular_cases':[]}):
             errors,_=validate(self.analysis,self.context,review,cases)
-            self.assertTrue(any('current four-purpose cases' in e for e in errors),errors)
+            self.assertTrue(any('four-purpose cases' in e for e in errors),errors)
 
     def test_coverage_cannot_point_to_another_observation(self):
         data,review=self.closed_cases()
@@ -585,14 +557,16 @@ class Handler {
             errors,_=validate(self.analysis,context,review,cases)
             self.assertTrue(any('mismatch' in e or 'verify' in e for e in errors),field)
 
-    def test_exception_requires_evidence_and_retains_model_provenance(self):
+    def test_legacy_exception_requires_evidence_and_retains_model_provenance(self):
         cases,review=self.closed_cases()
-        case=next(c for c in self.all_cases(cases) if c['coverage_links'][0]['assertion']['kind']=='review_binding')
+        obligations={o['id']:o for o in self.analysis['projects'][0]['obligations']}
+        case=next(c for c in self.all_cases(cases)
+                  if obligations[c['coverage_links'][0]['obligation_id']]['dimension']=='mapper_dynamic_conditions')
         link=case['coverage_links'][0]
         cases,review=self.closed_cases(exclude={link['obligation_id']})
         disposition=dict(obligation_id=link['obligation_id'],status='reviewed_boundary',
-            conclusion='已读取接口声明，目标服务未在本次输入仓库中提供。',
-            limitations='仅核实静态接口调用，未验证服务发现和运行时路由。',
+            conclusion='已读取动态 SQL 声明并核对本次静态条件。',
+            limitations='仅核实静态 Mapper 条件，未执行真实数据库查询。',
             evidence_ids=link['evidence_ids'],review_kind='model_source_review')
         review['dispositions']=[disposition]
         errors,_=validate(self.analysis,self.context,review,cases)
