@@ -203,7 +203,12 @@ def validate_direct_delivery(analysis, context, review, cases, verify_sources=Tr
     except (ValueError,TypeError,KeyError) as exc:
         return errors+['invalid direct test cases: '+str(exc)],warnings
     facts={fact['id']:(project['name'],fact) for project in projects for fact in project.get('facts',[])}
-    evidence={row.get('id'):row for row in context if row.get('id')}
+    evidence={};duplicate_evidence=set()
+    for row in context:
+        identifier=row.get('id')
+        if not identifier:continue
+        if identifier in evidence:duplicate_evidence.add(identifier)
+        evidence[identifier]=row
     referenced_facts=set()
     referenced_evidence=set()
     for purpose in PURPOSES:
@@ -213,9 +218,20 @@ def validate_direct_delivery(analysis, context, review, cases, verify_sources=Tr
     for identifier in sorted(referenced_facts):
         if identifier not in facts:
             errors.append('unknown referenced fact: '+identifier)
+            continue
+        project_name,fact=facts[identifier]
+        expected_fact=stable(project_name,fact['kind'],fact['data'],fact.get('evidence_ids',[]))
+        if identifier!=expected_fact:
+            errors.append('referenced fact identity mismatch: '+identifier)
+        for ref in set(fact.get('evidence_ids',[])) & referenced_evidence:
+            record=evidence.get(ref)
+            if record and record.get('project')!=project_name:
+                errors.append('referenced evidence project mismatch: '+ref)
     for identifier in sorted(referenced_evidence):
         if identifier not in evidence:
             errors.append('unknown referenced evidence: '+identifier)
+        elif identifier in duplicate_evidence:
+            errors.append('duplicate referenced evidence id: '+identifier)
     allowed_evidence={identifier for fact_id in referenced_facts if fact_id in facts
                       for identifier in facts[fact_id][1].get('evidence_ids',[])}
     if not referenced_evidence <= allowed_evidence:
