@@ -138,7 +138,7 @@ def collect(project, capture_config=False, persist_snapshot=False):
                 if len(columns) == 3 and kind == 'R':
                     rename_map[target] = columns[1]
         if capture_config:
-            from config_candidates import SUPPORTED_EXTENSIONS
+            from config_changes import SUPPORTED_EXTENSIONS
             result['net_effect']['config_sources'] = []
             result['net_effect']['config_skipped'] = []
             selected = [name for name in changed if name.lower().endswith(SUPPORTED_EXTENSIONS)]
