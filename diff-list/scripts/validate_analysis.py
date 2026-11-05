@@ -63,7 +63,7 @@ def verify_evidence(project,records):
 
 def validate(analysis,context,review,cases,verify_sources=True):
     errors=[];warnings=[]
-    if analysis.get('schema_version')!=1 or analysis.get('analyzer_version')!=VERSION:
+    if analysis.get('schema_version')!=2 or analysis.get('analyzer_version')!=VERSION:
         return ['unsupported analysis schema/analyzer version'],warnings
     projects=analysis.get('projects',[])
     if not projects or len({project.get('name') for project in projects})!=len(projects):
