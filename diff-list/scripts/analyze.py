@@ -363,7 +363,7 @@ def run(specs,outdir,rules_file=None):
             projects.append(project); contexts.extend(context); graphs.append(graph)
     finally:
         parser.close()
-    analysis=dict(schema_version=1,analyzer_version=VERSION,rules=rules,limits=limits,
+    analysis=dict(schema_version=2,analyzer_version=VERSION,rules=rules,limits=limits,
                   status='needs_review',context_file='context.jsonl',projects=projects,
                   cross_project_relations=cross_project_links(projects,graphs),
                   note='Static source evidence for AI review; not runtime or business validation.')
