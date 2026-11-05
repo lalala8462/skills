@@ -175,13 +175,6 @@ def relation_affects_review_scope(edge, graph, custom_tokens=()):
     return False
 
 
-def relation_review_signature(fact):
-    data=fact.get('data',{})
-    site=dict(data.get('call') or {})
-    return stable(data.get('reason'),data.get('receiver_type'),data.get('candidates'),
-                  site.get('name'),relation_receiver_hint(site),len(site.get('arguments',[])))
-
-
 def short(type_name):
     return re.sub(r'<.*>|\[\]|\?\s*(?:extends|super)\s*', '', type_name or '').strip().rsplit('.', 1)[-1]
 
