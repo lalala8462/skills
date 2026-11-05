@@ -89,8 +89,11 @@ def _normalize_validated(data):
         rows = []
         for item in sorted(data['purpose_cases'][purpose], key=lambda c: c.get('case_id', '')):
             material, assertions = case_material(data, item)
-            expanded = dict(item, preconditions=_string(item.get('preconditions'), 'preconditions') + '\n' + material,
-                            expected=_lines(item.get('expected'), 'expected') + '\n' + assertions)
+            preconditions=_string(item.get('preconditions'), 'preconditions')
+            expected=_lines(item.get('expected'), 'expected')
+            if material: preconditions+='\n'+material
+            if assertions: expected+='\n'+assertions
+            expanded = dict(item, preconditions=preconditions, expected=expected)
             rows.append(_case(expanded, ids))
         groups[purpose] = rows
     if not any(groups.values()):
