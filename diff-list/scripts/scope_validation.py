@@ -55,6 +55,15 @@ def validate_scope_data(analysis, review, cases):
     if not scope_found:
         raise ValueError('fast10 review has no selected normal-flow scope')
 
+    if cases.get('schema_version')==3:
+        for purpose in PURPOSES:
+            for case in cases.get('purpose_cases', {}).get(purpose, []):
+                if not set(case.get('fact_ids') or []) <= allowed_facts:
+                    raise ValueError('scope case references facts outside fast10 selection: ' + str(case.get('case_id')))
+                if not set(case.get('evidence_ids') or []) <= allowed_evidence:
+                    raise ValueError('scope case references evidence outside fast10 selection: ' + str(case.get('case_id')))
+        return True
+
     for purpose in PURPOSES:
         for case in cases.get('purpose_cases', {}).get(purpose, []):
             for link in case.get('coverage_links', []):
