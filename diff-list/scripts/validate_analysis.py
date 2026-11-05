@@ -184,7 +184,85 @@ def verify_evidence(project, records):
     return errors
 
 
+def validate_direct_delivery(analysis, context, review, cases, verify_sources=True):
+    """默认交付只校验最终用例实际引用的事实和源码证据，不要求关闭全部分析义务。"""
+    errors=[];warnings=[]
+    if type(analysis.get('schema_version'))!=int or analysis['schema_version']!=1 or analysis.get('analyzer_version')!=VERSION:
+        return ['unsupported analysis schema/analyzer version'],warnings
+    projects=analysis.get('projects',[])
+    if not projects or len({p['name'] for p in projects})!=len(projects):
+        return ['missing or duplicate projects'],warnings
+    expected=stable(VERSION,analysis['rules'],[(p['name'],p['repository'],p['snapshots']) for p in projects])
+    if analysis.get('analysis_id')!=expected:
+        errors.append('analysis snapshot identity mismatch')
+    if review.get('analysis_id')!=analysis.get('analysis_id'):
+        errors.append('review belongs to a different analysis')
+    from test_points import PURPOSES, validate_cases
+    try:
+        validate_cases(cases,analysis)
+    except (ValueError,TypeError,KeyError) as exc:
+        return errors+['invalid direct test cases: '+str(exc)],warnings
+    facts={fact['id']:(project['name'],fact) for project in projects for fact in project.get('facts',[])}
+    evidence={};duplicate_evidence=set()
+    for row in context:
+        identifier=row.get('id')
+        if not identifier:continue
+        if identifier in evidence:duplicate_evidence.add(identifier)
+        evidence[identifier]=row
+    referenced_facts=set()
+    referenced_evidence=set()
+    for purpose in PURPOSES:
+        for case in cases.get('purpose_cases',{}).get(purpose,[]):
+            referenced_facts.update(case.get('fact_ids') or [])
+            referenced_evidence.update(case.get('evidence_ids') or [])
+    for identifier in sorted(referenced_facts):
+        if identifier not in facts:
+            errors.append('unknown referenced fact: '+identifier)
+            continue
+        project_name,fact=facts[identifier]
+        expected_fact=stable(project_name,fact['kind'],fact['data'],fact.get('evidence_ids',[]))
+        if identifier!=expected_fact:
+            errors.append('referenced fact identity mismatch: '+identifier)
+        for ref in set(fact.get('evidence_ids',[])) & referenced_evidence:
+            record=evidence.get(ref)
+            if record and record.get('project')!=project_name:
+                errors.append('referenced evidence project mismatch: '+ref)
+    for identifier in sorted(referenced_evidence):
+        if identifier not in evidence:
+            errors.append('unknown referenced evidence: '+identifier)
+        elif identifier in duplicate_evidence:
+            errors.append('duplicate referenced evidence id: '+identifier)
+    allowed_evidence={identifier for fact_id in referenced_facts if fact_id in facts
+                      for identifier in facts[fact_id][1].get('evidence_ids',[])}
+    if not referenced_evidence <= allowed_evidence:
+        errors.append('referenced evidence is not attached to the referenced facts')
+    for project in projects:
+        errors += ['snapshot failure: '+e for e in project.get('hard_errors',[])]
+        if set(project.get('snapshots',{}))!={'baseline','result'}:
+            errors.append('missing snapshots for '+project['name'])
+            continue
+        if verify_sources:
+            records=[evidence[identifier] for identifier in sorted(referenced_evidence)
+                     if identifier in evidence and evidence[identifier].get('project')==project['name']]
+            if records:
+                try:
+                    errors+=verify_evidence(project,records)
+                except (ValueError,OSError,KeyError) as exc:
+                    errors.append('cannot verify referenced snapshot sources: '+str(exc))
+    try:
+        normalized=_normalize_validated(cases)
+        if not any(normalized['purposes'].values()):
+            warnings.append('No test cases were exported; confirm the selected scope truly requires none.')
+    except (ValueError,TypeError,KeyError) as exc:
+        errors.append('invalid cases: '+str(exc))
+    warnings.append('Only evidence referenced by final direct cases was source-verified; unselected analysis facts are not coverage claims.')
+    warnings.append('Static evidence does not prove test execution, runtime binding or business correctness.')
+    return errors,warnings
+
+
 def validate(analysis,context,review,cases,verify_sources=True):
+    if cases.get('schema_version')==3:
+        return validate_direct_delivery(analysis,context,review,cases,verify_sources)
     errors=[];warnings=[]
     if type(analysis.get('schema_version'))!=int or analysis['schema_version']!=1 or analysis.get('analyzer_version')!=VERSION:
         return ['unsupported analysis schema/analyzer version'],warnings

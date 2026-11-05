@@ -23,11 +23,11 @@ def validate_scope_data(analysis, review, cases):
     for reviewed in review.get('projects', []):
         normal = reviewed.get('normal_flow_review') or {}
         groups = normal.get('groups') or []
-        if not groups:
-            continue
-        scope_found = True
         fact_ids = set(normal.get('supporting_fact_ids') or [])
         fact_ids.update(normal.get('visible_fact_ids') or [])
+        if not groups and not fact_ids:
+            continue
+        scope_found = True
         allowed_evidence.update(normal.get('evidence_ids') or [])
         for group in groups:
             fact_ids.update(group.get('fact_ids') or [])
@@ -54,6 +54,15 @@ def validate_scope_data(analysis, review, cases):
 
     if not scope_found:
         raise ValueError('fast10 review has no selected normal-flow scope')
+
+    if cases.get('schema_version')==3:
+        for purpose in PURPOSES:
+            for case in cases.get('purpose_cases', {}).get(purpose, []):
+                if not set(case.get('fact_ids') or []) <= allowed_facts:
+                    raise ValueError('scope case references facts outside fast10 selection: ' + str(case.get('case_id')))
+                if not set(case.get('evidence_ids') or []) <= allowed_evidence:
+                    raise ValueError('scope case references evidence outside fast10 selection: ' + str(case.get('case_id')))
+        return True
 
     for purpose in PURPOSES:
         for case in cases.get('purpose_cases', {}).get(purpose, []):

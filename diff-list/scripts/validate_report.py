@@ -212,7 +212,11 @@ def main(argv=None):
         if a.scope_only:
             from scope_validation import validate_scope_files
             validate_scope_files(a.analysis,a.review,a.cases)
-            warnings.append('仅校验快审选定范围；未执行全量覆盖闭环校验')
+            if case_data.get('schema_version')==3:
+                from validate_analysis import validate_files
+                source_errors,source_warnings=validate_files(a.analysis,a.review,a.cases)
+                errors.extend(source_errors);warnings.extend(source_warnings)
+            warnings.append('仅校验快审选定范围；未展开远距离调用覆盖')
             errors.extend(validate_case_counts(candidate_text,case_data,analysis))
         else:
             from validate_analysis import validate_files

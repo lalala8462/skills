@@ -71,7 +71,7 @@ def source_contract(item,facts):
             alternatives=[[dict(subject=role(condition['expression']),operator='eq',value=scalar(condition['label']))]]
     elif dimension=='argument_source':
         before,after=role(data['before']),role(data['after'])
-        variation=condition['variation']
+        variation=condition.get('variation')
         if variation=='source_values_differ':alternatives=[[dict(subject=before,operator='ne',other=after)]]
         if variation=='request_value_absent':alternatives=[[dict(subject=before,operator='missing')]]
         if variation=='record_value_empty':
