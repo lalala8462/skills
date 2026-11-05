@@ -111,7 +111,7 @@ def compose(repo, selected, capture_config=False,
                         rename_map[target_name] = columns[1]
             result['config_sources'] = []
             result['config_skipped'] = []
-            from config_candidates import SUPPORTED_EXTENSIONS
+            from config_changes import SUPPORTED_EXTENSIONS
             names = [name for name in result['changed_files']
                      if name.lower().endswith(SUPPORTED_EXTENSIONS)]
             for name in names[max_config_files:]:
