@@ -133,7 +133,6 @@ class AnalysisTest(unittest.TestCase):
         self.assertEqual(change['data']['after'],'original.getOrderNo()')
         self.assertTrue(any('size()' in f['data']['condition'] for f in self.facts('branch')))
         self.assertTrue(any(f['data']['name']=='VALUES' for f in self.facts('constant_or_collection')))
-        self.assertTrue(self.facts('field_source_difference'))
         self.assertTrue(any('finalQuery' in f['data']['symbol'] for f in self.facts('return_override')))
         fields=self.facts('field_source')
         self.assertTrue(any('findOrigin' in str(f['data']['origins']) for f in fields if 'notifyResult' in f['data']['symbol']))
@@ -157,22 +156,20 @@ class AnalysisTest(unittest.TestCase):
         self.assertFalse(any('/src/test/' in c.get('path','') for c in project['candidates']))
         self.assertFalse(any('PayTest#added' in str(row) or 'NewTest#' in str(row) for row in project['history']))
 
-    def test_disconnected_same_label_is_retained_without_graph_expansion(self):
+    def test_disconnected_same_label_does_not_expand_review_scope(self):
         production='package labels; class Payload { void setZebraCode(String v){} } class Handler { void run(Payload p){ p.setZebraCode("old"); } }'
         other='package labels; class OtherPayload { void setZebraCode(String v){} } class Other { void write(OtherPayload p){ p.setZebraCode("other"); } } class Same { void write(Payload p){ p.setZebraCode("same"); } }'
         commit(self.source,{'label/src/main/java/labels/Handler.java':production,
                             'label/src/main/java/labels/Other.java':other},'label baseline')
         head=commit(self.source,{'label/src/main/java/labels/Handler.java':production.replace('"old"','"new"')},'label change')
         result,_=self.analyze([head]);project=result['projects'][0]
-        self.assertTrue(any(c['symbol']=='labels.Other#write(OtherPayload)' and c['label']=='ZebraCode'
-                            for c in project['field_label_candidates']))
-        self.assertFalse(any(o['assertion']['kind']=='review_field_label_candidates' for o in project['obligations']))
+        self.assertEqual(project['field_label_candidates'],[])
         self.assertFalse(any(r['source']=='labels.Other#write(OtherPayload)' for r in project['relations']))
-        self.assertTrue(any(r['source']=='labels.Same#write(Payload)' for r in project['relations']))
+        self.assertFalse(any(r['source']=='labels.Same#write(Payload)' for r in project['relations']))
         self.assertTrue(any(o['dimension']=='changed_behavior' and 'labels.Handler#run' in str(o['condition'])
                             for o in project['obligations']))
 
-    def test_call_chain_map_source_difference_requires_binding_review(self):
+    def test_call_chain_map_source_difference_does_not_create_cross_method_review(self):
         source='''package mapchain; import java.util.Map;
 class Handler {
  void changed(Map<String,String> m,String x,String y){m.put("orderNo",x);m.putIfAbsent("refundNo",x);m.putIfAbsent("same",x);m.put("onlyChanged",x);}
@@ -183,18 +180,10 @@ class Handler {
         after=source.replace('m.put("orderNo",x);','m.put("orderNo",y);',1).replace('m.putIfAbsent("refundNo",x);','m.putIfAbsent("refundNo",y);',1)
         head=commit(self.source,{'map/src/main/java/mapchain/Handler.java':after},'map change')
         result,_=self.analyze([head]);project=result['projects'][0]
-        candidates=[f for f in project['facts'] if f['kind']=='field_source_binding_candidate']
-        self.assertEqual({f['data']['field'] for f in candidates},{'orderNo','refundNo'})
-        candidate=next(f for f in candidates if f['data']['field']=='orderNo')
-        self.assertEqual(candidate['classification'],'risk_candidate')
-        self.assertEqual(candidate['data']['reason'],'receiver_binding_unconfirmed')
-        symbols=[s['symbol'] for s in candidate['data']['sources']]
-        self.assertEqual(len(symbols),2)
-        self.assertTrue(any('#changed(' in s for s in symbols))
-        self.assertTrue(any('#caller(' in s for s in symbols))
-        self.assertFalse(any('#unrelated(' in s for s in symbols))
-        self.assertTrue(any(o['assertion']['kind']=='review_field_source_binding' and candidate['id'] in o['fact_ids']
-                            for o in project['obligations']))
+        self.assertFalse(any(f['kind'] in ('field_source_difference','field_source_binding_candidate')
+                             for f in project['facts']))
+        self.assertFalse(any(o['assertion'].get('kind') in ('compare_output_sources','review_field_source_binding')
+                             for o in project['obligations']))
 
     def test_snapshot_ignores_unselected_commit(self):
         first=commit(self.source,{'one.txt':'selected'},'first')
@@ -399,74 +388,51 @@ class Handler {
             '--analysis',str(out/'analysis.json'),'--review',str(out/'review.json')]),0)
         self.assertTrue(target.is_file())
 
-    def test_fast10_review_caps_method_groups_and_merges_repeated_bindings(self):
+    def test_fast10_review_uses_net_changes_and_direct_relations_without_caps(self):
         from analysis_engine import VERSION
-        from review_workbench import fast10_view,grouped
-        facts=[];obligations=[]
+        from review_workbench import fast10_view
+        facts=[];relations=[]
         for index in range(12):
             symbol='sample.service.RefundService#run{}()'.format(index)
-            name='queryById' if index<5 else 'queryById{}'.format(index)
-            call=dict(name=name,receiver='dao',expression='dao.{}(value{})'.format(name,index),
-                      arguments=['value{}'.format(index)])
-            fact_id='fact-{}'.format(index);obligation_id='obligation-{}'.format(index)
-            facts.append(dict(id=fact_id,kind='unresolved_relation',data=dict(symbol=symbol,
-                call=call,receiver_type='sample.StoreDao',reason='external_target',candidates=['sample.StoreDao#queryById(String)']),
-                evidence_ids=[]))
-            obligations.append(dict(id=obligation_id,fact_ids=[fact_id],evidence_ids=[],
-                dimension='review_relation',condition=dict(expression=call['expression']),
-                assertion=dict(kind='review_binding'),required=True))
-            branch_fact_id='branch-fact-{}'.format(index)
-            branch_obligation_id='branch-obligation-{}'.format(index)
-            facts.append(dict(id=branch_fact_id,kind='branch',data=dict(symbol=symbol,condition='status == {}'
-                .format(index)),evidence_ids=[]))
-            obligations.append(dict(id=branch_obligation_id,fact_ids=[branch_fact_id],evidence_ids=[],
-                dimension='branch',condition=dict(expression='status == {}'.format(index)),
-                assertion=dict(kind='review_branch'),required=True))
+            fact_id='change-fact-{}'.format(index)
+            facts.append(dict(id=fact_id,kind='method_change',classification='source_fact',
+                              data=dict(symbol=symbol,change='modified'),evidence_ids=[]))
+            relations.append(dict(id='relation-{}'.format(index),side='result',source=symbol,
+                                  targets=['sample.StoreDao#queryById(String)'],status='source_resolved',
+                                  reason='source_resolved',receiver_type='sample.StoreDao',field=None,
+                                  evidence_ids=[],site=dict(name='queryById',receiver='dao',
+                                  expression='dao.queryById(value{})'.format(index),arguments=['value{}'.format(index)])))
         analysis=dict(schema_version=1,analyzer_version=VERSION,analysis_id='fast10-test',
-            projects=[dict(name='sample',facts=facts,relations=[],obligations=obligations,
-                           boundaries=[],field_label_candidates=[])])
-        project=grouped(analysis)['projects'][0]
-        self.assertEqual(project['fast10_review']['time_budget_minutes'],10)
-        self.assertEqual(project['fast10_review']['max_method_groups'],8)
-        self.assertEqual(project['fast10_review']['max_relation_groups'],4)
-        self.assertEqual(project['fast10_review']['deferred_method_group_count'],4)
-        self.assertEqual(project['fast10_review']['queued_method_group_count'],8)
-        self.assertLessEqual(project['fast10_review']['queued_obligation_count'],20)
-        self.assertEqual(len(project['relation_review_batches']),1)
-        self.assertEqual(len(project['relation_review_batches'][0]['members']),5)
+            projects=[dict(name='sample',facts=facts,relations=relations,obligations=[],
+                           boundaries=[],field_label_candidates=[],hard_errors=[],scope_errors=[],
+                           critical_evidence_omissions=[],stats={})])
         compact=fast10_view(analysis)['projects'][0]
-        self.assertNotIn('groups',compact)
-        self.assertNotIn('relation_review_groups',compact)
-        self.assertNotIn('relation_review_batches',compact)
+        self.assertEqual(compact['fast10_review']['changed_method_count'],12)
+        self.assertEqual(compact['fast10_review']['primary_change_fact_count'],12)
+        self.assertEqual(compact['fast10_review']['direct_relation_count'],12)
+        self.assertNotIn('max_method_groups',compact['fast10_review'])
         flow_review=compact['normal_flow_review']
         self.assertEqual(flow_review['group_count'],1)
         self.assertEqual(flow_review['groups'][0]['name'],'退款主流程')
-        self.assertLessEqual(flow_review['groups'][0]['method_count'],8)
-        self.assertEqual(flow_review['supporting_obligation_count'] +
-                         flow_review['unassigned_relation_member_count'],
-                         project['fast10_review']['queued_obligation_count'])
-        self.assertLess(flow_review['supporting_obligation_count'],
-                        flow_review['total_obligation_count'])
-        self.assertEqual(set(flow_review['visible_fact_ids']),{fact['id'] for fact in compact['facts']})
-        self.assertEqual(flow_review['visible_fact_count'],len(compact['facts']))
-        self.assertTrue(all(fact['kind']!='unresolved_relation' for fact in compact['facts']))
-        self.assertGreater(flow_review['groups'][0]['relation_group_count'],0)
-        self.assertEqual(compact['fast10_review']['normal_flow_group_count'],1)
+        self.assertEqual(flow_review['groups'][0]['method_count'],12)
+        self.assertEqual(set(flow_review['visible_fact_ids']),{fact['id'] for fact in facts})
+        self.assertEqual(len(compact['direct_relations']),12)
 
-    def test_fast10_prioritizes_changed_payment_method_before_enum_helper(self):
+    def test_fast10_business_names_do_not_filter_net_changes(self):
         from analysis_engine import VERSION
-        from review_workbench import grouped
-        facts=[];obligations=[]
+        from review_workbench import fast10_view
+        facts=[]
         for index,symbol in enumerate(('sample.enums.ATypeEnum#mapDao()','sample.ZPayService#aggregatePay()')):
-            fact_id='change-fact-{}'.format(index);obligation_id='change-obligation-{}'.format(index)
-            facts.append(dict(id=fact_id,kind='method_change',data=dict(symbol=symbol,change='added'),evidence_ids=[]))
-            obligations.append(dict(id=obligation_id,fact_ids=[fact_id],evidence_ids=[],dimension='changed_behavior',
-                condition=dict(symbol=symbol),assertion=dict(kind='review_change'),required=True))
+            facts.append(dict(id='change-fact-{}'.format(index),kind='method_change',classification='source_fact',
+                              data=dict(symbol=symbol,change='added'),evidence_ids=[]))
         analysis=dict(schema_version=1,analyzer_version=VERSION,analysis_id='fast10-priority-test',
-            projects=[dict(name='sample',facts=facts,relations=[],obligations=obligations,
-                           boundaries=[],field_label_candidates=[])])
-        queued=grouped(analysis)['projects'][0]['fast10_review']['queued_method_groups']
-        self.assertEqual(queued[0]['symbol'],'sample.ZPayService#aggregatePay()')
+            projects=[dict(name='sample',facts=facts,relations=[],obligations=[],
+                           boundaries=[],field_label_candidates=[],hard_errors=[],scope_errors=[],
+                           critical_evidence_omissions=[],stats={})])
+        compact=fast10_view(analysis)['projects'][0]
+        methods={method for group in compact['normal_flow_review']['groups'] for method in group['methods']}
+        self.assertEqual(methods,{'sample.enums.ATypeEnum#mapDao()','sample.ZPayService#aggregatePay()'})
+        self.assertEqual(compact['fast10_review']['changed_method_count'],2)
 
     def delivery_report(self, out, data):
         from test_points import PURPOSES,PURPOSE_NAMES
@@ -958,7 +924,7 @@ class RefundService {Helper helper;String refundStatus(){return helper.getValue(
         graph=self.graph({'cap':'class A{void run(){}}'})
         engine=ProjectAnalysis('p','unused',graph.index,graph.index,COMMON_RULES,
                                dict(DEFAULT_LIMITS,depth=9,methods=500))
-        self.assertEqual(engine.limits['depth'],2)
+        self.assertEqual(engine.limits['depth'],1)
         self.assertEqual(engine.limits['methods'],100)
 
     def test_builder_field_binding_is_covered_as_field_source_not_relation_review(self):
