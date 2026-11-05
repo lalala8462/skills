@@ -331,7 +331,7 @@ class Handler {
                                   reason='source_resolved',receiver_type='sample.StoreDao',field=None,
                                   evidence_ids=[],site=dict(name='queryById',receiver='dao',
                                   expression='dao.queryById(value{})'.format(index),arguments=['value{}'.format(index)])))
-        analysis=dict(schema_version=1,analyzer_version=VERSION,analysis_id='fast10-test',
+        analysis=dict(schema_version=2,analyzer_version=VERSION,analysis_id='fast10-test',
             projects=[dict(name='sample',facts=facts,relations=relations,hard_errors=[],stats={})])
         compact=fast10_view(analysis)['projects'][0]
         self.assertEqual(compact['fast10_review']['changed_symbol_count'],12)
@@ -364,7 +364,7 @@ class Handler {
                         reason='source_resolved',receiver_type='sample.Store',field=None,
                         evidence_ids=['method-evidence'],site=dict(name='list',receiver='store',
                         expression='store.list(orderNo)',arguments=['orderNo']))]
-        analysis=dict(schema_version=1,analyzer_version=VERSION,analysis_id='fast10-supporting-test',
+        analysis=dict(schema_version=2,analyzer_version=VERSION,analysis_id='fast10-supporting-test',
             projects=[dict(name='sample',facts=facts,relations=relations,hard_errors=[],stats={})])
         compact=fast10_view(analysis)['projects'][0]
         kinds={fact['kind'] for fact in compact['facts']}
@@ -379,7 +379,7 @@ class Handler {
         for index,symbol in enumerate(('sample.enums.ATypeEnum#mapDao()','sample.ZPayService#aggregatePay()')):
             facts.append(dict(id='change-fact-{}'.format(index),kind='method_change',classification='source_fact',
                               data=dict(symbol=symbol,change='added'),evidence_ids=[]))
-        analysis=dict(schema_version=1,analyzer_version=VERSION,analysis_id='fast10-priority-test',
+        analysis=dict(schema_version=2,analyzer_version=VERSION,analysis_id='fast10-priority-test',
             projects=[dict(name='sample',facts=facts,relations=[],hard_errors=[],stats={})])
         compact=fast10_view(analysis)['projects'][0]
         methods={method for group in compact['normal_flow_review']['groups'] for method in group['methods']}
