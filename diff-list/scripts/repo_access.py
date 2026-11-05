@@ -83,10 +83,8 @@ def repository_name(value):
     return parse_repo_url(value)[2]
 
 
-def prepare_repo(url, cache_dir=None):
+def prepare_repo(url):
     """Create a fresh isolated clone without checking out repository files."""
-    if cache_dir is not None:
-        raise ValueError('--cache-dir is no longer supported; isolated runs use the dedicated directory')
     local_root = local_repo_path(url)
     if local_root is not None:
         repo = _local_repo_name(local_root)
