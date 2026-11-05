@@ -385,7 +385,8 @@ def fast10_view(analysis, context=None):
     if analysis.get('schema_version') != 1 or analysis.get('analyzer_version') != VERSION:
         raise ValueError('unsupported analysis schema/analyzer version')
     compact_projects=[]
-    primary_kinds={'method_change','field_change','class_binding_change','configuration','argument_source_change'}
+    primary_kinds={'method_change','field_change','class_binding_change','configuration','configuration_file_change',
+                   'configuration_parse_boundary','argument_source_change','history_boundary'}
     supporting_kinds={'branch','switch_branch','membership_filter','return_sources','return_override','field_source',
                       'flow_boundary','mapper_statement','unresolved_relation','annotation_binding_unconfigured',
                       'entrypoint','constant_or_collection'}
@@ -448,7 +449,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--analysis', required=True)
     parser.add_argument('--catalog', help='已编译测试点目录；提供时生成未完成用例骨架')
-    parser.add_argument('--fast10', action='store_true', help='输出限额内的快审队列，不附带全量复核候选')
+    parser.add_argument('--fast10', action='store_true', help='输出本次净变化、一层直接关系及相关事实')
     parser.add_argument('--output', required=True)
     args = parser.parse_args(argv)
     try:
@@ -470,7 +471,7 @@ def main(argv=None):
             out.write('\n')
         label='未完成用例骨架' if args.catalog else '10 分钟快审视图' if args.fast10 else '分组复核视图'
         if args.fast10:
-            print('已生成{}；请按主流程候选核对关键出口和配置前提。'.format(label))
+            print('已生成{}；请按净变化和一层直接关系核对业务影响与配置前提。'.format(label))
         else:
             print('已生成{}；仍需人工复核和填写。'.format(label))
         return 0
