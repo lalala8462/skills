@@ -234,7 +234,7 @@ def analyze_project(spec,rules,limits,parser,cache):
     base=dict(name=name,repository=spec['repo'],analysis_clone=str(root),git=clean(evidence),
               history=timeline,method_timeline=group_method_timeline(timeline),analyzer_version=VERSION)
     if effect['status']=='review_required':
-        base.update(snapshots={},facts=[],relations=[],hard_errors=[effect['reason']],stats={})
+        base.update(snapshots={},change_seeds=[],facts=[],relations=[],hard_errors=[effect['reason']],stats={})
         return base,[],None
     before=build_index(root,effect['baseline_tree'],limits,parser,cache)
     after=build_index(root,effect['result_tree'],limits,parser,cache)
