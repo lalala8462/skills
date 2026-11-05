@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from analysis_engine import COMMON_RULES, VERSION, ProjectAnalysis, clean, redact
 from collect_git import collect, read_blob
-from config_candidates import extract_config_candidates
+from config_changes import extract_config_changes
 from repo_access import prepare_repo, repository_name
 from source_index import DEFAULT_LIMITS, JavaParser, build_index, git_bytes, stable, source_lines
 
@@ -93,7 +93,7 @@ def analyze_project(spec,rules,limits,parser,cache):
     changed_java_paths={path for path in changed_paths if path.lower().endswith('.java')}
     engine=ProjectAnalysis(name,root,before,after,rules,limits)
     result,context=engine.run()
-    configs,config_errors=extract_config_candidates(config_pairs)
+    configs,config_errors=extract_config_changes(config_pairs)
     result.update(base)
     scope_errors=result.pop('scope_errors',[])
     evidence_omissions=result.pop('critical_evidence_omissions',[])
