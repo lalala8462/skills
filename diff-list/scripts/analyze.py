@@ -33,7 +33,7 @@ def load_rules(filename=None):
     limits=dict(DEFAULT_LIMITS,**rules['limits'])
     if set(limits)!=set(DEFAULT_LIMITS) or any(type(v)!=int or v<1 for v in limits.values()):
         raise ValueError('Unknown limits or nonpositive limit')
-    limits['depth']=min(limits['depth'],2)
+    limits['depth']=min(limits['depth'],1)
     limits['methods']=min(limits['methods'],100)
     if any(not isinstance(k,str) or not isinstance(v,str) for k,v in rules['config_scopes'].items()):
         raise ValueError('Config scope rules must map class names to scope strings')
