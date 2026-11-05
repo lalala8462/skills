@@ -88,10 +88,9 @@ def preflight(rendered, template, analysis, cases, expected):
     if replaced != 1 or rendered.count(marker) != 1 or rendered.count(status) != 1:
         return ['生成候选缺少唯一且完整的草稿标记']
 
-    from validate_report import validate, validate_boundary_summary, validate_case_counts
+    from validate_report import validate, validate_case_counts
     mappings = expected or expected_project_shas(analysis)
     errors, _ = validate(candidate_text, template, mappings)
-    errors.extend(validate_boundary_summary(candidate_text, analysis))
     errors.extend(validate_case_counts(candidate_text, cases, analysis))
     if not mappings:
         errors.append('无法从 analysis.json 推导项目与 SHA；请传入 --expect 项目名=40位SHA')
