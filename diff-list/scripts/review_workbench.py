@@ -403,6 +403,11 @@ def fast10_view(analysis, context=None):
                           if relation.get('source') in changed_symbols
                           or any(target in changed_symbols for target in relation.get('targets',[]))]
         relation_evidence={identifier for relation in direct_relations for identifier in relation.get('evidence_ids',[])}
+        direct_symbols=set(changed_symbols)
+        for relation in direct_relations:
+            direct_symbols.add(relation.get('source'))
+            direct_symbols.update(relation.get('targets') or [])
+        direct_symbols.discard(None)
         visible=[]
         for fact in facts:
             if fact in primary:
@@ -411,7 +416,9 @@ def fast10_view(analysis, context=None):
                 continue
             data=fact.get('data',{})
             symbol=data.get('symbol')
-            if symbol in changed_symbols or set(fact.get('evidence_ids',[])) & (primary_evidence|relation_evidence):
+            linked_symbols=set(data.get('linked_symbols') or [])
+            if (symbol in direct_symbols or linked_symbols & direct_symbols
+                    or set(fact.get('evidence_ids',[])) & (primary_evidence|relation_evidence)):
                 visible.append(fact)
         visible_ids={fact['id'] for fact in visible}
         evidence_ids=sorted({identifier for fact in visible for identifier in fact.get('evidence_ids',[])}
