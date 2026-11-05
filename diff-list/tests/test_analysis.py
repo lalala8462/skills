@@ -152,7 +152,7 @@ class AnalysisTest(unittest.TestCase):
         self.assertTrue(any(s=='seed.Pay#run()' for s in symbols))
         self.assertFalse(any('PayTest#added' in s or 'NewTest#' in s for s in symbols))
         self.assertFalse(any('/src/test/' in e['path'] for e in context))
-        self.assertFalse(any('TEST_ONLY' in str(o['condition']) for o in project['obligations']))
+        self.assertFalse(any('TEST_ONLY' in str(f.get('data')) for f in project['facts']))
         self.assertFalse(any('/src/test/' in c.get('path','') for c in project['candidates']))
         self.assertFalse(any('PayTest#added' in str(row) or 'NewTest#' in str(row) for row in project['history']))
 
@@ -163,11 +163,11 @@ class AnalysisTest(unittest.TestCase):
                             'label/src/main/java/labels/Other.java':other},'label baseline')
         head=commit(self.source,{'label/src/main/java/labels/Handler.java':production.replace('"old"','"new"')},'label change')
         result,_=self.analyze([head]);project=result['projects'][0]
-        self.assertEqual(project['field_label_candidates'],[])
+        self.assertNotIn('field_label_candidates',project)
         self.assertFalse(any(r['source']=='labels.Other#write(OtherPayload)' for r in project['relations']))
         self.assertFalse(any(r['source']=='labels.Same#write(Payload)' for r in project['relations']))
-        self.assertTrue(any(o['dimension']=='changed_behavior' and 'labels.Handler#run' in str(o['condition'])
-                            for o in project['obligations']))
+        self.assertTrue(any(f['kind']=='method_change' and 'labels.Handler#run' in str(f['data'])
+                            for f in project['facts']))
 
     def test_call_chain_map_source_difference_does_not_create_cross_method_review(self):
         source='''package mapchain; import java.util.Map;
@@ -182,8 +182,6 @@ class Handler {
         result,_=self.analyze([head]);project=result['projects'][0]
         self.assertFalse(any(f['kind'] in ('field_source_difference','field_source_binding_candidate')
                              for f in project['facts']))
-        self.assertFalse(any(o['assertion'].get('kind') in ('compare_output_sources','review_field_source_binding')
-                             for o in project['obligations']))
 
     def test_snapshot_ignores_unselected_commit(self):
         first=commit(self.source,{'one.txt':'selected'},'first')
@@ -208,7 +206,7 @@ class Handler {
     def test_repeat_is_stable(self):
         other,context=self.analyze([self.after])
         a,b=self.analysis['projects'][0],other['projects'][0]
-        for key in ('facts','relations','obligations','boundaries','stats','snapshots'):
+        for key in ('facts','relations','stats','snapshots'):
             self.assertEqual(a[key],b[key],key)
         self.assertEqual(self.context,context)
 
@@ -564,12 +562,12 @@ class Child extends Parent{int run(int limit){return limit+this.limit;} int dire
         self.assertTrue(any(r['source']=='p.Child#direct()' and r['field']=='p.Parent#limit' for r in reads))
         self.assertEqual(len([r for r in reads if r['field']=='q.Constants#MAX']),2)
 
-    def test_field_without_resolvable_consumers_still_requires_coverage(self):
+    def test_field_without_resolvable_consumers_still_emits_change_fact(self):
         before=self.graph({'field':'class Flag{int enabled=0;}'}).index
         after=self.graph({'field':'class Flag{int enabled=1;}'}).index
         engine=ProjectAnalysis('sample','unused',before,after,COMMON_RULES,DEFAULT_LIMITS)
         engine.changed()
-        self.assertTrue(any(o['dimension']=='field_behavior' for o in engine.obligations))
+        self.assertTrue(any(f['kind']=='field_change' and f['data']['field']=='enabled' for f in engine.facts))
 
     def test_switch_merges_origins_and_preserves_case_guards(self):
         graph=self.graph({'switch':'''class Sample{void setNo(String n){}
@@ -581,7 +579,8 @@ void run(int kind,String first,String second){String value;switch(kind){case 1:v
         self.assertEqual([r['guards'][0]['label'] for r in assignments],['1','default'])
         engine=ProjectAnalysis('sample','unused',copy.deepcopy(graph.index),copy.deepcopy(graph.index),COMMON_RULES,DEFAULT_LIMITS)
         engine.local_facts('result',{call['method']},{call['method']})
-        self.assertEqual({o['condition']['label'] for o in engine.obligations if o['dimension']=='switch_case'},{'1','default'})
+        fact=next(f for f in engine.facts if f['kind']=='switch_branch')
+        self.assertEqual(set(fact['data']['cases']),{'1','default'})
 
     def test_switch_internal_use_and_later_overwrite(self):
         graph=self.graph({'switch':'''class Sample{void take(String s){} void run(int kind,String a,String b,String c){
