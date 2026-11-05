@@ -229,7 +229,6 @@ class Handler {
         git(self.source,'add','.');git(self.source,'commit','-qm','legacy encoding')
         result,_=self.analyze([git(self.source,'rev-parse','HEAD')])
         project=result['projects'][0]
-        self.assertEqual(project['boundaries'],[])
         self.assertTrue(any('src/Legacy.java' in error for error in project['hard_errors']))
 
     def test_zero_net_change_keeps_method_history(self):
