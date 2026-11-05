@@ -373,14 +373,14 @@ class DiffListTest(unittest.TestCase):
 
 class AdditionalRegressionTests(unittest.TestCase):
     def test_config_properties_yaml_xml_changes_and_secret_mask(self):
-        config = module('config_candidates')
+        config = module('config_changes')
         pairs = [
           {'path':'profile/test.properties','before':'refund.retry.enabled=false\nsecret.token=abc123\n','after':'refund.retry.enabled=true\nsecret.token=def456\n'},
           {'path':'app.yml','before':'payment:\n  retry: false\n','after':'payment:\n  retry: true\n'},
           {'path':'app.xml','before':'<beans><property name="retry" value="0"/></beans>',
            'after':'<beans><property name="retry" value="1"/></beans>'},
         ]
-        findings, skipped = config.extract_config_candidates(pairs)
+        findings, skipped = config.extract_config_changes(pairs)
         self.assertEqual(skipped, [])
         self.assertEqual(len(findings),4)
         self.assertTrue(any(x['key']=='refund.retry.enabled' and x['after']=='true' for x in findings))
@@ -390,8 +390,8 @@ class AdditionalRegressionTests(unittest.TestCase):
         self.assertNotIn('abc123',str(findings))
 
     def test_config_unknown_yaml_is_skipped_not_silent(self):
-        config = module('config_candidates')
-        findings, skipped = config.extract_config_candidates([{'path':'app.yml',
+        config = module('config_changes')
+        findings, skipped = config.extract_config_changes([{'path':'app.yml',
           'before':'urls:\n - http://localhost\n', 'after':'urls:\n - http://example.com\n'}])
         self.assertEqual(findings,[])
         self.assertEqual(len(skipped),1)
@@ -399,8 +399,8 @@ class AdditionalRegressionTests(unittest.TestCase):
         self.assertEqual(skipped[0]['kind'],'non_runtime_yaml')
 
     def test_runtime_yaml_and_non_config_xml_review_classification(self):
-        config = module('config_candidates')
-        findings, skipped = config.extract_config_candidates([
+        config = module('config_changes')
+        findings, skipped = config.extract_config_changes([
             {'path':'src/main/resources/application.yml',
              'before':'urls:\n - http://localhost\n',
              'after':'urls:\n - http://example.com\n'},
@@ -416,8 +416,8 @@ class AdditionalRegressionTests(unittest.TestCase):
         self.assertEqual(by_path['src/main/resources/mapper/OrderMapper.xml']['kind'],'not_config_mapping')
 
     def test_xml_config_mapping_add_remove_is_not_ignored(self):
-        config = module('config_candidates')
-        removed, skipped = config.extract_config_candidates([{
+        config = module('config_changes')
+        removed, skipped = config.extract_config_changes([{
             'path':'src/main/resources/applicationContext.xml',
             'before':'<beans><property name="retry" value="1"/></beans>',
             'after':'<beans></beans>'
@@ -429,7 +429,7 @@ class AdditionalRegressionTests(unittest.TestCase):
         self.assertEqual(removed[0]['before'],'1')
         self.assertIsNone(removed[0]['after'])
 
-        added, skipped = config.extract_config_candidates([{
+        added, skipped = config.extract_config_changes([{
             'path':'src/main/resources/applicationContext.xml',
             'before':'<beans></beans>',
             'after':'<beans><property name="retry" value="1"/></beans>'
@@ -457,7 +457,7 @@ class AdditionalRegressionTests(unittest.TestCase):
                 result=collector.collect({'name':'demo','path':str(root),**selection},capture_config=True)
                 pairs=result['net_effect']['config_sources']
                 self.assertEqual(len(pairs),1)
-                findings,skipped=module('config_candidates').extract_config_candidates(pairs)
+                findings,skipped=module('config_changes').extract_config_changes(pairs)
                 self.assertEqual(skipped,[])
                 self.assertEqual(findings[0]['change'],'modified')
 
