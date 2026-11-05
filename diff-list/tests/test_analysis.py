@@ -390,6 +390,11 @@ class Handler {
         broken=copy.deepcopy(data);broken['purpose_cases']['acceptance'][0]['evidence_ids']=[]
         errors,_=validate(self.analysis,self.context,review,broken)
         self.assertTrue(any('requires referenced evidence' in error for error in errors))
+        tampered=copy.deepcopy(self.analysis)
+        target=next(f for f in tampered['projects'][0]['facts'] if f['id']==fact['id'])
+        target['data']['change']='tampered'
+        errors,_=validate(tampered,self.context,review,data)
+        self.assertTrue(any('referenced fact identity mismatch' in error for error in errors))
 
     def test_weak_label_candidates_do_not_block_valid_delivery(self):
         from export_test_cases import main as export_main
@@ -439,6 +444,35 @@ class Handler {
         self.assertEqual(flow_review['groups'][0]['method_count'],12)
         self.assertEqual(set(flow_review['visible_fact_ids']),{fact['id'] for fact in facts})
         self.assertEqual(len(compact['direct_relations']),12)
+
+    def test_fast10_keeps_config_files_and_mapper_facts_without_scope_expansion(self):
+        from analysis_engine import VERSION
+        from review_workbench import fast10_view
+        changed='sample.Flow#run()';mapper='sample.Store#list(String)'
+        facts=[
+            dict(id='change',kind='method_change',classification='source_fact',
+                 data=dict(symbol=changed,change='modified'),evidence_ids=['method-evidence']),
+            dict(id='mapper',kind='mapper_statement',classification='source_fact',
+                 data=dict(side='result',namespace='sample.Store',name='list',statement='list',
+                           source='select * from records',dynamic=True,mappings=[],linked_symbols=[mapper]),
+                 evidence_ids=['mapper-evidence']),
+            dict(id='config',kind='configuration_file_change',classification='source_fact',
+                 data=dict(path='application.properties',key='feature.enabled',change='modified',
+                           before='false',after='true'),evidence_ids=['config-evidence'])
+        ]
+        relations=[dict(id='relation',side='result',source=changed,targets=[mapper],status='source_resolved',
+                        reason='source_resolved',receiver_type='sample.Store',field=None,
+                        evidence_ids=['method-evidence'],site=dict(name='list',receiver='store',
+                        expression='store.list(orderNo)',arguments=['orderNo']))]
+        analysis=dict(schema_version=1,analyzer_version=VERSION,analysis_id='fast10-supporting-test',
+            projects=[dict(name='sample',facts=facts,relations=relations,obligations=[],
+                           boundaries=[],field_label_candidates=[],hard_errors=[],scope_errors=[],
+                           critical_evidence_omissions=[],stats={})])
+        compact=fast10_view(analysis)['projects'][0]
+        kinds={fact['kind'] for fact in compact['facts']}
+        self.assertIn('configuration_file_change',kinds)
+        self.assertIn('mapper_statement',kinds)
+        self.assertEqual(compact['fast10_review']['direct_relation_count'],1)
 
     def test_fast10_business_names_do_not_filter_net_changes(self):
         from analysis_engine import VERSION
