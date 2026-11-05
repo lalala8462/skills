@@ -675,7 +675,7 @@ class ProjectAnalysis:
     def __init__(self, name, repo, before, after, rules, limits):
         self.name, self.repo, self.rules = name, str(repo), rules
         self.limits=dict(limits)
-        self.limits['depth']=min(self.limits['depth'],2)
+        self.limits['depth']=min(self.limits['depth'],1)
         self.limits['methods']=min(self.limits['methods'],100)
         self.graphs = dict(baseline=Graph(before, rules), result=Graph(after, rules))
         self.facts, self.obligations, self.context, self.relations = [], [], {}, []
@@ -980,11 +980,8 @@ class ProjectAnalysis:
             fact = self.fact('configuration', dict(before=summary(a), after=summary(b),
                                                   change='added' if not a else ('removed' if not b else 'retained_or_consumers_changed')), locations)
             if not a or not b or a['consumers'] != b['consumers']:
-                for flag in ('enabled', 'disabled'):
-                    self.obligation(fact, 'configuration_'+flag, dict(config=(b or a)['key'], mode=flag),
-                                    dict(kind='check_affected_outputs'))
-                if a and b and b['consumers']:
-                    self.obligation(fact, 'remaining_consumers', dict(config=b['key']), dict(kind='check_remaining_consumers'))
+                self.obligation(fact, 'configuration_change', dict(config=(b or a)['key']),
+                                dict(kind='check_affected_outputs'))
         return bindings
 
     def local_facts(self, side, symbols, required_symbols):
@@ -1014,27 +1011,10 @@ class ProjectAnalysis:
                             expression=row['expression'],origins=graph.origins(row['expression'],symbol,row['order']),guards=row['guards']),[(side,method)])
                         if fact:output.append(fact)
                 if row['kind'] == 'branch' and side == 'result' and symbol in required_symbols:
-                    direct=row['then'].strip().strip('{}').strip()
-                    errors = re.findall(r'^(?:return\s+(?:[\w.]+\.)?fail|throw\s+new\s+BizException)\(\s*("(?:\\.|[^"\\])*")\s*\);?$', direct)
-                    assertion = dict(kind='branch_observation', errors=[literal(s) for s in errors])
-                    fact = self.fact('branch', dict(symbol=symbol, condition=row['condition'],
-                                                   then=row['then'], otherwise=row['else']), [(side, method)])
-                    for value in (True, False):
-                        self.obligation(fact, 'branch', dict(expression=row['condition'], value=value),
-                                        assertion if value else dict(kind='alternate_branch'))
-                    if re.search(r'\.size\(\)\s*[!=<>]+\s*[01]',row['condition']):
-                        collections_read=sorted({r['receiver'] for r in rows if r['kind']=='call' and r['name']=='size'
-                            and compact(r['expression']) in compact(row['condition'])})
-                        for collection in collections_read:
-                            for count in ('zero','one','many'):
-                                self.obligation(fact,'cardinality',dict(expression=row['condition'],collection=collection,count=count),
-                                                dict(kind='check_selection_count'))
+                    self.fact('branch', dict(symbol=symbol, condition=row['condition'],
+                              then=row['then'], otherwise=row['else']), [(side, method)])
                 if row['kind']=='switch' and side=='result' and symbol in required_symbols:
-                    fact=self.fact('switch_branch',dict(symbol=symbol,expression=row['expression'],cases=row['cases']),[(side,method)])
-                    labels=[label for label in row['cases'] if label!='default']
-                    for label in labels+['default']:
-                        self.obligation(fact,'switch_case',dict(expression=row['expression'],label=label,labels=labels),
-                                        dict(kind='check_switch_branch'))
+                    self.fact('switch_branch',dict(symbol=symbol,expression=row['expression'],cases=row['cases']),[(side,method)])
                 if row['kind'] == 'call':
                     name, args = row['name'], row['arguments']
                     receiver=graph.variable_type(row['receiver'],symbol,row['order'])
@@ -1046,10 +1026,8 @@ class ProjectAnalysis:
                             target_type=target_type,common_declared_fields=common,status='convention_inferred',
                             limitation='Bean property convention; external fields and runtime accessors are not verified'),[(side,method)],'risk_candidate')
                     if side=='result' and symbol in required_symbols and name=='contains' and len(args)==1:
-                        membership=self.fact('membership_filter',dict(symbol=symbol,collection=row['receiver'],
-                                             member=args[0],usage=row['usage']),[(side,method)])
-                        for present in (True,False):
-                            self.obligation(membership,'membership',dict(collection=row['receiver'],present=present),dict(kind='check_filter_and_selection'))
+                        self.fact('membership_filter',dict(symbol=symbol,collection=row['receiver'],
+                                  member=args[0],usage=row['usage']),[(side,method)])
                     field = None
                     if name.startswith('set') and len(args) == 1:
                         field = name[3:4].lower()+name[4:]
@@ -1117,44 +1095,13 @@ class ProjectAnalysis:
                                           before_origins=old.origins(previous,symbol,a['order']),
                                           after_origins=new.origins(current,symbol,b['order'])),
                                          [('baseline',old.methods[symbol]),('result',new.methods[symbol])])
-                        for condition in ('source_values_differ', 'request_value_absent', 'record_value_empty'):
-                            self.obligation(fact, 'argument_source', dict(variation=condition),
-                                            dict(kind='verify_selected_argument', expression=current))
+                        self.obligation(fact, 'argument_source',
+                                        dict(symbol=symbol, call=key[0], argument_index=position),
+                                        dict(kind='verify_selected_argument', expression=current))
 
     def run(self):
         changed, fields = self.changed()
         selected = {side: self.traverse(side, changed) for side in self.graphs}
-        chain_symbols = set(selected['result'])
-        # 同名字段写入仅作为合同消费者候选，不冒充调用或业务语义绑定。
-        changed_labels=collections.defaultdict(set)
-        for symbol in changed:
-            old_calls={compact(r['expression']) for r in self.graphs['baseline'].events.get(symbol,[]) if r['kind']=='call'}
-            for row in self.graphs['result'].events.get(symbol,[]):
-                if row['kind']=='call' and compact(row['expression']) not in old_calls and row['name'].startswith('set') and len(row['arguments'])==1:
-                    receiver=self.graphs['result'].variable_type(row['receiver'],symbol,row['order'])
-                    changed_labels[row['name'][3:].casefold()].add(receiver)
-        label_candidates=[]
-        for side,graph in self.graphs.items():
-            for symbol in sorted(graph.methods):
-                if '/src/test/' in '/'+graph.methods[symbol]['path'].replace('\\','/'):
-                    continue
-                for row in graph.events[symbol]:
-                    if row['kind']!='call':continue
-                    label=row['name'][3:] if row['name'].startswith('set') and len(row['arguments'])==1 else None
-                    if row['name'] in ('put','putIfAbsent') and len(row['arguments'])>1:
-                        label=graph.constant_value(row['arguments'][0],row['owner'])
-                    if not isinstance(label,str) or label.casefold() not in changed_labels:continue
-                    receiver=graph.variable_type(row['receiver'],symbol,row['order'])
-                    matched=(receiver in graph.classes and receiver in changed_labels[label.casefold()])
-                    if symbol not in selected[side] and not matched:
-                        label_candidates.append(dict(side=side,symbol=symbol,path=graph.methods[symbol]['path'],
-                            label=label,receiver_type=receiver,reason='same_label_not_confirmed_connection'))
-                        continue
-                    if len(selected[side])>=self.limits['methods'] and symbol not in selected[side]:continue
-                    selected[side].setdefault(symbol,0)
-                    self.fact('field_contract_consumer',dict(side=side,symbol=symbol,label=label,
-                              reason='matching_field_label_not_business_binding'),[(side,graph.methods[symbol])],'risk_candidate')
-                    break
         required_symbols=set(changed)
         previous_calls={(e['source'],e['site']['name'],compact(e['site']['receiver']),tuple(compact(a) for a in e['site']['arguments'])) for e in self.graphs['baseline'].edges}
         for edge in self.graphs['result'].edges:
@@ -1190,18 +1137,18 @@ class ProjectAnalysis:
                     site['parameter_bindings']=[dict(parameter=param['name'],declared_type=param['type'],expression=arg,
                         origins=graph.origins(arg,edge['source'],edge['site']['order']))
                         for param,arg in zip(target['parameters'],site['arguments'])]
-                relation_in_scope=edge['status']!='unresolved' or relation_affects_review_scope(
-                    edge,graph,self.rules.get('relation_review_tokens',()))
+                direct_relation=edge['source'] in changed or any(target in changed for target in edge['targets'])
+                relation_in_scope=direct_relation and (edge['status']!='unresolved' or relation_affects_review_scope(
+                    edge,graph,self.rules.get('relation_review_tokens',())))
                 if relation_in_scope:
                     self.relations.append(dict(id=stable(self.name, side, edge['source'], site), side=side,
                         source=edge['source'], targets=edge['targets'], status=edge['status'], reason=edge['reason'],
                         receiver_type=edge['receiver_type'], field=edge['field'], evidence_ids=[evidence], site=clean(site)))
-                if (side == 'result' and edge['source'] in selected[side] and edge['requires_review'] and
+                if (side == 'result' and edge['source'] in changed and edge['requires_review'] and
                         relation_in_scope and not standalone_diagnostic_log(site)):
-                    fact = self.fact('unresolved_relation', dict(symbol=edge['source'], call=site,
-                                      receiver_type=edge['receiver_type'],reason=edge['reason'],
-                                      candidates=edge['targets']), [('result',method)], 'risk_candidate')
-                    self.obligation(fact, 'review_relation', dict(expression=site['expression']), dict(kind='review_binding'))
+                    self.fact('unresolved_relation', dict(symbol=edge['source'], call=site,
+                              receiver_type=edge['receiver_type'],reason=edge['reason'],
+                              candidates=edge['targets']), [('result',method)], 'risk_candidate')
             for row in graph.index['events']:
                 if row['kind'] == 'mapper':
                     linked = [s for s in selected[side] if s.startswith(row['owner']+'#'+row['name']+'(')]
@@ -1218,85 +1165,15 @@ class ProjectAnalysis:
                               initializer=row['initializer'], references=[dict(reference=ref,value=graph.constant_value(ref,row['owner']))
                               for ref in re.findall(r'[\w.]+\.getValue\(\)',row['initializer'])],
                               literal_members=[literal(s) for s in re.findall(r'"(?:\\.|[^"\\])*"',row['initializer'])]),[(side,row)])
-        outputs = {side: self.local_facts(side, selected[side],required_symbols) for side in self.graphs}
-        old_outputs=collections.defaultdict(list)
-        for fact in outputs['baseline']:
-            data=fact['data'];old_outputs[(data['symbol'],data['field'],data['receiver'])].append((data['expression'],data['origins'],data['guards']))
-        def output_group(data):
-            receiver_type=data.get('receiver_type')
-            return receiver_type if receiver_type in self.graphs['result'].classes else data['symbol']
-        changed_output_groups=set()
-        for fact in outputs['result']:
-            data=fact['data']
-            if data['symbol'] in changed and (data['expression'],data['origins'],data['guards']) not in old_outputs[(data['symbol'],data['field'],data['receiver'])]:
-                changed_output_groups.add((data['field'],output_group(data)))
-        by_field = collections.defaultdict(list)
-        for fact in outputs['result']:
-            data=fact['data']
-            # 类型不明确时先比较同一方法内的来源。
-            group=output_group(data)
-            by_field[(data['field'],group)].append(fact)
-        for (field, group), entries in sorted(by_field.items()):
-            signatures = {tuple(f['data']['origins']) for f in entries}
-            if len(signatures) > 1 and (field,group) in changed_output_groups:
-                locations = [('result',self.graphs['result'].methods[f['data']['symbol']]) for f in entries]
-                candidate = self.fact('field_source_difference', dict(field=field, receiver_group=group, sources=[dict(fact_id=f['id'],
-                                      symbol=f['data']['symbol'],origins=f['data']['origins']) for f in entries]),
-                                      locations,'risk_candidate')
-                self.obligation(candidate,'consumer_field_sources',dict(field=field),dict(kind='compare_output_sources'))
-        # 仅在已选调用链内提示未确认对象绑定的跨方法来源差异。
-        graph=self.graphs['result']
-        neighbors=collections.defaultdict(set)
-        for edge in graph.edges:
-            if edge['source'] in chain_symbols:
-                for target in edge['targets']:
-                    if target in chain_symbols:
-                        neighbors[edge['source']].add(target)
-                        neighbors[target].add(edge['source'])
-        components={}
-        for symbol in sorted(chain_symbols):
-            if symbol in components:continue
-            queue=[symbol];components[symbol]=symbol
-            for current in queue:
-                for neighbor in sorted(neighbors[current]):
-                    if neighbor not in components:
-                        components[neighbor]=symbol;queue.append(neighbor)
-        chain_fields=collections.defaultdict(list)
-        for fact in outputs['result']:
-            data=fact['data']
-            if data['symbol'] in chain_symbols:
-                chain_fields[(components[data['symbol']],data['field'])].append(fact)
-        for (component,field), entries in sorted(chain_fields.items()):
-            pairs=[]
-            for index, first in enumerate(entries):
-                a=first['data']
-                for second in entries[index+1:]:
-                    b=second['data']
-                    if a['symbol']==b['symbol'] or a['origins']==b['origins']:
-                        continue
-                    if a.get('receiver_type') in graph.classes and b.get('receiver_type') in graph.classes:
-                        continue
-                    if not any(d['symbol'] in changed and
-                            (d['expression'],d['origins'],d['guards']) not in old_outputs[(d['symbol'],d['field'],d['receiver'])]
-                            for d in (a,b)):
-                        continue
-                    pairs.append((first,second))
-            if not pairs:continue
-            sources={fact['id']:fact for pair in pairs for fact in pair}
-            entries=[sources[key] for key in sorted(sources)]
-            locations=[('result',graph.methods[f['data']['symbol']]) for f in entries]
-            candidate=self.fact('field_source_binding_candidate',dict(field=field,chain=component,
-                reason='receiver_binding_unconfirmed',sources=[dict(fact_id=f['id'],symbol=f['data']['symbol'],
-                    receiver=f['data']['receiver'],receiver_type=f['data']['receiver_type'],origins=f['data']['origins'])
-                    for f in entries]),locations,'risk_candidate')
-            self.obligation(candidate,'review_boundary',dict(field=field,symbol=component),dict(kind='review_field_source_binding'))
+        self.local_facts('baseline', selected['baseline'], required_symbols)
+        self.local_facts('result', selected['result'], required_symbols)
         self.argument_changes(changed)
         boundaries=[]
         return dict(name=self.name, repository=self.repo,
             snapshots={side:graph.index['tree'] for side,graph in self.graphs.items()},
             facts=sorted(self.facts,key=lambda f:f['id']),relations=sorted(self.relations,key=lambda r:r['id']),
             obligations=sorted(self.obligations,key=lambda o:o['id']),
-            field_label_candidates=sorted(label_candidates,key=lambda r:(r['side'],r['symbol'],r['label'])),
+            field_label_candidates=[],
             boundaries=sorted(boundaries,key=lambda r:json.dumps(r,sort_keys=True)),
             scope_errors=sorted(set(self.scope_errors)),
             critical_evidence_omissions=sorted(self.critical_evidence_omissions),
