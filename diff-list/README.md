@@ -145,18 +145,6 @@ test-cases.json
 Excel + Markdown
 ```
 
-避免恢复为：
-
-```text
-全量索引
-  ↓
-大量派生 obligation
-  ↓
-再筛选 obligation
-  ↓
-AI 再次归并和解释
-```
-
 ## 验证
 
 离线回归：
