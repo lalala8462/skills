@@ -369,6 +369,28 @@ class Handler {
         errors,_=validate(self.analysis,self.context,review,cases)
         self.assertTrue(any('lost source coverage links' in e for e in errors))
 
+    def test_direct_cases_validate_only_referenced_source_evidence(self):
+        from review_workbench import fast10_view
+        from export_test_cases import normalize
+        from test_points import PURPOSES
+        fact=next(f for f in self.analysis['projects'][0]['facts']
+                  if f['kind']=='method_change' and f['evidence_ids'])
+        case=dict(case_id='DIRECT-001',title='验证本次方法行为变化',preconditions='准备可触发该方法的有效业务数据',
+                  steps=['发起对应业务请求','检查接口结果和持久化结果'],
+                  expected=['本次修改后的行为生效，且相关业务结果可观察'],
+                  observable_evidence=[dict(surface='接口',target='业务响应',
+                                            assertion='响应字段与本次修改后的源码行为一致')],
+                  fact_ids=[fact['id']],evidence_ids=[fact['evidence_ids'][0]])
+        data=dict(schema_version=3,analysis_id=self.analysis['analysis_id'],
+                  purpose_cases={purpose:([case] if purpose=='acceptance' else []) for purpose in PURPOSES})
+        review=fast10_view(self.analysis)
+        errors,_=validate(self.analysis,self.context,review,data)
+        self.assertEqual(errors,[])
+        self.assertEqual(len(normalize(data,self.analysis)['purposes']['acceptance']),1)
+        broken=copy.deepcopy(data);broken['purpose_cases']['acceptance'][0]['evidence_ids']=[]
+        errors,_=validate(self.analysis,self.context,review,broken)
+        self.assertTrue(any('requires referenced evidence' in error for error in errors))
+
     def test_weak_label_candidates_do_not_block_valid_delivery(self):
         from export_test_cases import main as export_main
         from review_workbench import grouped
