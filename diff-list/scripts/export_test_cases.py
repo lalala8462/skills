@@ -76,25 +76,19 @@ def _case(item, ids):
 
 def normalize(data, analysis):
     """只接受当前四类用例；源码和覆盖校验由交付入口先执行。"""
-    from test_points import PURPOSES, case_material, validate_cases
+    from case_contract import PURPOSES, validate_cases
     validate_cases(data, analysis)
     return _normalize_validated(data)
 
 
 def _normalize_validated(data):
     """仅供同一调用中已校验的对象使用，不缓存跨调用的校验结果。"""
-    from test_points import PURPOSES, case_material
+    from case_contract import PURPOSES
     ids, groups = set(), {}
     for purpose in PURPOSES:
         rows = []
         for item in sorted(data['purpose_cases'][purpose], key=lambda c: c.get('case_id', '')):
-            material, assertions = case_material(data, item)
-            preconditions=_string(item.get('preconditions'), 'preconditions')
-            expected=_lines(item.get('expected'), 'expected')
-            if material: preconditions+='\n'+material
-            if assertions: expected+='\n'+assertions
-            expanded = dict(item, preconditions=preconditions, expected=expected)
-            rows.append(_case(expanded, ids))
+            rows.append(_case(item, ids))
         groups[purpose] = rows
     if not any(groups.values()):
         raise ValueError('no test cases to export')
@@ -251,7 +245,7 @@ def _export_template(rows, target, template, names, purposes):
 def export(rows, target, template=None):
     target = Path(target)
     target.parent.mkdir(parents=True, exist_ok=True)
-    from test_points import PURPOSES, PURPOSE_NAMES
+    from case_contract import PURPOSES, PURPOSE_NAMES
     if not isinstance(rows,dict) or set(rows)!={'purposes'} or not isinstance(rows['purposes'],dict) or set(rows['purposes'])!=set(PURPOSES):
         raise ValueError('export requires normalized current four-purpose rows')
     names = PURPOSE_NAMES
