@@ -10,7 +10,7 @@ from unittest import mock
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
 import analyze
-from analysis_engine import COMMON_RULES,Graph,ProjectAnalysis,relation_affects_review_scope,relation_review_signature
+from analysis_engine import COMMON_RULES,Graph,ProjectAnalysis,relation_affects_review_scope
 from source_index import JavaParser,DEFAULT_LIMITS,build_index,git_bytes,stable
 from validate_analysis import validate
 
