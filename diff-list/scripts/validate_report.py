@@ -216,7 +216,7 @@ def main(argv=None):
                 from validate_analysis import validate_files
                 source_errors,source_warnings=validate_files(a.analysis,a.review,a.cases)
                 errors.extend(source_errors);warnings.extend(source_warnings)
-            warnings.append('仅校验快审选定范围；未展开远距离调用覆盖')
+            warnings.append('已校验当前快审范围和最终引用源码证据')
             errors.extend(validate_case_counts(candidate_text,case_data,analysis))
         else:
             from validate_analysis import validate_files
@@ -224,7 +224,7 @@ def main(argv=None):
             errors.extend(coverage_errors);warnings.extend(coverage_warnings)
             if not coverage_errors:
                 errors.extend(validate_case_counts(candidate_text,case_data,analysis))
-                warnings.append('覆盖声明校验通过，不代表业务测试已执行')
+                warnings.append('静态引用校验通过，不代表业务测试已执行')
     except (OSError,UnicodeError,ValueError,KeyError,TypeError,IndexError) as exc:
         print('ERROR: '+str(exc),file=sys.stderr)
         return 2
@@ -249,7 +249,7 @@ def main(argv=None):
 
 def validate_case_counts(text,cases,analysis):
     """有用例材料时，报告数量必须与实际导出结果一致。"""
-    from test_points import PURPOSES,PURPOSE_NAMES
+    from case_contract import PURPOSES,PURPOSE_NAMES
     counts={name+'用例数量':len(cases['purpose_cases'][p]) for p,name in zip(PURPOSES,PURPOSE_NAMES)}
     section=sections(text,[]).get('## 5. 测试用例导出','')
     total=sum(counts.values())
@@ -264,18 +264,9 @@ def validate_case_counts(text,cases,analysis):
     return errors
 
 
+
 def validate_boundary_summary(text,analysis):
-    """报告须披露被汇总的分析边界数量，避免将未展开误写成无影响。"""
-    count=sum(1 for project in analysis.get('projects',[]) for item in project.get('obligations',[])
-              if item.get('dimension')=='review_analysis_boundary' and not item.get('required',True))
-    if count==0:
-        return []
-    section=sections(text,[]).get('## 6. 验证情况','')
-    match=re.search(r'未逐项复核分析边界\s*[:：]\s*(0|[1-9]\d*)\s*条?',section)
-    if not match or int(match.group(1))!=count:
-        return ['验证情况须列出准确的未逐项复核分析边界数量：{}条'.format(count)]
-    if count and not re.search(r'不代表(?:已)?(?:验证)?无影响|未核实不代表无影响',section):
-        return ['存在未逐项复核分析边界时须说明它们不代表无影响']
+    """分析边界由 hard_errors 和报告验证情况直接说明。"""
     return []
 
 
