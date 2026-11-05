@@ -187,8 +187,6 @@ def main(argv=None):
     p.add_argument('--analysis',required=True,help='本次当前版本生成的固定取证结果')
     p.add_argument('--review',required=True,help='本次模型源码补查与处置记录')
     p.add_argument('--cases',required=True,help='当前四类用例JSON')
-    p.add_argument('--scope-only',action='store_true',
-                   help='校验快审所选范围，不要求全量覆盖闭环')
     p.add_argument('--finalize',action='store_true',
                    help='仅在所有校验通过后清除草稿标记并原子写回正式报告')
     a=p.parse_args(argv)
@@ -209,22 +207,13 @@ def main(argv=None):
         analysis=json.loads(Path(a.analysis).read_text(encoding='utf-8-sig'))
         errors.extend(validate_boundary_summary(candidate_text,analysis))
         case_data=json.loads(Path(a.cases).read_text(encoding='utf-8-sig'))
-        if a.scope_only:
-            from scope_validation import validate_scope_files
-            validate_scope_files(a.analysis,a.review,a.cases)
-            if case_data.get('schema_version')==3:
-                from validate_analysis import validate_files
-                source_errors,source_warnings=validate_files(a.analysis,a.review,a.cases)
-                errors.extend(source_errors);warnings.extend(source_warnings)
-            warnings.append('已校验当前快审范围和最终引用源码证据')
-            errors.extend(validate_case_counts(candidate_text,case_data,analysis))
-        else:
-            from validate_analysis import validate_files
-            coverage_errors,coverage_warnings=validate_files(a.analysis,a.review,a.cases)
-            errors.extend(coverage_errors);warnings.extend(coverage_warnings)
-            if not coverage_errors:
-                errors.extend(validate_case_counts(candidate_text,case_data,analysis))
-                warnings.append('静态引用校验通过，不代表业务测试已执行')
+        from scope_validation import validate_scope_files
+        validate_scope_files(a.analysis,a.review,a.cases)
+        from validate_analysis import validate_files
+        source_errors,source_warnings=validate_files(a.analysis,a.review,a.cases)
+        errors.extend(source_errors);warnings.extend(source_warnings)
+        errors.extend(validate_case_counts(candidate_text,case_data,analysis))
+        warnings.append('已校验当前快审范围和最终引用源码证据')
     except (OSError,UnicodeError,ValueError,KeyError,TypeError,IndexError) as exc:
         print('ERROR: '+str(exc),file=sys.stderr)
         return 2
