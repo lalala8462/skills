@@ -1155,7 +1155,7 @@ class ProjectAnalysis:
                     if linked:
                         fact = self.fact('mapper_statement', dict(side=side, namespace=row['owner'], name=row['name'],
                                           statement=row['statement'], source=row['source'], dynamic=row['dynamic'],
-                                          mappings=row['mappings']), [(side,row)])
+                                          mappings=row['mappings'], linked_symbols=linked), [(side,row)])
                         if side == 'result' and row['dynamic']:
                             self.obligation(fact,'mapper_dynamic_conditions',dict(statement=row['method']),dict(kind='inspect_sql_conditions'))
                 if row['kind'] == 'field' and row.get('initializer') and row['name'] in referenced_names:
