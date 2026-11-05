@@ -320,7 +320,7 @@ def main(argv=None):
                 raise ValueError('Coverage validation failed: '+'; '.join(errors[:8]))
         rows = _normalize_validated(cases)
         count = export(rows, args.output, args.template)
-        from test_points import PURPOSES, PURPOSE_NAMES
+        from case_contract import PURPOSES, PURPOSE_NAMES
         print('EXPORTED: ' + ', '.join('{}={}'.format(name, count[p]) for p, name in zip(PURPOSES, PURPOSE_NAMES))
               + ', total={} -> {}'.format(count['total'], Path(args.output).resolve()))
         return 0
