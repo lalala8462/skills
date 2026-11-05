@@ -96,19 +96,19 @@ def compose(repo, selected, capture_config=False,
             if pin.returncode:
                 result.update(status='review_required', reason='cannot pin composed source tree')
                 return result
-        rename = git('diff', '--cached', '--name-status', '--find-renames', baseline)
-        rename_map, change_kinds = {}, {}
-        if rename.returncode == 0:
-            for line in rename.stdout.decode('utf-8', 'replace').splitlines():
-                columns = line.split('\t')
-                if len(columns) < 2:
-                    continue
-                kind = columns[0][:1]
-                target_name = columns[2] if len(columns) == 3 else columns[1]
-                change_kinds[target_name] = kind
-                if len(columns) == 3 and kind == 'R':
-                    rename_map[target_name] = columns[1]
         if capture_config:
+            rename = git('diff', '--cached', '--name-status', '--find-renames', baseline)
+            rename_map, change_kinds = {}, {}
+            if rename.returncode == 0:
+                for line in rename.stdout.decode('utf-8', 'replace').splitlines():
+                    columns = line.split('\t')
+                    if len(columns) < 2:
+                        continue
+                    kind = columns[0][:1]
+                    target_name = columns[2] if len(columns) == 3 else columns[1]
+                    change_kinds[target_name] = kind
+                    if len(columns) == 3 and kind == 'R':
+                        rename_map[target_name] = columns[1]
             result['config_sources'] = []
             result['config_skipped'] = []
             from config_candidates import SUPPORTED_EXTENSIONS
