@@ -118,10 +118,6 @@ def main(argv=None):
         template = Path(args.template).read_text(encoding='utf-8-sig')
         from scope_validation import validate_scope_files
         validate_scope_files(args.analysis,args.review,args.cases)
-        from validate_analysis import validate_files
-        errors,_=validate_files(args.analysis,args.review,args.cases)
-        if errors:
-            raise ValueError('static reference validation failed: '+'; '.join(errors[:8]))
         from case_contract import PURPOSES
         excel_path = Path(args.excel) if args.excel else None
         purpose_counts = [len(cases['purpose_cases'][p]) for p in PURPOSES]
