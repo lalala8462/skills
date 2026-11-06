@@ -104,27 +104,32 @@ navigation_facets 只用于“先看什么”。普通 Util/Common/Base/Helper �
 
 **不得把 navigation_facets 当成复核范围过滤器。**
 
-## 显式证据查询
+## 按需证据查询与全局审计
 
-当 Agent 已发现一个值得深查的字段、方法、配置键、Mapper 或 review unit 时，使用 review_query.py 直接展开完整关联材料，而不是手工在多个 JSON 和源码之间反复定位。
+`review_query.py` 是 Agent 可主动调用的脚本接口，使用同一次分析的 `analysis.json`、`review.json`、`context.jsonl`，不生成 review packet，也不修改原始事实底账。
 
-按关键词：
+PowerShell 先定义复核材料路径：
 
-    py -3 .\scripts\review_query.py --analysis <run>\.work\analysis\analysis.json --review <run>\.work\review.json --query originalTradeNo
+    $a = "<run>\.work\analysis\analysis.json"
+    $r = "<run>\.work\review.json"
 
-按复核单元：
+三层查证：
 
-    py -3 .\scripts\review_query.py --analysis <run>\.work\analysis\analysis.json --review <run>\.work\review.json --unit RU-xxxxxxxxxxxx
+1. **全局变化概览**：`py -3 .\scripts\review_query.py --analysis $a --review $r --overview`。返回可分页的 unit 索引、事实/关系数量、分析限制与审计异常计数。
+2. **按需精确查询**：`--unit RU-xxx` 或 `--query originalTradeNo` 默认只返回结构索引；`--unit RU-xxx --view facts`、`--view calls`、`--view db`、`--view conditions`、`--view relations`、`--view evidence` 才会展开详细数据。
+3. **原始源码复核**：`--fact F-xxx` 返回完整事实及 evidence ID；`--evidence E-xxx --source-lines 12` 会校验固定 Git tree/blob 并读取脱敏源码上下文。关键业务判断必须核实 before/after，不能只看摘要。
 
-查询结果会展开：
+分页默认 10 项，`--limit` 最多 100。每次响应有 `page.total/returned/complete/next_cursor`；`complete=false` 必须按 `--cursor <next_cursor>` 继续读取，不能将一页当作全部结果。针对分类的 `db/conditions` 是确定性已知类别索引，**不是完整业务范围**；必要时查询 `facts/relations/evidence` 全部分类。只有明确使用 `--view all` 才返回当前命中范围的完整展开，可能占用大量 Token。
 
-- 命中的 review unit / facet；
-- unit 已绑定的完整 fact；
-- unit 已绑定的完整 relation；
-- cross-project relation；
-- 对应 context evidence。
+Agent 在分析开始和交付前分别执行：
 
-它只按显式查询和已有确定性引用展开，不做相似度聚类或业务猜测。**未命中的材料仍然存在于原始 analysis/review 中，不表示无关。**
+    py -3 .\scripts\review_query.py --analysis $a --review $r --audit
+
+审计报告包含：change seed 是否有 unit、未归属主要变化事实、未索引支持性事实/关系、unresolved、证据缺失、hard_errors、分析限制、跨项目来源缺失等。按类别翻页查看：
+
+    py -3 .\scripts\review_query.py --analysis $a --review $r --audit --view unassigned_primary_facts
+
+`--audit` 是**结构与分析边界检查**，不是业务测试覆盖率证明。部分支持性事实不绑定 unit 是正常情况，不能为了指标把它们硬塞进某个业务组。Agent 必须检查异常是否影响业务结论，不得因为 coverage.pending_review=0 就忽略审计结果。
 
 ## Agent 子阶段耗时
 
