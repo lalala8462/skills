@@ -77,10 +77,14 @@ class CaseContractTest(unittest.TestCase):
     def test_coverage_matrix_reports_uncovered_units_without_failing_cases(self):
         matrix=coverage_matrix(cases(),analysis(),review())
         self.assertEqual(matrix['summary']['unit_count'],2)
-        self.assertEqual(matrix['summary']['covered_unit_count'],1)
-        self.assertEqual(matrix['uncovered_unit_ids'],['RU-2'])
-        self.assertEqual(matrix['summary']['partially_covered_facet_count'],1)
-        self.assertEqual(matrix['partially_covered_facet_ids'],['RF-1'])
+        self.assertEqual(matrix['summary']['referenced_unit_count'],1)
+        self.assertEqual(matrix['unit_case_references'][0]['referenced_by_cases'],True)
+        self.assertEqual(matrix['summary']['referenced_facet_count'],1)
+        self.assertEqual(matrix['summary']['all_units_referenced_facet_count'],0)
+        self.assertNotIn('fully_covered_facet_count',matrix['summary'])
+        self.assertEqual(matrix['unreferenced_unit_ids'],['RU-2'])
+        self.assertEqual(matrix['summary']['partially_referenced_facet_count'],1)
+        self.assertEqual(matrix['partially_referenced_facet_ids'],['RF-1'])
         self.assertEqual(matrix['summary']['pending_review_count'],1)
         self.assertEqual(matrix['pending_review'][0]['unit_id'],'RU-2')
         self.assertEqual(matrix['pending_review'][0]['high_value_facets'][0]['facet_id'],'RF-1')
@@ -95,7 +99,7 @@ class CaseContractTest(unittest.TestCase):
 
     def test_coverage_matrix_has_current_schema_identity(self):
         matrix=coverage_matrix(cases(),analysis(),review())
-        self.assertEqual(matrix['coverage_schema_version'],2)
+        self.assertEqual(matrix['coverage_schema_version'],3)
         self.assertEqual(matrix['review_schema_version'],4)
         self.assertEqual(matrix['analysis_id'],'analysis-1')
 
