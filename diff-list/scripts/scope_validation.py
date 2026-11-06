@@ -2,7 +2,7 @@
 """校验最终用例只引用当前复核范围内的 review unit。"""
 import json
 from pathlib import Path
-from case_contract import validate_cases,review_unit_index
+from case_contract import review_facet_index,validate_cases,review_unit_index
 
 
 def _read(path):
@@ -14,6 +14,7 @@ def validate_scope_data(analysis,review,cases):
     known_facts={fact.get('id') for project in analysis.get('projects',[])
                  for fact in project.get('facts',[]) if fact.get('id')}
     units=review_unit_index(review)
+    review_facet_index(review)
     for identifier,row in units.items():
         if not set(row['fact_ids'])<=known_facts:
             raise ValueError('review unit references facts outside current analysis: '+identifier)
