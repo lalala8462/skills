@@ -344,14 +344,58 @@ class Handler {
         self.assertEqual(compact['review_summary']['change_seed_count'],12)
         self.assertEqual(compact['review_summary']['review_unit_count'],12)
         self.assertEqual(compact['review_summary']['selected_relation_count'],12)
-        self.assertEqual(compact['review_summary']['review_group_count'],1)
-        self.assertEqual(compact['review_groups'][0]['unit_count'],12)
+        self.assertEqual(compact['review_summary']['review_facet_count'],2)
+        self.assertEqual(compact['review_summary']['max_facet_size'],12)
+        self.assertEqual({facet['type'] for facet in compact['review_facets']},{'direct_call','owner'})
+        self.assertTrue(all(facet['unit_count']==12 for facet in compact['review_facets']))
         self.assertEqual({unit['flow'] for unit in compact['review_units']},{'退款主流程'})
         self.assertEqual({unit['symbol'] for unit in compact['review_units']},
                          {fact['data']['symbol'] for fact in facts})
         self.assertEqual({fact['id'] for fact in compact['fact_catalog']},
                          {fact['id'] for fact in facts})
         self.assertEqual(len(compact['relation_catalog']),12)
+
+    def test_review_facets_do_not_merge_transitively_and_summary_stays_direct(self):
+        from analysis_engine import VERSION
+        from review_workbench import build_review
+        a='sample.A#run()';b='sample.B#run()';c='sample.C#run()'
+        facts=[
+            dict(id='a-change',kind='method_change',classification='source_fact',
+                 data=dict(symbol=a,change='modified'),evidence_ids=['a']),
+            dict(id='b-change',kind='method_change',classification='source_fact',
+                 data=dict(symbol=b,change='modified'),evidence_ids=['b']),
+            dict(id='c-change',kind='method_change',classification='source_fact',
+                 data=dict(symbol=c,change='modified'),evidence_ids=['c']),
+            dict(id='x-branch',kind='branch',classification='source_fact',
+                 data=dict(symbol='sample.X#load()',condition='x>0',then='yes',otherwise='no'),
+                 evidence_ids=['x'])
+        ]
+        relations=[
+            dict(id='a-x',side='result',source=a,targets=['sample.X#load()'],status='source_resolved',
+                 reason='source_resolved',receiver_type='sample.X',evidence_ids=[],
+                 site=dict(name='load',receiver='x',expression='x.load()',arguments=[])),
+            dict(id='b-x',side='result',source=b,targets=['sample.X#load()'],status='source_resolved',
+                 reason='source_resolved',receiver_type='sample.X',evidence_ids=[],
+                 site=dict(name='load',receiver='x',expression='x.load()',arguments=[])),
+            dict(id='b-y',side='result',source=b,targets=['sample.Y#save()'],status='source_resolved',
+                 reason='source_resolved',receiver_type='sample.Y',evidence_ids=[],
+                 site=dict(name='save',receiver='y',expression='y.save()',arguments=[])),
+            dict(id='c-y',side='result',source=c,targets=['sample.Y#save()'],status='source_resolved',
+                 reason='source_resolved',receiver_type='sample.Y',evidence_ids=[],
+                 site=dict(name='save',receiver='y',expression='y.save()',arguments=[]))
+        ]
+        analysis=dict(schema_version=2,analyzer_version=VERSION,analysis_id='facet-test',
+            projects=[dict(name='sample',change_seeds=[a,b,c],facts=facts,relations=relations,
+                           hard_errors=[],stats={})],cross_project_relations=[])
+        compact=build_review(analysis)['projects'][0]
+        call_facets=[facet for facet in compact['review_facets'] if facet['type']=='direct_call']
+        pairs={tuple(facet['unit_ids']) for facet in call_facets}
+        self.assertEqual(len(pairs),2)
+        self.assertTrue(all(len(pair)==2 for pair in pairs))
+        self.assertFalse(any(facet['unit_count']==3 for facet in call_facets))
+        a_unit=next(unit for unit in compact['review_units'] if unit['symbol']==a)
+        self.assertEqual([row['kind'] for row in a_unit['change_summary']],['method_change'])
+        self.assertIn('branch',a_unit['context_fact_groups'])
 
     def test_review_keeps_config_files_and_mapper_facts_without_scope_expansion(self):
         from analysis_engine import VERSION
