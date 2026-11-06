@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""在 Excel/报告生成前一次性检查 Agent 输入的纯格式与当前分析身份。"""
+"""在 Excel/报告刷新前一次性检查 Agent 输入格式与当前分析身份。"""
 import argparse
 import json
 import re
@@ -7,9 +7,9 @@ import sys
 from pathlib import Path
 
 from case_contract import PURPOSES, validate_cases
-from generate_report import REPORT_FIELDS
+from generate_report import AGENT_HEADINGS, AGENT_PLACEHOLDER, DRAFT_MARKER
 from scope_validation import validate_scope_files
-from validate_report import fenced_blocks
+from validate_report import fenced_blocks, heading_positions, sections
 
 
 CASE_FIELDS=('case_id','title','preconditions','steps','expected','observable_evidence','review_unit_ids')
@@ -20,42 +20,41 @@ def _nonempty_text(value):
     return isinstance(value,str) and bool(value.strip())
 
 
-def report_data_errors(data):
+def report_errors(text,template):
+    """只检查 Agent 直接维护的业务章节和 Markdown 结构；脚本维护章节在 refresh 时覆盖。"""
     errors=[]
-    if not isinstance(data,dict):
-        return ['report-data 必须是 JSON object']
-    missing=sorted(set(REPORT_FIELDS)-set(data))
-    extra=sorted(set(data)-set(REPORT_FIELDS))
-    if missing:
-        errors.append('report-data 缺少字段: '+', '.join(missing))
-    if extra:
-        errors.append('report-data 包含不支持字段: '+', '.join(extra))
-    for key in REPORT_FIELDS:
-        if key not in data:
-            continue
-        value=data[key]
-        if not _nonempty_text(value):
-            errors.append('report-data.{} 必须填写复核结论或明确写“无”'.format(key))
-            continue
-        if re.search(r'(?m)^\s*#{1,6}\s+',value):
-            errors.append('report-data.{} 不允许包含 Markdown 标题'.format(key))
-    flow=data.get('flow')
-    mermaid=data.get('mermaid')
-    if _nonempty_text(flow) and _nonempty_text(mermaid):
-        need_diagram=flow.strip()!='无' or mermaid.strip()!='无'
-        if need_diagram:
-            if mermaid.strip()=='无':
-                errors.append('整体流程非“无”时必须提供 Mermaid 代码块')
-            else:
-                backtick=chr(96)*3
-                if mermaid.count(backtick)%2 or mermaid.count('~~~')%2:
-                    errors.append('Mermaid 代码围栏未闭合')
-                blocks=[body for lang,body in fenced_blocks(mermaid)
-                        if lang.strip().lower()=='mermaid']
-                if len(blocks)!=1:
-                    errors.append('mermaid 字段必须且只能包含一个 mermaid 代码块')
-                elif not re.match(r'^\s*(?:flowchart TD|sequenceDiagram)\s*(?:\n|$)',blocks[0]):
-                    errors.append('Mermaid 必须以 flowchart TD 或 sequenceDiagram 开始，禁止 graph TD')
+    want=[title for _,title in heading_positions(template)]
+    got=[title for _,title in heading_positions(text)]
+    if got!=want:
+        errors.append('report.md 标题及顺序与模板不一致')
+        return errors
+    if text.count(DRAFT_MARKER)!=1 or text.count('报告状态：未完成')!=1:
+        errors.append('report.md 必须保留唯一草稿标记，finalize 前不得手工删除')
+    body=sections(text,got)
+    for heading in AGENT_HEADINGS:
+        value=body.get(heading,'').strip()
+        if not value or value==AGENT_PLACEHOLDER:
+            errors.append('{} 必须填写复核结论或明确写“无”'.format(heading))
+
+    flow=body.get('### 3.1 整体流程说明','').strip()
+    mermaid=body.get('### 3.2 Mermaid 流程图','').strip()
+    if flow and mermaid and (flow!='无' or mermaid!='无'):
+        if mermaid=='无':
+            errors.append('整体流程非“无”时必须提供 Mermaid 代码块')
+        else:
+            backtick=chr(96)*3
+            if mermaid.count(backtick)%2 or mermaid.count('~~~')%2:
+                errors.append('Mermaid 代码围栏未闭合')
+            blocks=[content for lang,content in fenced_blocks(mermaid)
+                    if lang.strip().lower()=='mermaid']
+            if len(blocks)!=1:
+                errors.append('Mermaid 章节必须且只能包含一个 mermaid 代码块')
+            elif not re.match(r'^\s*(?:flowchart TD|sequenceDiagram)\s*(?:\n|$)',blocks[0]):
+                errors.append('Mermaid 必须以 flowchart TD 或 sequenceDiagram 开始，禁止 graph TD')
+
+    special=body.get('## 4. 特殊逻辑与测试关注点','').strip()
+    if special and special not in ('无',AGENT_PLACEHOLDER) and '既有功能影响' not in special:
+        errors.append('特殊逻辑章节非“无”时必须包含“既有功能影响”说明')
     return errors
 
 
@@ -140,7 +139,7 @@ def case_shape_errors(data):
     return errors
 
 
-def validate_inputs(analysis_path,review_path,cases_path,report_data_path):
+def validate_inputs(analysis_path,review_path,cases_path,report_path,template_path):
     errors=[]
     try:
         analysis=json.loads(Path(analysis_path).read_text(encoding='utf-8-sig'))
@@ -155,12 +154,13 @@ def validate_inputs(analysis_path,review_path,cases_path,report_data_path):
     except (OSError,ValueError) as exc:
         return ['无法读取 test-cases.json: '+str(exc)]
     try:
-        report_data=json.loads(Path(report_data_path).read_text(encoding='utf-8-sig'))
-    except (OSError,ValueError) as exc:
-        return ['无法读取 report-data.json: '+str(exc)]
+        report=Path(report_path).read_text(encoding='utf-8-sig')
+        template=Path(template_path).read_text(encoding='utf-8-sig')
+    except (OSError,UnicodeError) as exc:
+        return ['无法读取 report.md/template: '+str(exc)]
 
     errors.extend(case_shape_errors(cases))
-    errors.extend(report_data_errors(report_data))
+    errors.extend(report_errors(report,template))
     try:
         validate_scope_files(analysis_path,review_path,cases_path)
     except (ValueError,KeyError,TypeError,OSError) as exc:
@@ -177,9 +177,10 @@ def main(argv=None):
     parser.add_argument('--analysis',required=True)
     parser.add_argument('--review',required=True)
     parser.add_argument('--cases',required=True)
-    parser.add_argument('--report-data',required=True)
+    parser.add_argument('--report',required=True)
+    parser.add_argument('--template',default=str(Path(__file__).resolve().parents[1]/'assets'/'diff-list-template.md'))
     args=parser.parse_args(argv)
-    errors=validate_inputs(args.analysis,args.review,args.cases,args.report_data)
+    errors=validate_inputs(args.analysis,args.review,args.cases,args.report,args.template)
     for error in errors:
         print('ERROR: '+error)
     print('PREFLIGHT: '+('FAIL' if errors else 'PASS'))
