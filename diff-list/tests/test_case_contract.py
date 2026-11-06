@@ -6,21 +6,31 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
 
-from case_contract import PURPOSES,PURPOSE_NAMES,resolve_case_sources,validate_cases
+from case_contract import PURPOSES,PURPOSE_NAMES,coverage_matrix,resolve_case_sources,validate_cases
 
 
 def analysis():
     return dict(analysis_id='analysis-1',projects=[dict(name='sample',facts=[
-        dict(id='fact-1',kind='method_change',data={'symbol':'sample.Flow#run()'},evidence_ids=['evidence-1'])
+        dict(id='fact-1',kind='method_change',data={'symbol':'sample.Flow#run()'},evidence_ids=['evidence-1']),
+        dict(id='fact-2',kind='method_change',data={'symbol':'sample.Flow#other()'},evidence_ids=['evidence-2'])
     ])])
 
 
 def review():
-    return dict(analysis_id='analysis-1',review_schema_version=2,projects=[dict(
+    return dict(analysis_id='analysis-1',review_schema_version=3,projects=[dict(
         name='sample',
-        fact_catalog=[dict(id='fact-1',kind='method_change',evidence_ids=['evidence-1'])],
-        review_units=[dict(id='RU-1',scope='method',symbol='sample.Flow#run()',
-                           fact_ids=['fact-1'],relation_ids=[],related_symbols=[])])])
+        fact_catalog=[
+            dict(id='fact-1',kind='method_change',evidence_ids=['evidence-1']),
+            dict(id='fact-2',kind='method_change',evidence_ids=['evidence-2'])
+        ],
+        review_facets=[dict(id='RF-1',type='owner',anchor='sample.Flow',
+                            unit_ids=['RU-1','RU-2'],unit_count=2)],
+        review_units=[
+            dict(id='RU-1',scope='method',symbol='sample.Flow#run()',
+                 fact_ids=['fact-1'],relation_ids=[],related_symbols=[],facet_ids=['RF-1']),
+            dict(id='RU-2',scope='method',symbol='sample.Flow#other()',
+                 fact_ids=['fact-2'],relation_ids=[],related_symbols=[],facet_ids=['RF-1'])
+        ])])
 
 
 def cases():
@@ -53,9 +63,18 @@ class CaseContractTest(unittest.TestCase):
             validate_cases(data,analysis(),review())
 
     def test_old_review_schema_is_rejected(self):
-        old=copy.deepcopy(review());old['review_schema_version']=1
-        with self.assertRaisesRegex(ValueError,'review_schema_version=2'):
+        old=copy.deepcopy(review());old['review_schema_version']=2
+        with self.assertRaisesRegex(ValueError,'review_schema_version=3'):
             validate_cases(cases(),analysis(),old)
+
+    def test_coverage_matrix_reports_uncovered_units_without_failing_cases(self):
+        matrix=coverage_matrix(cases(),analysis(),review())
+        self.assertEqual(matrix['summary']['unit_count'],2)
+        self.assertEqual(matrix['summary']['covered_unit_count'],1)
+        self.assertEqual(matrix['uncovered_unit_ids'],['RU-2'])
+        self.assertEqual(matrix['summary']['partially_covered_facet_count'],1)
+        self.assertEqual(matrix['partially_covered_facet_ids'],['RF-1'])
+        self.assertIn('不证明',matrix['note'])
 
     def test_unknown_review_unit_is_rejected(self):
         data=cases();data['purpose_cases']['acceptance'][0]['review_unit_ids']=['RU-missing']
