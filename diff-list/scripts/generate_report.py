@@ -1,40 +1,47 @@
 #!/usr/bin/env python3
-"""Render a report candidate from Agent business conclusions plus deterministic analysis data."""
+"""初始化并刷新 Agent 直接编辑的 Markdown 报告；不承载业务归纳。"""
 import argparse
 import json
-import re
+import os
 import sys
+import tempfile
 from pathlib import Path
 
-REPORT_FIELDS=('requirements','ddl','dml','flow','mermaid','special_rules','existing_impact')
-SECTION_HEADINGS={
-    'requirements':'### 2.1 需求改动',
-    'ddl':'### 2.2 表字段 DDL 修改',
-    'dml':'### 2.3 表配置 DML 准备清单',
-    'flow':'### 3.1 整体流程说明',
-    'mermaid':'### 3.2 Mermaid 流程图'
-}
+from validate_report import heading_positions, sections
+
+AGENT_HEADINGS=(
+    '### 2.1 需求改动',
+    '### 2.2 表字段 DDL 修改',
+    '### 2.3 表配置 DML 准备清单',
+    '### 3.1 整体流程说明',
+    '### 3.2 Mermaid 流程图',
+    '## 4. 特殊逻辑与测试关注点',
+)
+MACHINE_HEADINGS=(
+    '## 1. 分析范围',
+    '### 2.4 配置文件调整',
+    '## 5. 测试用例导出',
+    '## 6. 验证情况',
+)
+AGENT_PLACEHOLDER='【Agent填写：基于完整复核事实形成业务结论；无相关内容时填写“无”】'
+TEST_PLACEHOLDER='【脚本将在测试用例导出后更新】'
+DRAFT_MARKER='<!-- diff-list-status: draft -->'
+DRAFT_STATUS='**报告状态：未完成。** 业务章节待 Agent 复核，校验通过前不作为正式交付。'
 
 
-def empty_report_data():
-    """只生成 Agent 必须填写的业务字段。"""
-    return {key:'' for key in REPORT_FIELDS}
+def _template_headings(template):
+    return [title for _,title in heading_positions(template)]
 
 
-def headings(text):
-    return [line.strip() for line in text.splitlines() if re.fullmatch(r'#{1,6} .+', line.strip())]
-
-
-def _validate_report_data(report_data):
-    if not isinstance(report_data,dict) or set(report_data)!=set(REPORT_FIELDS):
-        missing=sorted(set(REPORT_FIELDS)-set(report_data or {}))
-        extra=sorted(set(report_data or {})-set(REPORT_FIELDS))
-        raise ValueError('report-data requires fixed business fields; missing={}, extra={}'.format(missing,extra))
-    for key,value in report_data.items():
-        if not isinstance(value,str) or not value.strip():
-            raise ValueError('report field {} requires reviewed text or the explicit word 无'.format(key))
-        if re.search(r'(?m)^\s*#{1,6}\s+',value):
-            raise ValueError('report field {} must not contain Markdown headings'.format(key))
+def _validate_template(template):
+    headings=_template_headings(template)
+    required=set(AGENT_HEADINGS)|set(MACHINE_HEADINGS)
+    missing=sorted(required-set(headings))
+    if not headings:
+        raise ValueError('report template has no headings')
+    if missing:
+        raise ValueError('report template is missing required headings: '+', '.join(missing))
+    return headings
 
 
 def scope_section(analysis):
@@ -73,120 +80,125 @@ def configuration_section(analysis):
     return '\n'.join(lines)+"\n\n~~~text\n"+'\n'.join(normalized)+"\n~~~"
 
 
-def special_section(report_data):
-    return '特殊规则：{}\n\n既有功能影响：{}'.format(
-        report_data['special_rules'].strip(),report_data['existing_impact'].strip())
-
-
 def verification_section():
     return ('已完成固定 Git 快照静态分析、复核范围校验、review unit 到源码事实/证据的自动展开校验、'
             '测试用例结构校验和报告结构预检。未执行构建、单元测试、数据库验证或环境联调。')
 
 
-def render(template,report_data,analysis,cases,excel_name):
-    _validate_report_data(report_data)
-    template_headings=headings(template)
-    if not template_headings:
-        raise ValueError('report template has no headings')
-    required=set(SECTION_HEADINGS.values())|{
-        '## 1. 分析范围','### 2.4 配置文件调整','## 4. 特殊逻辑与测试关注点',
-        '## 5. 测试用例导出','## 6. 验证情况'}
-    missing=sorted(required-set(template_headings))
-    if missing:
-        raise ValueError('report template is missing required headings: '+', '.join(missing))
-
+def test_summary(cases,excel_name):
     from case_contract import PURPOSES,PURPOSE_NAMES
     groups=cases.get('purpose_cases')
     if not isinstance(groups,dict) or set(groups)!=set(PURPOSES):
         raise ValueError('cases must contain exactly the four current purpose arrays')
     counts=[len(groups[purpose]) for purpose in PURPOSES]
     total=sum(counts)
-    if total and (not excel_name or Path(excel_name).name!=excel_name or not excel_name.lower().endswith('.xlsx')):
+    if not total:
+        return '无'
+    if not excel_name or Path(excel_name).name!=excel_name or not excel_name.lower().endswith('.xlsx'):
         raise ValueError('nonempty cases require an Excel basename ending in .xlsx')
-    if total:
-        summary='Excel：[{}]({})；'.format(excel_name,excel_name)+'；'.join(
-            '{}用例数量：{}'.format(name,count) for name,count in zip(PURPOSE_NAMES,counts))+'；总用例数量：{}'.format(total)
-    else:
-        summary='无'
+    return 'Excel：[{}]({})；'.format(excel_name,excel_name)+'；'.join(
+        '{}用例数量：{}'.format(name,count) for name,count in zip(PURPOSE_NAMES,counts))+'；总用例数量：{}'.format(total)
 
-    bodies={SECTION_HEADINGS[key]:report_data[key].strip() for key in SECTION_HEADINGS}
-    bodies.update({
-        '## 1. 分析范围':scope_section(analysis),
-        '### 2.4 配置文件调整':configuration_section(analysis),
-        '## 4. 特殊逻辑与测试关注点':special_section(report_data),
-        '## 5. 测试用例导出':summary,
-        '## 6. 验证情况':verification_section()
-    })
-    title=template_headings[0]
+
+def _render(template,bodies):
+    headings=_validate_template(template)
+    title=headings[0]
     output=[]
     for line in template.splitlines():
         stripped=line.strip()
-        if stripped in template_headings:
-            output.append(stripped)
-            if stripped==title:
-                output.extend(['','<!-- diff-list-status: draft -->',
-                    '**报告状态：未完成。** 结构化报告候选，校验通过前不作为正式交付。',''])
-                continue
-            body=bodies.get(stripped)
-            if body:
-                output.extend(['',body,''])
-        else:
-            output.append(line)
-    return '\n'.join(output).rstrip()+'\n',counts,total
+        output.append(line)
+        if stripped==title:
+            output.extend(['',DRAFT_MARKER,DRAFT_STATUS,''])
+            continue
+        body=bodies.get(stripped)
+        if body is not None:
+            output.extend(['',body.strip(),''])
+    return '\n'.join(output).rstrip()+'\n'
 
 
-def preflight(rendered,template,analysis,cases):
-    marker='<!-- diff-list-status: draft -->'
-    status='报告状态：未完成'
-    draft_line=re.compile(
-        r'(?m)^<!-- diff-list-status: draft -->\r?\n'
-        r'\*\*报告状态：未完成。\*\* 结构化报告候选，校验通过前不作为正式交付。\r?\n?')
-    candidate_text,replaced=draft_line.subn('',rendered,count=1)
-    if replaced!=1 or rendered.count(marker)!=1 or rendered.count(status)!=1:
-        return ['生成候选缺少唯一且完整的草稿标记']
-    from validate_report import validate,validate_case_counts,expected_project_shas
-    mappings=expected_project_shas(analysis)
-    if not mappings:
-        return ['analysis.json 中无法推导项目与完整 Git SHA']
-    errors,_=validate(candidate_text,template,mappings)
-    errors.extend(validate_case_counts(candidate_text,cases,analysis))
-    return errors
+def initial_report(template,analysis):
+    bodies={heading:AGENT_PLACEHOLDER for heading in AGENT_HEADINGS}
+    bodies.update({
+        '## 1. 分析范围':scope_section(analysis),
+        '### 2.4 配置文件调整':configuration_section(analysis),
+        '## 5. 测试用例导出':TEST_PLACEHOLDER,
+        '## 6. 验证情况':verification_section(),
+    })
+    return _render(template,bodies)
+
+
+def refresh_report(current,template,analysis,cases,excel_name):
+    want=_validate_template(template)
+    got=[title for _,title in heading_positions(current)]
+    if got!=want:
+        raise ValueError('报告标题及顺序与模板不一致，不能安全刷新脚本维护章节')
+    if current.count(DRAFT_MARKER)!=1 or current.count('报告状态：未完成')!=1:
+        raise ValueError('报告缺少唯一草稿标记，不能安全刷新')
+    existing=sections(current,got)
+    bodies={heading:existing.get(heading,'').strip() for heading in AGENT_HEADINGS}
+    bodies.update({
+        '## 1. 分析范围':scope_section(analysis),
+        '### 2.4 配置文件调整':configuration_section(analysis),
+        '## 5. 测试用例导出':test_summary(cases,excel_name),
+        '## 6. 验证情况':verification_section(),
+    })
+    return _render(template,bodies)
+
+
+def _atomic_replace(path,text):
+    target=Path(path)
+    handle=tempfile.NamedTemporaryFile(mode='w',encoding='utf-8',newline='\n',
+        prefix=target.name+'.',suffix='.tmp',dir=str(target.parent),delete=False)
+    temporary=Path(handle.name)
+    try:
+        with handle:
+            handle.write(text)
+        os.replace(str(temporary),str(target))
+    finally:
+        if temporary.exists():
+            temporary.unlink()
 
 
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--data',required=True,help='Agent 业务结论 JSON')
-    parser.add_argument('--analysis',required=True,help='本次固定分析结果')
-    parser.add_argument('--review',required=True,help='本次聚合复核结果')
-    parser.add_argument('--cases',required=True,help='本次四类结构化用例 JSON')
-    parser.add_argument('--excel',help='已生成的独立 Excel 路径；报告内只写文件名')
+    mode=parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument('--init',action='store_true',help='初始化 Agent 直接编辑的 report.md')
+    mode.add_argument('--refresh',action='store_true',help='保留 Agent 章节并刷新脚本维护章节')
+    parser.add_argument('--analysis',required=True)
+    parser.add_argument('--report',required=True)
+    parser.add_argument('--cases',help='refresh 时使用的 test-cases.json')
+    parser.add_argument('--excel',help='refresh 时已生成的 Excel 路径')
     parser.add_argument('--template',default=str(Path(__file__).resolve().parents[1]/'assets'/'diff-list-template.md'))
-    parser.add_argument('--output',required=True,help='新建报告候选路径；不得指向已交付报告')
     args=parser.parse_args(argv)
     try:
-        data=json.loads(Path(args.data).read_text(encoding='utf-8-sig'))
         analysis=json.loads(Path(args.analysis).read_text(encoding='utf-8-sig'))
-        cases=json.loads(Path(args.cases).read_text(encoding='utf-8-sig'))
         template=Path(args.template).read_text(encoding='utf-8-sig')
-        from scope_validation import validate_scope_files
-        validate_scope_files(args.analysis,args.review,args.cases)
-        from case_contract import PURPOSES
+        report=Path(args.report)
+        report.parent.mkdir(parents=True,exist_ok=True)
+        if args.init:
+            if args.cases or args.excel:
+                raise ValueError('--init 不接受 --cases/--excel')
+            if report.exists():
+                raise ValueError('report already exists')
+            with report.open('x',encoding='utf-8',newline='\n') as stream:
+                stream.write(initial_report(template,analysis))
+            print('REPORT_DRAFT: '+str(report.resolve()))
+            return 0
+
+        if not args.cases:
+            raise ValueError('--refresh 必须提供 --cases')
+        if not report.is_file():
+            raise ValueError('report draft does not exist')
+        cases=json.loads(Path(args.cases).read_text(encoding='utf-8-sig'))
         excel_path=Path(args.excel) if args.excel else None
-        purpose_counts=[len(cases['purpose_cases'][p]) for p in PURPOSES]
-        if sum(purpose_counts):
+        if sum(len(cases.get('purpose_cases',{}).get(name,[])) for name in ('acceptance','core_regression','related_regression','boundary')):
             if excel_path is None or not excel_path.is_file():
                 raise ValueError('test cases exist but the separate Excel file is missing')
-            if excel_path.resolve().parent!=Path(args.output).resolve().parent:
-                raise ValueError('Excel and report candidate must share a directory')
-        rendered,counts,total=render(template,data,analysis,cases,excel_path.name if excel_path else None)
-        errors=preflight(rendered,template,analysis,cases)
-        if errors:
-            raise ValueError('report preflight failed: '+'; '.join(errors[:12]))
-        output=Path(args.output)
-        output.parent.mkdir(parents=True,exist_ok=True)
-        with output.open('x',encoding='utf-8',newline='\n') as stream:
-            stream.write(rendered)
-        print('CANDIDATE: {} cases={} output={}'.format(total,counts,output.resolve()))
+        rendered=refresh_report(
+            report.read_text(encoding='utf-8-sig'),template,analysis,cases,
+            excel_path.name if excel_path else None)
+        _atomic_replace(report,rendered)
+        print('REPORT_REFRESHED: '+str(report.resolve()))
         return 0
     except (OSError,UnicodeError,ValueError,KeyError,TypeError,IndexError) as exc:
         print('ERROR: '+str(exc),file=sys.stderr)
