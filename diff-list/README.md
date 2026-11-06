@@ -43,7 +43,7 @@
 
     analyze → review_workbench → report_init
 
-随后进入 waiting_agent。Agent 直接编辑：
+随后进入 waiting_agent。报告初稿已预置“既有功能影响”的填写位置；Agent 必须填写具体结论，确认无影响时写“无”，不能保留占位符。Agent 直接编辑：
 
 - .work/test-cases.json
 - .work/report.md
@@ -131,23 +131,38 @@ Agent 在分析开始和交付前分别执行：
 
 `--audit` 是**结构与分析边界检查**，不是业务测试覆盖率证明。部分支持性事实不绑定 unit 是正常情况，不能为了指标把它们硬塞进某个业务组。Agent 必须检查异常是否影响业务结论，不得因为 coverage.pending_review=0 就忽略审计结果。
 
-## Agent 子阶段耗时
+## Agent 时间与查询统计
 
-run_schema_version=3。
+run_schema_version=4。只保留三个 Agent 工作阶段：
 
-首次进入 Agent 阶段时自动从 source_review 开始计时。Agent 在工作重心变化时主动切换：
+- `source_review`：源码查证；首次进入 `waiting_agent` 时自动开始；
+- `analysis_authoring`：业务分析、测试设计、报告编写（不再强行划分成三个手工阶段）；
+- `rework`：resume 的 preflight / coverage / Excel / report / finalize 失败后，自动进入 `waiting_rework` 并记录修复时间。
 
-    py -3 .\scripts\run_delivery.py --run-dir <run> --mark-agent-phase business_reasoning
-    py -3 .\scripts\run_delivery.py --run-dir <run> --mark-agent-phase test_design
-    py -3 .\scripts\run_delivery.py --run-dir <run> --mark-agent-phase report_edit
+从源码查证转入综合编写时执行一次：
 
-coverage 暂停时自动记录 coverage_review。若 preflight、coverage、Excel、报告刷新或 finalize 在 resume 期间失败，脚本立即进入 `waiting_rework`，自动开始 `agent_rework` 计时；修正材料后继续使用原来的 `--resume`，下一次调用会先结算修复区间。需要更细分时可用 `--mark-agent-phase report_edit` 等主动切换。
+    py -3 .\scripts\run_delivery.py --run-dir <run> --mark-agent-phase analysis_authoring
 
-`run-state.json` 记录 `agent_source_review / agent_business_reasoning / agent_test_design / agent_report_edit / agent_coverage_review / agent_rework` 以及 `agent_between_steps`。
+coverage 有待复核项时自动记录为 `analysis_authoring`；修复结束后继续使用 `--resume`，自动结算 `rework`。不兼容上一版运行状态或旧阶段名称。
 
-**`agent_between_steps` 是所有 Agent 子阶段的合计，不可再与子阶段相加。** 命令行分开输出脚本合计 `SCRIPT_TOTAL`、Agent 合计 `AGENT_TOTAL` 和真实可相加的 `TRACKED_TOTAL = SCRIPT_TOTAL + AGENT_TOTAL`。失败的脚本尝试保留在相应阶段 `attempts` 中，不计入 Agent 修复时间。
+`agent_between_steps` 是三个子阶段的 Agent 总时间，**不得与子阶段重复相加**。输出：
 
-这些计时用于判断下一轮到底应该优化“查源码”“业务判断”“测试设计”还是“报告编写”，而不是先假设某一步一定值得脚本化。
+- `SCRIPT_TOTAL`：全部脚本执行尝试（含失败重试）的累计耗时；
+- `AGENT_TOTAL`：`agent_between_steps`；
+- `TRACKED_TOTAL`：`SCRIPT_TOTAL + AGENT_TOTAL`。
+
+`review_query.py` 在本次 run 的 `.work/query-metrics.jsonl` 逐次追加轻量统计；不修改 Agent 计时状态，也不保存查询关键词、源码片段或完整参数，只保存请求哈希、模式、视图、状态和体量。下一次编排状态写入时汇总到 `run-state.json.query_stats`，交付后的 run-state 包含完整统计：
+
+- `calls / successes / failures`：调用与失败次数；
+- `distinct_requests / repeated_calls`：完全相同的模式、查询参数、视图和分页条件重复调用次数（正常的两次 audit 也会算重复）；
+- `by_mode / by_view`：查询方式分布；
+- `returned_items`：工具实际返回的项目计数；
+- `returned_bytes`：生成 JSON 的 UTF-8 字节数；
+- `stdout_bytes`：实际写入终端的响应字节数；`--output` 只在终端输出文件位置；
+- `invalid_events`：日志异常行数。
+
+**字节数不等于 Agent Token 消耗或真实阅读量**，只能用于比较查询输出体量。独立分析目录不记录此运行级指标。
+
 
 ## Coverage 待复核清单
 
