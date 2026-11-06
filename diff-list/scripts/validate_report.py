@@ -189,6 +189,22 @@ def validate(text,template,expected):
     return errors,warnings
 
 
+def without_draft_status(text):
+    """机器标记缺失时允许正式校验；存在重复、不配对或不规范的标记仍拒绝。"""
+    marker_count=text.count('<!-- diff-list-status: draft -->')
+    status_count=text.count('报告状态：未完成')
+    if marker_count!=status_count or marker_count>1:
+        raise ValueError('报告存在不一致或重复的草稿状态标记')
+    if not marker_count:
+        return text
+    candidate,count=re.subn(
+        r'(?m)^<!-- diff-list-status: draft -->\\r?\\n\\*\\*报告状态：未完成。\\*\\*[^\\r\\n]*\\r?\\n?',
+        '',text,count=1)
+    if count!=1:
+        raise ValueError('could not clear the generated draft marker/status')
+    return candidate
+
+
 def main(argv=None):
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('report')
@@ -204,17 +220,7 @@ def main(argv=None):
         text=raw.decode('utf-8-sig')
         candidate_text=text
         if a.finalize:
-            # 草稿状态由脚本管理，Agent 未保留时不阻断交付；重复或不一致仍拒绝。
-            marker_count=text.count('<!-- diff-list-status: draft -->')
-            status_count=text.count('报告状态：未完成')
-            if marker_count!=status_count or marker_count>1:
-                raise ValueError('报告存在不一致或重复的草稿状态标记')
-            if marker_count:
-                candidate_text,count=re.subn(
-                    r'(?m)^<!-- diff-list-status: draft -->\r?\n\*\*报告状态：未完成。\*\*[^\r\n]*\r?\n?',
-                    '',text,count=1)
-                if count!=1:
-                    raise ValueError('could not clear the generated draft marker/status')
+            candidate_text=without_draft_status(text)
         template=Path(a.template).read_text(encoding='utf-8-sig')
         analysis=json.loads(Path(a.analysis).read_text(encoding='utf-8-sig'))
         expected=expected_project_shas(analysis)
