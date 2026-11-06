@@ -44,13 +44,17 @@ class DiffListTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,'javac not found'):
                     source_index.jdk_tools()
 
-    def test_case_template_is_current_contract(self):
+    def test_generated_input_skeletons_use_current_contracts(self):
         contract=module('case_contract')
         data=contract.empty_cases('analysis-1')
         self.assertEqual(data['schema_version'],3)
         self.assertEqual(data['analysis_id'],'analysis-1')
         self.assertEqual(set(data['purpose_cases']),set(contract.PURPOSES))
         self.assertTrue(all(value==[] for value in data['purpose_cases'].values()))
+        report=module('generate_report').empty_report_data()
+        self.assertEqual(set(report),{'sections'})
+        self.assertEqual(set(report['sections']),set(module('generate_report').SECTION_KEYS))
+        self.assertTrue(all(value=='' for value in report['sections'].values()))
 
     def test_template_heading_only(self):
         template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
