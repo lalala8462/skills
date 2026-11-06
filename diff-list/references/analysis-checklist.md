@@ -73,7 +73,7 @@ branch、switch、contains、集合数量等源码事实由 AI 结合业务变�
 
 正常逻辑已在需求验收中覆盖时，不在回归或边界 sheet 重复。
 
-结构覆盖矩阵只用于发现未引用的 review unit/facet；对提示项逐一复核，但不要为了达到 100% 数字覆盖而制造重复或无业务价值的用例。
+`coverage.json` 的 `pending_review` 只用于发现尚未绑定测试场景的 review unit。优先查看 `candidate_case_ids` 判断现有场景是否已经实际覆盖；能覆盖则补充 `review_unit_id` 绑定，不能覆盖才新增用例。不要为了让待复核数量归零而制造重复或无业务价值的测试。
 
 ## 7. 报告
 
