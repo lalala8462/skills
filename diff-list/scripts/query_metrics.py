@@ -37,6 +37,7 @@ def request_hash(args,analysis_id):
         'analysis_id':analysis_id,
         'mode':query_mode(args),
         'query':args.query,
+        'context':getattr(args,'context',None),
         'unit':args.unit,
         'fact':args.fact,
         'evidence':args.evidence,
