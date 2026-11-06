@@ -354,7 +354,7 @@ def audit_material(analysis,review,context):
         'unreferenced_evidence':counts['unreferenced_evidence']
     }
     attention_kinds={
-        'missing_seeds','unassigned_primary_facts','unresolved_relations',
+        'missing_seeds','unassigned_primary_facts',
         'missing_evidence','evidence_project_mismatch',
         'hard_errors','invalid_unit_references','cross_source_missing'
     }
@@ -364,7 +364,8 @@ def audit_material(analysis,review,context):
                    evidence_count=len(indexes['evidence']),
                    limits=analysis.get('limits') or {}),
         counts=counts,scope_tiers=tiers,
-        requires_attention=any(counts[key] for key in attention_kinds),
+        requires_attention=(any(counts[key] for key in attention_kinds)
+                            or tiers['change_touched_unresolved']>0),
         informational_only_views=['unindexed_facts','unindexed_relations','unreferenced_evidence'],
         available_views=list(AUDIT_VIEWS),
         note=('直接变化和触及变更方法的未解析关系优先展示；'
