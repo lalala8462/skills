@@ -39,7 +39,7 @@ description: "基于指定仓库与 Git 修订生成最终净变化分析、范�
 py -3 .\scripts\review_workbench.py --analysis G:\tmp\analysis-run\analysis.json --output G:\tmp\delivery\fast10-review.json --cases-template G:\tmp\delivery\test-cases.json
 ```
 
-脚本预先写入当前 `schema_version=3` 的合法骨架，AI 只向四类数组添加用例，不重新创建顶层 JSON 结构。
+脚本同时预生成 `test-cases.json` 和 `report-data.json` 的固定结构。AI 只填充用例数组和报告正文，不重新创建顶层 JSON 结构。
 
 每条用例固定包含：
 
