@@ -85,6 +85,8 @@ Agent 直接填写：
 - Mermaid
 - 特殊逻辑与测试关注点，包括既有功能影响
 
+报告初始化已预置“既有功能影响”的填写位置，必须替换 Agent 占位符；无法确认影响不能默认填写“无”。
+
 脚本维护：
 
 - 项目与完整 SHA
@@ -100,19 +102,24 @@ resume 时脚本只刷新机器维护章节，Agent 业务章节必须原样保�
 
 pending_review 是遗漏复核清单，不是覆盖率门槛，也不证明业务语义或分支覆盖。candidate_case_ids 只是帮助判断已有场景是否可能复用，最终仍由 Agent 决定。
 
-## Agent 子阶段计时
+## Agent 时间与查询统计
 
-run_schema_version=3。
+run_schema_version=4。只记录三个 Agent 子阶段：
 
-初次进入 Agent 阶段自动开始 source_review。工作重点变化时切换：
+- `source_review`：源码查证，首次进入 Agent 时自动开始；
+- `analysis_authoring`：业务归纳、用例设计和报告编写的综合阶段；
+- `rework`：resume 失败后自动开始的修复阶段。
 
-    py -3 .\scripts\run_delivery.py --run-dir <run> --mark-agent-phase business_reasoning
-    py -3 .\scripts\run_delivery.py --run-dir <run> --mark-agent-phase test_design
-    py -3 .\scripts\run_delivery.py --run-dir <run> --mark-agent-phase report_edit
+开始综合分析时主动执行：
 
-coverage 暂停自动记录 coverage_review；resume 的 preflight / coverage / Excel / report / finalize 失败后自动进入 `waiting_rework`，修复期间计入 `agent_rework`，下次 `--resume` 先结算此区间。可用 `--mark-agent-phase report_edit` 等细分修复工作。
+    py -3 .\scripts\run_delivery.py --run-dir <run> --mark-agent-phase analysis_authoring
 
-`agent_between_steps` 是 source_review、business_reasoning、test_design、report_edit、coverage_review、rework 子阶段的**合计值**，不能与这些子阶段再次相加。读取计时只使用 `TRACKED_TOTAL = SCRIPT_TOTAL + AGENT_TOTAL`。失败脚本的尝试次数和用时保留在对应 stage.attempts。
+coverage 待复核继续计入 `analysis_authoring`；preflight 等步骤失败后 `waiting_rework` 自动计时。旧的 business_reasoning/test_design/report_edit/coverage_review 阶段不再存在，也不兼容旧 run-state。
+
+`agent_between_steps` 是上述三个子阶段合计；总计只使用 `TRACKED_TOTAL = SCRIPT_TOTAL + AGENT_TOTAL`，不可重复加上子阶段。
+
+`review_query.py` 在本轮运行目录内写入 `.work/query-metrics.jsonl`，自动记录次数、按模式/视图计数、重复调用、生成 JSON 字节数、终端响应字节数及返回条数，不记录查询原文。编排脚本下一次保存 run-state 时汇总为 `query_stats`。统计只用于定位重复查询和上下文成本，**输出字节数不等于模型 Token 使用量**。
+
 
 ## 质量约束
 
