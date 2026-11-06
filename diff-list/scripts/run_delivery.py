@@ -75,19 +75,36 @@ def _run_stage(state_path,state,name,commands,cleanup=()):
         raise RuntimeError('{} 阶段失败，returncode={}'.format(name,returncode))
 
 
+def _begin_agent_wait(state_path,state,status,reason):
+    waiting=time.time()
+    state['status']=status
+    state['waiting_started_at']=_iso(waiting)
+    state['waiting_started_epoch']=waiting
+    state['waiting_reason']=reason
+    _write_state(state_path,state)
+
+
 def _record_agent_interval(state_path,state):
-    if 'agent_between_steps' in state.get('stages',{}):
-        return
     started=state.get('waiting_started_epoch')
     if not isinstance(started,(int,float)):
-        raise ValueError('run-state.json 缺少 waiting_started_epoch')
+        return
     ended=time.time()
-    state.setdefault('stages',{})['agent_between_steps']=dict(
+    row=state.setdefault('stages',{}).get('agent_between_steps') or dict(
+        started_at=_iso(started),elapsed_seconds=0.0,status='completed',returncode=0,segments=[])
+    elapsed=max(0.0,ended-started)
+    row['ended_at']=_iso(ended)
+    row['elapsed_seconds']=round(float(row.get('elapsed_seconds',0.0))+elapsed,3)
+    row['status']='completed'
+    row['returncode']=0
+    row.setdefault('segments',[]).append(dict(
+        reason=state.get('waiting_reason') or 'agent_review',
         started_at=_iso(started),
         ended_at=_iso(ended),
-        elapsed_seconds=round(max(0.0,ended-started),3),
-        status='completed',
-        returncode=0)
+        elapsed_seconds=round(elapsed,3)))
+    state['stages']['agent_between_steps']=row
+    state.pop('waiting_started_at',None)
+    state.pop('waiting_started_epoch',None)
+    state.pop('waiting_reason',None)
     _write_state(state_path,state)
 
 
@@ -165,12 +182,8 @@ def _prepare(args):
         '--cases-template',str(cases),
         '--report-template',str(report_data)]
     _run_stage(state_path,state,'review_workbench',[review_command])
-    waiting=time.time()
-    state['status']='waiting_agent'
-    state['waiting_started_at']=_iso(waiting)
-    state['waiting_started_epoch']=waiting
     state.pop('failed_stage',None)
-    _write_state(state_path,state)
+    _begin_agent_wait(state_path,state,'waiting_agent','initial_business_review')
     print('RUN_DIR: '+str(run_dir))
     print('AGENT_INPUT: '+str(cases))
     print('AGENT_INPUT: '+str(report_data))
@@ -231,7 +244,7 @@ def _resume(run_dir_value):
         _print_timings(state)
         print('DELIVERY: '+str(run_dir))
         return 0
-    if state.get('status') not in ('waiting_agent','failed'):
+    if state.get('status') not in ('waiting_agent','waiting_coverage_review','failed'):
         raise ValueError('当前 run 状态不允许 resume: '+str(state.get('status')))
     _record_agent_interval(state_path,state)
 
@@ -255,6 +268,19 @@ def _resume(run_dir_value):
         '--analysis',str(analysis),'--review',str(review),'--cases',str(cases),
         '--coverage-output',str(coverage)]
     _run_stage(state_path,state,'coverage',[coverage_command],cleanup=(coverage,))
+    coverage_data=json.loads(coverage.read_text(encoding='utf-8-sig'))
+    pending=coverage_data.get('pending_review') or []
+    if pending:
+        state=json.loads(state_path.read_text(encoding='utf-8-sig'))
+        _begin_agent_wait(state_path,state,'waiting_coverage_review','coverage_pending_review')
+        print('COVERAGE_REVIEW: {} pending unit(s)'.format(len(pending)))
+        print('COVERAGE: '+str(coverage))
+        print('PENDING: '+','.join(row.get('unit_id','') for row in pending))
+        print('说明：已有场景已隐含覆盖时，把对应 review_unit_id 加到该用例；否则补充新用例。')
+        print('RESUME: {} -B {} --resume {}'.format(sys.executable,SCRIPT_DIR/'run_delivery.py',run_dir))
+        state=json.loads(state_path.read_text(encoding='utf-8-sig'))
+        _print_timings(state)
+        return 0
 
     excel_command=[
         sys.executable,'-B',str(SCRIPT_DIR/'export_test_cases.py'),
