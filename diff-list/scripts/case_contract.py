@@ -214,7 +214,7 @@ def navigation_facet_index(review):
 
 
 def coverage_matrix(data,analysis,review):
-    """输出结构覆盖矩阵；只提示未引用范围，不证明业务覆盖充分。"""
+    """统计测试用例对复核单元与 facet 的引用关系，不衡量业务覆盖率。"""
     validate_cases(data,analysis,review)
     units=review_unit_index(review)
     facets=review_facet_index(review)
@@ -242,14 +242,14 @@ def coverage_matrix(data,analysis,review):
             change_summary=unit.get('change_summary') or [],
             direct_fact_groups=unit.get('direct_fact_groups') or {},
             context_fact_groups=unit.get('context_fact_groups') or {},
-            covered=bool(case_ids),
+            referenced_by_cases=bool(case_ids),
             case_ids=case_ids,
             purposes=sorted(purposes_by_unit[unit_id])))
 
     facet_rows=[]
     for facet_id,facet in sorted(facets.items()):
-        covered_units=[unit_id for unit_id in facet['unit_ids'] if cases_by_unit[unit_id]]
-        uncovered_units=[unit_id for unit_id in facet['unit_ids'] if not cases_by_unit[unit_id]]
+        referenced_units=[unit_id for unit_id in facet['unit_ids'] if cases_by_unit[unit_id]]
+        unreferenced_units=[unit_id for unit_id in facet['unit_ids'] if not cases_by_unit[unit_id]]
         case_ids=sorted({case_id for unit_id in facet['unit_ids'] for case_id in cases_by_unit[unit_id]})
         facet_rows.append(dict(
             facet_id=facet_id,
@@ -257,21 +257,21 @@ def coverage_matrix(data,analysis,review):
             type=facet['type'],
             anchor=facet['anchor'],
             unit_ids=facet['unit_ids'],
-            covered_unit_ids=covered_units,
-            uncovered_unit_ids=uncovered_units,
+            referenced_unit_ids=referenced_units,
+            unreferenced_unit_ids=unreferenced_units,
             case_ids=case_ids))
 
-    uncovered=[row['unit_id'] for row in unit_rows if not row['covered']]
-    uncovered_method=[row['unit_id'] for row in unit_rows
-                      if not row['covered'] and row['scope']=='method']
-    uncovered_project=[row['unit_id'] for row in unit_rows
-                       if not row['covered'] and row['scope']=='project']
-    partially=[row['facet_id'] for row in facet_rows if row['covered_unit_ids'] and row['uncovered_unit_ids']]
-    uncovered_facets=[row['facet_id'] for row in facet_rows if not row['covered_unit_ids']]
-    fully=[row['facet_id'] for row in facet_rows if row['covered_unit_ids'] and not row['uncovered_unit_ids']]
+    unreferenced=[row['unit_id'] for row in unit_rows if not row['referenced_by_cases']]
+    unreferenced_method=[row['unit_id'] for row in unit_rows
+                      if not row['referenced_by_cases'] and row['scope']=='method']
+    unreferenced_project=[row['unit_id'] for row in unit_rows
+                       if not row['referenced_by_cases'] and row['scope']=='project']
+    partially=[row['facet_id'] for row in facet_rows if row['referenced_unit_ids'] and row['unreferenced_unit_ids']]
+    unreferenced_facets=[row['facet_id'] for row in facet_rows if not row['referenced_unit_ids']]
+    fully=[row['facet_id'] for row in facet_rows if row['referenced_unit_ids'] and not row['unreferenced_unit_ids']]
     pending_review=[]
     for row in unit_rows:
-        if row['covered']:
+        if row['referenced_by_cases']:
             continue
         high_value=[]
         for facet_id in row['navigation_facet_ids']:
@@ -290,7 +290,7 @@ def coverage_matrix(data,analysis,review):
             if unit_id!=row['unit_id']
             for case_id in cases_by_unit[unit_id]
         })
-        related_covered_unit_ids=sorted({
+        related_referenced_unit_ids=sorted({
             unit_id
             for facet_id in row['navigation_facet_ids']
             for unit_id in navigation_facets[facet_id]['unit_ids']
@@ -304,31 +304,32 @@ def coverage_matrix(data,analysis,review):
             direct_change=row['change_summary'],
             high_value_facets=high_value,
             candidate_case_ids=candidate_case_ids,
-            related_covered_unit_ids=related_covered_unit_ids,
+            related_referenced_unit_ids=related_referenced_unit_ids,
             all_facet_ids=row['facet_ids'],
             decision='待 Agent 判断：补充测试用例，或确认已由现有业务场景隐含覆盖'))
     return dict(
-        coverage_schema_version=2,
+        coverage_schema_version=3,
         analysis_id=data['analysis_id'],
         review_schema_version=REVIEW_SCHEMA_VERSION,
         summary=dict(
             unit_count=len(unit_rows),
-            covered_unit_count=len(unit_rows)-len(uncovered),
-            uncovered_unit_count=len(uncovered),
-            uncovered_method_unit_count=len(uncovered_method),
-            uncovered_project_unit_count=len(uncovered_project),
+            referenced_unit_count=len(unit_rows)-len(unreferenced),
+            unreferenced_unit_count=len(unreferenced),
+            unreferenced_method_unit_count=len(unreferenced_method),
+            unreferenced_project_unit_count=len(unreferenced_project),
             facet_count=len(facet_rows),
             navigation_facet_count=len(navigation_facets),
             pending_review_count=len(pending_review),
-            fully_covered_facet_count=len(fully),
-            partially_covered_facet_count=len(partially),
-            uncovered_facet_count=len(uncovered_facets)),
-        uncovered_unit_ids=uncovered,
-        uncovered_method_unit_ids=uncovered_method,
-        uncovered_project_unit_ids=uncovered_project,
-        partially_covered_facet_ids=partially,
-        uncovered_facet_ids=uncovered_facets,
+            referenced_facet_count=len(facet_rows)-len(unreferenced_facets),
+            all_units_referenced_facet_count=len(fully),
+            partially_referenced_facet_count=len(partially),
+            unreferenced_facet_count=len(unreferenced_facets)),
+        unreferenced_unit_ids=unreferenced,
+        unreferenced_method_unit_ids=unreferenced_method,
+        unreferenced_project_unit_ids=unreferenced_project,
+        partially_referenced_facet_ids=partially,
+        unreferenced_facet_ids=unreferenced_facets,
         pending_review=pending_review,
-        unit_coverage=unit_rows,
-        facet_coverage=facet_rows,
-        note='pending_review 是待复核清单，不是覆盖率门槛；完整 review_facets 仍用于结构回查，navigation_facets 只提供高价值首轮导航。')
+        unit_case_references=unit_rows,
+        facet_case_references=facet_rows,
+        note='仅统计测试用例对 review_unit_ids 的引用关系，不证明分支或业务规则覆盖；pending_review 表示尚未被用例引用的复核单元。')

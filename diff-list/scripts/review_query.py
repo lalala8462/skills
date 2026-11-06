@@ -31,6 +31,19 @@ NOTE=('结果基于确定性索引或显式匹配；分类视图不代表完整�
       '未命中的事实、关系及源码仍保留在 analysis.json / context.jsonl。')
 
 
+def _is_direct_change_fact(row):
+    if row.get('kind')=='configuration':
+        # 配置读取被纳入分析，并不代表配置值发生变化。
+        return (row.get('data') or {}).get('change') in ('added','removed')
+    return row.get('kind') in PRIMARY_KINDS
+
+
+def _relation_tier(row,seeds,project):
+    touched=((project,row.get('source')) in seeds or any(
+        (project,symbol) in seeds for symbol in row.get('targets') or []))
+    return 'change_touched_boundary' if touched else 'supporting_context'
+
+
 def _contains(value,needle):
     if isinstance(value,str):
         return needle in value.casefold()
@@ -190,7 +203,14 @@ def query_material(analysis,review,context,query=None,unit_id=None):
 
 def _unit_index(row,indexes):
     fact_ids=set(row.get('fact_ids') or [])
+    direct_fact_ids=sorted(set(row.get('direct_fact_ids') or []))
+    context_fact_ids=set(row.get('context_fact_ids') or [])
     relation_ids=set(row.get('relation_ids') or [])
+    direct_evidence_ids=set()
+    for fact_id in direct_fact_ids:
+        fact=indexes['facts'].get(fact_id)
+        if fact:
+            direct_evidence_ids.update(fact.get('evidence_ids') or [])
     counts={}
     evidence_ids=set()
     for identifier in fact_ids:
@@ -205,8 +225,13 @@ def _unit_index(row,indexes):
             evidence_ids.update(relation.get('evidence_ids') or [])
     missing_refs=(fact_ids-set(indexes['facts'])) | (relation_ids-set(indexes['relations'])) | (
         set(row.get('facet_ids') or [])-set(indexes['facets']))
+    missing_refs.update(set(direct_fact_ids)-set(indexes['facts']))
+    missing_refs.update(direct_evidence_ids-set(indexes['evidence']))
     return dict(unit_id=row['id'],project=row['_project'],scope=row.get('scope'),
         symbol=row.get('symbol'),direct_change_count=len(row.get('change_summary') or []),
+        direct_fact_ids=direct_fact_ids,
+        direct_evidence_ids=sorted(direct_evidence_ids),
+        context_fact_count=len(context_fact_ids),
         invalid_reference_count=len(missing_refs),
         fact_count=len(fact_ids),relation_count=len(relation_ids),
         evidence_count=len(evidence_ids),facet_count=len(row.get('facet_ids') or []),
@@ -256,9 +281,11 @@ def _audit_rows(analysis,indexes):
                              for name,symbol in sorted(seeds-indexed)]
     for identifier,row in sorted(facts.items()):
         if identifier not in assigned_facts:
-            item=dict(id=identifier,project=row['_project'],kind=row.get('kind'))
+            direct=_is_direct_change_fact(row)
+            item=dict(id=identifier,project=row['_project'],kind=row.get('kind'),
+                      scope_tier='direct_change' if direct else 'supporting_context')
             result['unindexed_facts'].append(item)
-            if row.get('kind') in PRIMARY_KINDS:
+            if direct:
                 result['unassigned_primary_facts'].append(item)
     for identifier,row in sorted(relations.items()):
         if identifier not in assigned_relations:
@@ -266,8 +293,12 @@ def _audit_rows(analysis,indexes):
                 id=identifier,project=row['_project'],source=row.get('source')))
         if row.get('status')=='unresolved':
             result['unresolved_relations'].append(dict(id=identifier,project=row['_project'],
-                source=row.get('source'),reason=row.get('reason')))
+                source=row.get('source'),reason=row.get('reason'),
+                scope_tier=_relation_tier(row,seeds,row['_project'])))
     referenced_evidence=set()
+    # 按接近最终净变化的程度排序，但绝不丢弃背景 unresolved。
+    result['unresolved_relations'].sort(key=lambda item:(
+        item['scope_tier']!='change_touched_boundary',item['project'],item['id']))
     for key,collection in (('fact',facts),('relation',relations)):
         for identifier,row in sorted(collection.items()):
             evidence_ids=set(row.get('evidence_ids') or [])
@@ -312,8 +343,18 @@ def audit_material(analysis,review,context):
     indexes=_indexes(analysis,review,context)
     groups=_audit_rows(analysis,indexes)
     counts={key:len(rows) for key,rows in groups.items()}
+    tiers={
+        'direct_change_unassigned':counts['unassigned_primary_facts'],
+        'change_touched_unresolved':sum(
+            row['scope_tier']=='change_touched_boundary' for row in groups['unresolved_relations']),
+        'supporting_unresolved':sum(
+            row['scope_tier']=='supporting_context' for row in groups['unresolved_relations']),
+        'supporting_unindexed':sum(
+            row['scope_tier']=='supporting_context' for row in groups['unindexed_facts']),
+        'unreferenced_evidence':counts['unreferenced_evidence']
+    }
     attention_kinds={
-        'missing_seeds','unassigned_primary_facts','unresolved_relations',
+        'missing_seeds','unassigned_primary_facts',
         'missing_evidence','evidence_project_mismatch',
         'hard_errors','invalid_unit_references','cross_source_missing'
     }
@@ -322,11 +363,14 @@ def audit_material(analysis,review,context):
                    fact_count=len(indexes['facts']),relation_count=len(indexes['relations']),
                    evidence_count=len(indexes['evidence']),
                    limits=analysis.get('limits') or {}),
-        counts=counts,requires_attention=any(counts[key] for key in attention_kinds),
+        counts=counts,scope_tiers=tiers,
+        requires_attention=(any(counts[key] for key in attention_kinds)
+                            or tiers['change_touched_unresolved']>0),
         informational_only_views=['unindexed_facts','unindexed_relations','unreferenced_evidence'],
         available_views=list(AUDIT_VIEWS),
-        note=('未索引的支持性事实/关系属于可回查的信息提示，不直接等于业务遗漏；'
-              '未归属主要事实、未解析关系与证据异常需要 Agent 重点核查。'
+        note=('直接变化和触及变更方法的未解析关系优先展示；'
+              '配置读取未改变时属于背景，不计为未归属的主要变化。'
+              '背景 unresolved 与全部事实仍可分页回查；'
               '审计只验证结构/可见边界，不证明业务场景完整。'))
 
 
@@ -391,12 +435,16 @@ def _render_request(args,analysis,review,context):
                     totals=audit['scope'],audit_counts=audit['counts'],note=NOTE)
 
     matched,expanded,cross=_lookup_selection(indexes,analysis,args.query,args.unit)
+    matched_only=getattr(args,'matched_only',False)
+    if matched_only and (not args.query or args.view!='facts'):
+        raise ValueError('--matched-only 只能与 --query 和 --view facts 一起使用')
     match_summary={key+'_count':len(value) for key,value in matched.items()}
     if args.view=='index':
         items=[_unit_index(indexes['units'][i],indexes)
                for i in sorted(matched['units']) if i in indexes['units']]
     elif args.view=='facts':
-        items=[indexes['facts'][i] for i in sorted(expanded['facts']) if i in indexes['facts']]
+        selected_ids=matched['facts'] if matched_only else expanded['facts']
+        items=[indexes['facts'][i] for i in sorted(selected_ids) if i in indexes['facts']]
     elif args.view=='relations':
         items=[indexes['relations'][i] for i in sorted(expanded['relations'])
                if i in indexes['relations']]
@@ -417,14 +465,16 @@ def _render_request(args,analysis,review,context):
         return dict(mode='lookup',view='all',analysis_id=analysis['analysis_id'],
                     complete=True,**query_material(analysis,review,context,args.query,args.unit))
     selected,page=_paginate(items,analysis['analysis_id'],
-        'lookup:{}:{}:{}'.format(args.unit or '',args.query or '',args.view),
+        'lookup:{}:{}:{}:{}'.format(args.unit or '',args.query or '',args.view,matched_only),
         args.limit,args.cursor)
     return dict(mode='lookup',query=args.query,unit_id=args.unit,view=args.view,
+                matched_only=matched_only,
+                related_unit_ids=sorted(matched['units']) if matched_only else [],
                 analysis_id=analysis['analysis_id'],matched=match_summary,
                 selected_totals={key+'_count':len(value) for key,value in expanded.items()},
                 cross_project_relation_count=len(cross),
                 items=selected,page=page,
-                category_is_exhaustive=args.view in ('facts','relations','evidence','calls'),
+                category_is_exhaustive=(not matched_only and args.view in ('facts','relations','evidence','calls')),
                 note=NOTE)
 
 
@@ -461,6 +511,8 @@ def main(argv=None):
     parser.add_argument('--view',default='index',help='查询层级：index/facts/relations/evidence/db/calls/conditions/all；audit 可查看异常分类')
     parser.add_argument('--limit',type=int,default=10,help='每页最多 10 项，可按需提高至 100')
     parser.add_argument('--cursor',help='上一页返回的 next_cursor')
+    parser.add_argument('--matched-only',action='store_true',
+                        help='只返回关键词真正命中的 fact，不展开关联 unit；需搭配 --query --view facts')
     parser.add_argument('--source-lines',type=int,default=8,
                         help='evidence 前后各补充的源码行数（0-100）')
     parser.add_argument('--output',help='写入新的 JSON 文件，否则打印 stdout')
@@ -472,8 +524,8 @@ def main(argv=None):
     except (OSError,ValueError,TypeError,UnicodeError) as exc:
         print('WARNING: 无法定位查询统计目录: '+str(exc),file=sys.stderr)
     try:
-        if not any((args.overview,args.audit,args.query,args.unit,args.fact,args.evidence)):
-            raise ValueError('必须指定一种查询模式')
+        if args.matched_only and (not args.query or args.view!='facts'):
+            raise ValueError('--matched-only 只能与 --query 和 --view facts 一起使用')
         if not 1<=args.limit<=100 or not 0<=args.source_lines<=100:
             raise ValueError('--limit 必须在 1-100，--source-lines 必须在 0-100')
         if args.audit:
@@ -487,8 +539,6 @@ def main(argv=None):
             raise ValueError('--fact/--evidence 不支持 --view/--cursor')
         if args.view=='all' and args.cursor:
             raise ValueError('--view all 不支持 cursor；优先使用分页视图')
-        if args.cursor and args.audit is False and (args.fact or args.evidence):
-            raise ValueError('此模式不支持 cursor')
         analysis=_load_json(args.analysis)
         review=_load_json(args.review)
         analysis_path=Path(args.analysis).resolve()

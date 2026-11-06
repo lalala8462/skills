@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from case_contract import PURPOSES, validate_cases
-from generate_report import AGENT_HEADINGS, AGENT_PLACEHOLDER, DRAFT_MARKER
+from generate_report import AGENT_HEADINGS, AGENT_PLACEHOLDER
 from scope_validation import validate_scope_files
 from validate_report import fenced_blocks, heading_positions, sections
 
@@ -28,8 +28,6 @@ def report_errors(text,template):
     if got!=want:
         errors.append('report.md 标题及顺序与模板不一致')
         return errors
-    if text.count(DRAFT_MARKER)!=1 or text.count('报告状态：未完成')!=1:
-        errors.append('report.md 必须保留唯一草稿标记，finalize 前不得手工删除')
     body=sections(text,got)
     for heading in AGENT_HEADINGS:
         value=body.get(heading,'').strip()

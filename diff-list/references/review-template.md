@@ -28,15 +28,15 @@ Agent 可以优先看 navigation_facets，但必须保证所有 review unit 最�
 
 使用 `review_query.py --overview` 查看所有 unit 与异常计数；使用 `--unit / --query` 获取轻量索引，再使用 `--view facts/relations/evidence/db/calls/conditions` 分页展开。对于关键判断，用 `--fact` 查看事实，`--evidence` 校验 Git 固定快照并读取脱敏源码。
 
-响应 `page.complete=false` 必须沿 `next_cursor` 继续读取；分类视图不能充当全业务影响范围。
+`--unit` 索引包含直接事实 ID 和直接证据 ID；`--query 关键词 --view facts --matched-only` 仅展开精确事实，不默认携带该单元全部事实。响应 `page.complete=false` 必须沿 `next_cursor` 继续读取；分类视图不能充当全业务影响范围。
 
-`--audit` 检查 change seed 未归属、主要事实未归属、事实/关系未索引、unresolved、hard_errors 和证据缺失。允许正常未归属支持性事实，但必须解释其影响；`coverage.pending_review=0` 不构成审计通过，也不代表业务完整。
+`--audit` 按直接变化、触及变更的未解析关系、支持性背景区分阅读优先级，并检查 change seed 未归属、证据缺失、hard_errors。允许正常未归属支持性事实，但必须解释其影响；`coverage.pending_review=0` 不构成审计通过，也不代表业务完整。
 
 ## 用例绑定与待复核
 
 Agent 在测试用例里只填写 review_unit_ids，脚本自动展开 fact/evidence。
 
-coverage_schema_version=2 的 pending_review 对尚未引用的 unit 给出 direct_change、high_value_facets、candidate_case_ids、related_covered_unit_ids 和完整 facet 引用。
+coverage_schema_version=3 的 pending_review 对尚未引用的 unit 给出 direct_change、high_value_facets、candidate_case_ids、related_referenced_unit_ids 和完整 facet 引用。
 
 处理方式只有：
 

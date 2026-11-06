@@ -134,8 +134,10 @@ def refresh_report(current,template,analysis,cases,excel_name):
     got=[title for _,title in heading_positions(current)]
     if got!=want:
         raise ValueError('报告标题及顺序与模板不一致，不能安全刷新脚本维护章节')
-    if current.count(DRAFT_MARKER)!=1 or current.count('报告状态：未完成')!=1:
-        raise ValueError('报告缺少唯一草稿标记，不能安全刷新')
+    markers=current.count(DRAFT_MARKER)
+    statuses=current.count('报告状态：未完成')
+    if markers!=statuses or markers>1:
+        raise ValueError('报告存在不一致或重复的草稿状态标记')
     existing=sections(current,got)
     bodies={heading:existing.get(heading,'').strip() for heading in AGENT_HEADINGS}
     bodies.update({

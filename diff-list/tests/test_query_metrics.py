@@ -105,6 +105,9 @@ class QueryMetricsTest(unittest.TestCase):
         args.cursor=None
         args.view='relations'
         self.assertNotEqual(first,query_metrics.request_hash(args,'analysis-1'))
+        args.view='facts'
+        args.matched_only=True
+        self.assertNotEqual(first,query_metrics.request_hash(args,'analysis-1'))
 
     def test_invalid_telemetry_event_does_not_break_summary(self):
         with tempfile.TemporaryDirectory() as td:

@@ -38,7 +38,8 @@ navigation_facets 不能作为范围过滤器。facet 不表示业务需求归�
 Agent 可以直接调用此脚本，不需要 MCP 服务或持久化查询缓存：
 
 - `--overview`：全部 review unit 的分页索引和全局异常计数；
-- `--unit / --query`：按变化单元或关键词获取索引；
+- `--unit / --query`：按变化单元或关键词获取索引，unit 直接给出 `direct_fact_ids/direct_evidence_ids`；
+- `--query --view facts --matched-only`：只返回直接匹配事实，不扩大到 unit 所有事实；默认查询行为不变；
 - `--view facts/relations/evidence/db/calls/conditions`：仅显式展开所选类别，分类不代表全部业务影响；
 - `--fact`：完整事实及相关 evidence ID；
 - `--evidence --source-lines N`：校验固定 tree/blob 后返回脱敏源码上下文；
@@ -46,6 +47,8 @@ Agent 可以直接调用此脚本，不需要 MCP 服务或持久化查询缓存
 - `--audit --view <类别>`：按类别分页读取审计问题明细。
 
 分页字段为 `page.total/returned/complete/next_cursor`，游标绑定固定分析身份、视图和排序内容，错误游标应拒绝，不能静默跳过任何记录。
+
+Audit 将未归属的真实直接变化与背景事实分开；`configuration` 的 `retained_or_consumers_changed` 属于背景提示，直接触及净变化的 unresolved 优先显示，但绝不删除原始关系。
 
 `--audit` 不证明 Agent 已完整理解业务；支持性事实未绑定 unit 可是正常情况，但必须可见并供按需回查。
 
@@ -73,15 +76,17 @@ Agent 直接维护业务章节：
 - Excel 文件名和用例数量；
 - 验证说明。
 
-脚本刷新不得改写 Agent 业务章节。
+机器草稿状态标记可以缺失；报告刷新负责重建，正式化仍拒绝重复或不配对的标记。脚本刷新不得改写 Agent 业务章节。
 
 ## coverage.json
 
-当前 coverage_schema_version=2。
+当前 coverage_schema_version=3。
 
-pending_review 表示尚未被测试用例引用的 review unit，并提供 high_value_facets、candidate_case_ids、related_covered_unit_ids 和完整 facet 引用。
+pending_review 表示尚未被测试用例引用的 review unit，并提供 high_value_facets、candidate_case_ids、related_referenced_unit_ids 和完整 facet 引用。
 
-它是遗漏复核工具，不是业务覆盖率证明。
+`referenced_unit_count` 为测试用例引用的单元数；`referenced_facet_count` 为至少一个成员单元被用例引用的 facet 数，`all_units_referenced_facet_count` 才表示成员单元全部被引用。不存在业务分支覆盖率指标。旧的 covered_* 字段不再输出。
+
+它是未引用范围的复核工具，不是业务覆盖率证明。
 
 ## run-state.json 与查询计量
 
