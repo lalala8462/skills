@@ -289,6 +289,9 @@ class Handler {
         if fact is None:
             fact=next(f for f in self.analysis['projects'][0]['facts']
                       if f['kind']=='method_change' and f['evidence_ids'])
+        review=build_review(self.analysis)
+        unit=next(unit for project in review['projects'] for unit in project['review_units']
+                  if fact['id'] in unit['fact_ids'])
         groups['acceptance'].append(dict(
             case_id='DIRECT-001',
             title='验证本次方法行为变化',
@@ -297,20 +300,24 @@ class Handler {
             expected=['本次修改后的行为生效，且相关业务结果可观察'],
             observable_evidence=[dict(surface='接口',target='业务响应',
                                       assertion='响应字段与本次修改后的源码行为一致')],
-            fact_ids=[fact['id']],evidence_ids=[fact['evidence_ids'][0]]))
-        return dict(schema_version=3,analysis_id=self.analysis['analysis_id'],purpose_cases=groups),build_review(self.analysis)
+            review_unit_ids=[unit['id']]))
+        return dict(schema_version=4,analysis_id=self.analysis['analysis_id'],purpose_cases=groups),review
 
-    def test_direct_cases_validate_only_referenced_source_evidence(self):
+    def test_direct_cases_expand_review_unit_source_evidence(self):
+        from case_contract import resolve_case_sources
         from export_test_cases import normalize
         data,review=self.direct_cases()
         errors,_=validate(self.analysis,self.context,review,data)
         self.assertEqual(errors,[])
-        self.assertEqual(len(normalize(data,self.analysis)['purposes']['acceptance']),1)
-        broken=copy.deepcopy(data);broken['purpose_cases']['acceptance'][0]['evidence_ids']=[]
+        self.assertEqual(len(normalize(data,self.analysis,review)['purposes']['acceptance']),1)
+        resolved=resolve_case_sources(data,self.analysis,review)['DIRECT-001']
+        self.assertTrue(resolved['fact_ids'])
+        self.assertTrue(resolved['evidence_ids'])
+        broken=copy.deepcopy(data);broken['purpose_cases']['acceptance'][0]['review_unit_ids']=['RU-missing']
         errors,_=validate(self.analysis,self.context,review,broken)
-        self.assertTrue(any('requires referenced evidence' in error for error in errors))
+        self.assertTrue(any('unknown review unit' in error for error in errors))
         tampered=copy.deepcopy(self.analysis)
-        fact_id=data['purpose_cases']['acceptance'][0]['fact_ids'][0]
+        fact_id=resolved['fact_ids'][0]
         target=next(f for f in tampered['projects'][0]['facts'] if f['id']==fact_id)
         target['data']['change']='tampered'
         errors,_=validate(tampered,self.context,review,data)
@@ -337,6 +344,8 @@ class Handler {
         self.assertEqual(compact['review_summary']['change_seed_count'],12)
         self.assertEqual(compact['review_summary']['review_unit_count'],12)
         self.assertEqual(compact['review_summary']['selected_relation_count'],12)
+        self.assertEqual(compact['review_summary']['review_group_count'],1)
+        self.assertEqual(compact['review_groups'][0]['unit_count'],12)
         self.assertEqual({unit['flow'] for unit in compact['review_units']},{'退款主流程'})
         self.assertEqual({unit['symbol'] for unit in compact['review_units']},
                          {fact['data']['symbol'] for fact in facts})
@@ -371,7 +380,9 @@ class Handler {
         self.assertIn('configuration_file_change',kinds)
         self.assertIn('mapper_statement',kinds)
         self.assertEqual(compact['review_summary']['selected_relation_count'],1)
-        self.assertIn('config',compact['project_fact_ids'])
+        project_units=[unit for unit in compact['review_units'] if unit['scope']=='project']
+        self.assertEqual(len(project_units),1)
+        self.assertIn('config',project_units[0]['fact_ids'])
 
     def test_review_business_names_do_not_filter_net_changes(self):
         from analysis_engine import VERSION
