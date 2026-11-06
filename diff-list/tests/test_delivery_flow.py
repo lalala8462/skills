@@ -179,6 +179,23 @@ class DeliveryFlowTest(unittest.TestCase):
         self.assertTrue(result['requires_attention'])
         self.assertIn('不证明业务场景完整',result['note'])
 
+    def test_lookup_does_not_silently_drop_missing_fact_ids(self):
+        analysis=dict(schema_version=2,analyzer_version=VERSION,analysis_id='a1',
+            projects=[dict(name='sample',facts=[],relations=[],change_seeds=[])],
+            cross_project_relations=[])
+        review=dict(review_schema_version=4,analysis_id='a1',
+            projects=[dict(name='sample',review_facets=[],navigation_facets=[],
+                           review_units=[dict(id='RU-1',scope='method',
+                           symbol='sample.Service#run()',fact_ids=['F-missing'],
+                           relation_ids=[],facet_ids=[])])])
+        audit=query_tool.audit_material(analysis,review,[])
+        self.assertGreater(audit['counts']['invalid_unit_references'],0)
+        with self.assertRaisesRegex(ValueError,'未知 facts'):
+            query_tool.query_material(analysis,review,[],unit_id='RU-1')
+        indexed=query_tool._unit_index(dict(review['projects'][0]['review_units'][0],
+            _project='sample'),query_tool._indexes(analysis,review,[]))
+        self.assertEqual(indexed['invalid_reference_count'],1)
+
     def test_review_query_pagination_rejects_wrong_cursor_and_returns_all_records(self):
         rows=[dict(id='F-{}'.format(n)) for n in range(5)]
         all_ids=[]
