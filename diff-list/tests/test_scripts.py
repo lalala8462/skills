@@ -44,6 +44,39 @@ class DiffListTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,'javac not found'):
                     source_index.jdk_tools()
 
+    def test_generated_input_skeletons_use_current_contracts(self):
+        contract=module('case_contract')
+        data=contract.empty_cases('analysis-1')
+        self.assertEqual(data['schema_version'],3)
+        self.assertEqual(data['analysis_id'],'analysis-1')
+        self.assertEqual(set(data['purpose_cases']),set(contract.PURPOSES))
+        self.assertTrue(all(value==[] for value in data['purpose_cases'].values()))
+        report=module('generate_report').empty_report_data()
+        self.assertEqual(set(report),{'sections'})
+        self.assertEqual(set(report['sections']),set(module('generate_report').SECTION_KEYS))
+        self.assertTrue(all(value=='' for value in report['sections'].values()))
+
+    def test_review_workbench_writes_review_and_input_skeletons(self):
+        review=module('review_workbench')
+        version=module('analysis_engine').VERSION
+        analysis=dict(schema_version=2,analyzer_version=version,analysis_id='analysis-1',
+                      projects=[dict(name='sample',change_seeds=[],facts=[],relations=[],
+                                    hard_errors=[],stats={})],
+                      cross_project_relations=[])
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td)
+            source=root/'analysis.json'
+            source.write_text(json.dumps(analysis),encoding='utf-8')
+            review_path=root/'review.json'
+            cases_path=root/'cases.json'
+            report_path=root/'report-data.json'
+            self.assertEqual(review.main(['--analysis',str(source),'--output',str(review_path),
+                '--cases-template',str(cases_path),'--report-template',str(report_path)]),0)
+            self.assertTrue(review_path.is_file())
+            self.assertEqual(json.loads(cases_path.read_text(encoding='utf-8'))['analysis_id'],'analysis-1')
+            self.assertEqual(set(json.loads(report_path.read_text(encoding='utf-8'))['sections']),
+                             set(module('generate_report').SECTION_KEYS))
+
     def test_template_heading_only(self):
         template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
         self.assertTrue(all(not line.strip() or line.startswith('# ' ) or line.startswith('## ')
@@ -70,11 +103,25 @@ class DiffListTest(unittest.TestCase):
         self.assertEqual(errors,[])
         errors,_=val.validate(report+'\n<!-- diff-list-status: draft -->',template,['webapi='+sha])
         self.assertTrue(any('标记为未完成' in e for e in errors))
-        report_sections={key:value for key,value in sections.items() if key!='## 5. 测试用例导出'}
-        report_sections.update({'## 2. 改动清单':'按下列改动分类说明。','## 3. 业务流程':'流程内容见以下分项。'})
+        report_sections={
+            'scope':'webapi '+sha,
+            'requirements':'修改支付入口。',
+            'ddl':'无',
+            'dml':'无',
+            'config':'无',
+            'flow':'请求后检查支付状态。',
+            'mermaid':'```mermaid\nflowchart TD\n A[请求] --> B[状态]\n```',
+            'special':'无',
+            'verification':'仅完成静态分析。'
+        }
         rendered,_,_=generator.render(template,{'sections':report_sections},
             {'purpose_cases':{'acceptance':[{}],'core_regression':[],'related_regression':[],'boundary':[]}},
             'webapi-cases.xlsx')
+        broken=dict(report_sections,requirements='### 额外标题\n修改支付入口。')
+        with self.assertRaisesRegex(ValueError,'must not contain Markdown headings'):
+            generator.render(template,{'sections':broken},
+                {'purpose_cases':{'acceptance':[],'core_regression':[],'related_regression':[],'boundary':[]}},
+                None)
         analysis={'projects':[{'name':'webapi','git':{'selection':[{'type':'commit','sha':sha}]}}]}
         self.assertEqual(generator.preflight(rendered,template,analysis,
             {'purpose_cases':{'acceptance':[{}],'core_regression':[],'related_regression':[],'boundary':[]}},[]),[])

@@ -4,6 +4,12 @@ PURPOSES=('acceptance','core_regression','related_regression','boundary')
 PURPOSE_NAMES=('需求验收','既有核心流程回归','关联回归','业务规则与边界验证')
 
 
+def empty_cases(analysis_id):
+    """生成符合当前契约的空用例骨架，供模型直接填充四类数组。"""
+    return dict(schema_version=3,analysis_id=_text(analysis_id,'analysis_id'),
+                purpose_cases={purpose:[] for purpose in PURPOSES})
+
+
 def _text(value,label):
     if not isinstance(value,str) or not value.strip():
         raise ValueError(label+' requires a nonempty string')

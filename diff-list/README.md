@@ -1,14 +1,14 @@
 # diff-list
 
-基于指定 Git 仓库和修订生成代码差异分析、范围报告和测试用例 Excel。脚本负责固定修订、解析源码、定位一层直接影响、整理配置/SQL/外部调用事实和源码证据，AI 负责核实业务含义并编写测试用例。
+基于指定 Git 仓库和修订生成代码差异分析、范围报告和测试用例 Excel。脚本负责固定修订、解析源码、定位一层直接影响和整理源码证据，AI 只处理业务复核、测试设计和章节正文。
 
 ## 设计原则
 
 1. **最终差异是底账**：以指定修订形成的最终结果作为分析基础。
 2. **确定性工作脚本化**：AST、字段/方法变化、直接调用、Mapper、配置消费者、参数来源等由脚本提取。
 3. **直接影响一层展开**：从变化方法向上、向下各分析一层。
-4. **事实与测试设计分开**：源码事实进入快审材料，AI 根据事实形成业务结论和测试场景。
-5. **直接生成最终用例**：AI 生成 `test-cases.json`，随后导出 Excel 和 Markdown。
+4. **快审按变化点聚合**：不因多个事实共享同一源码 evidence 而把整个方法的所有事实平铺给模型。
+5. **机器结构由脚本负责**：用例顶层结构、报告标题和章节顺序不交给 AI 手工构造。
 6. **交付证据可回查**：最终用例引用的 fact/evidence 会重新核对固定 Git 快照。
 
 ## 当前流程
@@ -21,87 +21,63 @@
 py -3 .\scripts\analyze.py --repo https://github.com/example/project --rev FULL_SHA --outdir G:\tmp\analysis-run
 ```
 
-支持：
-
-- 单提交、base/head、离散提交和多项目 manifest；
-- Java 类、方法、字段变化；
-- 一层直接调用关系；
-- Mapper/XML、配置文件与配置消费者；
-- 参数来源、返回值和字段来源；
-- DB、HTTP/RPC/MQ、渠道等直接出口；
-- 固定 baseline/result 快照和源码证据；
-- Git 提交说明、重复修改文件和文本反向修改线索。
-
 输出：
 
-- `analysis.json`：静态事实、关系、Git 摘要、限制和错误；
+- `analysis.json`：完整静态事实、关系、Git 摘要、限制和错误；
 - `context.jsonl`：源码证据片段。
 
-`analysis.json` 使用 `schema_version=2`、`analyzer_version=2.1.0`。Git 元数据保留 SHA、文件列表、提交说明和重复修改线索，完整 diff 不写入分析结果。
+`analysis.json` 使用 `schema_version=2`、`analyzer_version=2.1.0`。调用关系最多 1 层、每侧最多 100 个方法；相同 blob 在同一次分析中复用解析结果。
 
-每项目每快照默认最多索引 10,000 个文件；调用关系最多 1 层、每侧最多 100 个方法；相同 blob 在同一次分析中复用解析结果。
-
-### 2. 快审材料
+### 2. 聚合快审和用例骨架
 
 ```powershell
-py -3 .\scripts\review_workbench.py --analysis G:\tmp\analysis-run\analysis.json --output G:\tmp\delivery\fast10-review.json
+py -3 .\scripts\review_workbench.py --analysis G:\tmp\analysis-run\analysis.json --output G:\tmp\delivery\fast10-review.json --cases-template G:\tmp\delivery\test-cases.json --report-template G:\tmp\delivery\report-data.json
 ```
 
-快审材料包含：
+`fast10-review.json` 以 `review_units` 为主要入口。每个变化方法只携带直接关联的方法、fact ID、relation ID 和 evidence ID；`fact_catalog` 只保存关键字段预览，完整 fact 仍在 `analysis.json` 中按 ID 回查。
 
-- 最终净变化事实；
-- 一层直接关系；
-- 与变化点相关的配置、Mapper/DB、参数来源、返回和外部调用事实；
-- `hard_errors` 和分析统计。
+项目级配置文件变化等无法绑定到单一方法的主事实放在 `project_fact_ids`。需要进一步核对时，再根据 fact/evidence ID 回查 `analysis.json` 和 `context.jsonl`。
 
-提交说明和重复修改线索位于 `analysis.json.projects[].git.commit_review`，业务意图需要核对时读取该部分即可。
-
-### 3. 测试用例
-
-`test-cases.json` 使用 `schema_version=3`，固定四类：
+同时生成的 `test-cases.json` 已经是合法的 `schema_version=3` 四类空骨架，`report-data.json` 也已包含固定语义字段；AI 只填内容。四类用例为：
 
 - `acceptance`：需求验收；
 - `core_regression`：既有核心流程回归；
 - `related_regression`：关联回归；
 - `boundary`：业务规则与边界验证。
 
+`steps`、`expected` 都必须是非空字符串数组。
+
+### 3. Excel
+
+```powershell
+py -3 .\scripts\export_test_cases.py --input G:\tmp\delivery\test-cases.json --output G:\tmp\delivery\test-cases.xlsx --analysis G:\tmp\analysis-run\analysis.json --review G:\tmp\delivery\fast10-review.json
+```
+
+Excel 固定四个工作表和五列：用例编号、用例名称、前置条件、步骤描述、预期结果。预期结果必须包含可判定的页面、接口、日志、数据库、文件或下游行为证据。
+
+### 4. 报告
+
+`report-data.json` 只接受固定语义字段，不接受模板标题作为 key：
+
 ```json
 {
-  "schema_version": 3,
-  "analysis_id": "本次 analysis_id",
-  "purpose_cases": {
-    "acceptance": [
-      {
-        "case_id": "A-001",
-        "title": "验证退款单号来源调整",
-        "preconditions": "准备可触发本次退款逻辑的数据",
-        "steps": ["发起退款请求", "检查渠道请求和退款记录"],
-        "expected": ["渠道请求使用修改后的退款单号来源"],
-        "observable_evidence": [
-          {
-            "surface": "下游行为",
-            "target": "渠道退款请求",
-            "assertion": "退款单号等于本次规则确定的字段值"
-          }
-        ],
-        "fact_ids": ["实际引用的 fact id"],
-        "evidence_ids": ["实际引用的 evidence id"]
-      }
-    ],
-    "core_regression": [],
-    "related_regression": [],
-    "boundary": []
+  "sections": {
+    "scope": "example FULL_SHA",
+    "requirements": "本次最终生效的需求改动",
+    "ddl": "无",
+    "dml": "无",
+    "config": "无",
+    "flow": "无",
+    "mermaid": "无",
+    "special": "无",
+    "verification": "仅完成静态分析与交付物校验。"
   }
 }
 ```
 
-每条用例包含可执行步骤和至少一个可观察结果。源码事实型用例通过 `fact_ids/evidence_ids` 绑定实际证据。
-
-### 4. Excel 与报告
+正文中不要自行加入 Markdown 标题。生成器负责映射到模板：
 
 ```powershell
-py -3 .\scripts\export_test_cases.py --input G:\tmp\delivery\test-cases.json --output G:\tmp\delivery\test-cases.xlsx --analysis G:\tmp\analysis-run\analysis.json --review G:\tmp\delivery\fast10-review.json
-
 py -3 .\scripts\generate_report.py --data G:\tmp\delivery\report-data.json --analysis G:\tmp\analysis-run\analysis.json --review G:\tmp\delivery\fast10-review.json --cases G:\tmp\delivery\test-cases.json --excel G:\tmp\delivery\test-cases.xlsx --output G:\tmp\delivery\report.md
 
 py -3 .\scripts\append_run_dirs.py G:\tmp\delivery\report.md --source G:\tmp\analysis-run\analysis.json
@@ -109,36 +85,33 @@ py -3 .\scripts\append_run_dirs.py G:\tmp\delivery\report.md --source G:\tmp\ana
 py -3 .\scripts\validate_report.py G:\tmp\delivery\report.md --analysis G:\tmp\analysis-run\analysis.json --review G:\tmp\delivery\fast10-review.json --cases G:\tmp\delivery\test-cases.json --finalize
 ```
 
-Excel 固定四个工作表和五列：用例编号、用例名称、前置条件、步骤描述、预期结果。预期结果写明接口、页面、日志、数据库、文件或下游行为中的可判定结果。
+`append_run_dirs.py --source` 读取当前 `schema_version=2` 的 `analysis.json`，直接取得本轮隔离 clone。
+
+## 执行约束
+
+较大的 `test-cases.json` 和 `report-data.json` 直接写文件，不把完整 JSON 放进命令行参数。这样可避免 Windows 命令行长度限制，也不依赖 JavaScript 环境提供 `TextEncoder`、`btoa` 等能力。
 
 ## 处理链路
 
 ```text
 Git 修订
   ↓
-静态索引
+静态索引与完整事实
   ↓
-最终净变化
+按变化方法聚合的一层快审
   ↓
-一层直接关系 + 配置/DB/外部出口事实
+AI 业务复核 + 填充测试用例骨架
   ↓
-AI 业务复核
+Excel
   ↓
-test-cases.json
+AI 填写固定语义报告字段
   ↓
-Excel + Markdown
+脚本生成 Markdown + 最终校验
 ```
 
 ## 校验
 
-交付时校验：
-
-- analysis/review/cases 的 `analysis_id`；
-- 用例引用的 fact；
-- evidence 与 fact 的归属；
-- evidence 对应固定 Git 快照中的源码；
-- 用例是否属于当前快审范围；
-- Excel 与报告中的四类用例数量。
+交付时校验 analysis/review/cases 的 `analysis_id`、用例引用 fact/evidence 的归属、固定 Git 快照源码、聚合快审范围以及 Excel/报告中的四类用例数量。
 
 离线回归命令：
 
@@ -146,4 +119,4 @@ Excel + Markdown
 py -3 -B -m unittest discover -s tests -v
 ```
 
-验证情况在报告第 6 章记录实际执行的静态分析、构建测试、数据库验证和环境联调。
+报告第 6 章只记录实际执行过的静态分析、构建测试、数据库验证和环境联调。

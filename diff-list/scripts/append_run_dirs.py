@@ -28,7 +28,7 @@ def checked_run_dir(clone):
 def input_clones(source):
     payload = json.loads(Path(source).read_text(encoding='utf-8-sig'))
     from analysis_engine import VERSION
-    if not isinstance(payload,dict) or type(payload.get('schema_version'))!=int or payload['schema_version']!=1 or payload.get('analyzer_version')!=VERSION:
+    if not isinstance(payload,dict) or type(payload.get('schema_version'))!=int or payload['schema_version']!=2 or payload.get('analyzer_version')!=VERSION:
         raise ValueError('source must be current analysis.json')
     projects = payload.get('projects')
     if not isinstance(projects,list) or not projects or any(not isinstance(entry,dict) or

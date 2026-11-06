@@ -331,18 +331,18 @@ class Handler {
                                   evidence_ids=[],site=dict(name='queryById',receiver='dao',
                                   expression='dao.queryById(value{})'.format(index),arguments=['value{}'.format(index)])))
         analysis=dict(schema_version=2,analyzer_version=VERSION,analysis_id='fast10-test',
-            projects=[dict(name='sample',change_seeds=[fact['data']['symbol'] for fact in facts],facts=facts,relations=relations,hard_errors=[],stats={})])
+            projects=[dict(name='sample',change_seeds=[fact['data']['symbol'] for fact in facts],facts=facts,relations=relations,hard_errors=[],stats={})],
+            cross_project_relations=[])
         compact=fast10_view(analysis)['projects'][0]
-        self.assertEqual(compact['fast10_review']['change_seed_count'],12)
-        self.assertEqual(compact['fast10_review']['primary_change_fact_count'],12)
-        self.assertEqual(compact['fast10_review']['direct_relation_count'],12)
-        self.assertNotIn('max_method_groups',compact['fast10_review'])
-        flow_review=compact['normal_flow_review']
-        self.assertEqual(flow_review['group_count'],1)
-        self.assertEqual(flow_review['groups'][0]['name'],'退款主流程')
-        self.assertEqual(flow_review['groups'][0]['method_count'],12)
-        self.assertEqual(set(flow_review['visible_fact_ids']),{fact['id'] for fact in facts})
-        self.assertEqual(len(compact['direct_relations']),12)
+        self.assertEqual(compact['review_summary']['change_seed_count'],12)
+        self.assertEqual(compact['review_summary']['review_unit_count'],12)
+        self.assertEqual(compact['review_summary']['selected_relation_count'],12)
+        self.assertEqual({unit['flow'] for unit in compact['review_units']},{'退款主流程'})
+        self.assertEqual({unit['symbol'] for unit in compact['review_units']},
+                         {fact['data']['symbol'] for fact in facts})
+        self.assertEqual({fact['id'] for fact in compact['fact_catalog']},
+                         {fact['id'] for fact in facts})
+        self.assertEqual(len(compact['relation_catalog']),12)
 
     def test_fast10_keeps_config_files_and_mapper_facts_without_scope_expansion(self):
         from analysis_engine import VERSION
@@ -364,12 +364,14 @@ class Handler {
                         evidence_ids=['method-evidence'],site=dict(name='list',receiver='store',
                         expression='store.list(orderNo)',arguments=['orderNo']))]
         analysis=dict(schema_version=2,analyzer_version=VERSION,analysis_id='fast10-supporting-test',
-            projects=[dict(name='sample',change_seeds=[changed],facts=facts,relations=relations,hard_errors=[],stats={})])
+            projects=[dict(name='sample',change_seeds=[changed],facts=facts,relations=relations,hard_errors=[],stats={})],
+            cross_project_relations=[])
         compact=fast10_view(analysis)['projects'][0]
-        kinds={fact['kind'] for fact in compact['facts']}
+        kinds={fact['kind'] for fact in compact['fact_catalog']}
         self.assertIn('configuration_file_change',kinds)
         self.assertIn('mapper_statement',kinds)
-        self.assertEqual(compact['fast10_review']['direct_relation_count'],1)
+        self.assertEqual(compact['review_summary']['selected_relation_count'],1)
+        self.assertIn('config',compact['project_fact_ids'])
 
     def test_fast10_business_names_do_not_filter_net_changes(self):
         from analysis_engine import VERSION
@@ -379,11 +381,29 @@ class Handler {
             facts.append(dict(id='change-fact-{}'.format(index),kind='method_change',classification='source_fact',
                               data=dict(symbol=symbol,change='added'),evidence_ids=[]))
         analysis=dict(schema_version=2,analyzer_version=VERSION,analysis_id='fast10-priority-test',
-            projects=[dict(name='sample',change_seeds=[fact['data']['symbol'] for fact in facts],facts=facts,relations=[],hard_errors=[],stats={})])
+            projects=[dict(name='sample',change_seeds=[fact['data']['symbol'] for fact in facts],facts=facts,relations=[],hard_errors=[],stats={})],
+            cross_project_relations=[])
         compact=fast10_view(analysis)['projects'][0]
-        methods={method for group in compact['normal_flow_review']['groups'] for method in group['methods']}
-        self.assertEqual(methods,{'sample.enums.ATypeEnum#mapDao()','sample.ZPayService#aggregatePay()'})
-        self.assertEqual(compact['fast10_review']['change_seed_count'],2)
+        self.assertEqual({unit['symbol'] for unit in compact['review_units']},
+                         {'sample.enums.ATypeEnum#mapDao()','sample.ZPayService#aggregatePay()'})
+        self.assertEqual(compact['review_summary']['change_seed_count'],2)
+
+    def test_fast10_shared_evidence_does_not_expand_unrelated_facts(self):
+        from analysis_engine import VERSION
+        from review_workbench import fast10_view
+        changed='sample.Pay#run()'
+        unrelated='sample.Other#work()'
+        facts=[
+            dict(id='change',kind='method_change',classification='source_fact',
+                 data=dict(symbol=changed,change='modified'),evidence_ids=['shared']),
+            dict(id='branch',kind='branch',classification='source_fact',
+                 data=dict(symbol=unrelated,condition='x',then='a',otherwise='b'),evidence_ids=['shared'])
+        ]
+        analysis=dict(schema_version=2,analyzer_version=VERSION,analysis_id='fast10-shared-evidence',
+            projects=[dict(name='sample',change_seeds=[changed],facts=facts,relations=[],hard_errors=[],stats={})],
+            cross_project_relations=[])
+        compact=fast10_view(analysis)['projects'][0]
+        self.assertEqual([fact['id'] for fact in compact['fact_catalog']],['change'])
 
     def delivery_report(self,out,data):
         from case_contract import PURPOSES,PURPOSE_NAMES
