@@ -1,5 +1,6 @@
 import json
 import io
+from types import SimpleNamespace
 import contextlib
 import sys
 import tempfile
@@ -119,6 +120,24 @@ class DeliveryFlowTest(unittest.TestCase):
         self.assertEqual([row['id'] for row in result['evidence']],['E-1','E-2'])
         self.assertIn('未命中的事实、关系及源码仍保留',result['note'])
 
+        # 默认只返回轻量索引；详细 facts 按页读取，不能静默截断。
+        args=SimpleNamespace(fact=None,evidence=None,audit=False,overview=False,
+            query='originalTradeNo',unit=None,view='index',limit=1,cursor=None,
+            source_lines=8)
+        compact=query_tool._render_request(args,analysis,review,context)
+        self.assertNotIn('facts',compact)
+        self.assertEqual(compact['page']['total'],1)
+        self.assertEqual(compact['items'][0]['unit_id'],'RU-1')
+        args.view='facts'
+        first_page=query_tool._render_request(args,analysis,review,context)
+        self.assertEqual(first_page['page']['total'],2)
+        self.assertEqual(first_page['page']['returned'],1)
+        self.assertFalse(first_page['page']['complete'])
+        args.cursor=first_page['page']['next_cursor']
+        second_page=query_tool._render_request(args,analysis,review,context)
+        self.assertTrue(second_page['page']['complete'])
+        self.assertNotEqual(first_page['items'][0]['id'],second_page['items'][0]['id'])
+
         context_only=[
             {'id':'E-1','snippet':'private String originalTradeNo;'},
             {'id':'E-2','snippet':'if (status == SUCCESS) { /* sourceOnlyMarker */ }'}
@@ -147,13 +166,16 @@ class DeliveryFlowTest(unittest.TestCase):
                 id='RU-1',scope='method',symbol='sample.Service#changed()',
                 fact_ids=['F-1'],relation_ids=['R-1'],facet_ids=[])],
                 review_facets=[],navigation_facets=[])])
-        context=[dict(id='E-'+str(i),snippet='code') for i in (1,2,3)]
+        context=[dict(id='E-'+str(i),snippet='code',
+                      project='different' if i==2 else 'sample') for i in (1,2,3,4)]
         result=query_tool.audit_material(analysis,review,context)
         self.assertEqual(result['counts']['missing_seeds'],1)
         self.assertEqual(result['counts']['unassigned_primary_facts'],1)
         self.assertEqual(result['counts']['unindexed_facts'],2)
         self.assertEqual(result['counts']['unresolved_relations'],1)
         self.assertEqual(result['counts']['hard_errors'],1)
+        self.assertEqual(result['counts']['unreferenced_evidence'],1)
+        self.assertEqual(result['counts']['evidence_project_mismatch'],1)
         self.assertTrue(result['requires_attention'])
         self.assertIn('不证明业务场景完整',result['note'])
 
@@ -226,6 +248,20 @@ class DeliveryFlowTest(unittest.TestCase):
             subphase=sum(after['stages'].get('agent_'+p,{}).get('elapsed_seconds',0)
                          for p in delivery.AGENT_PHASES)
             self.assertAlmostEqual(total,subphase,places=2)
+
+    def test_agent_rework_phase_can_be_reclassified(self):
+        with tempfile.TemporaryDirectory() as td:
+            run=Path(td)/'run';work=run/'.work';work.mkdir(parents=True)
+            state_path=work/'run-state.json'
+            state=dict(run_schema_version=delivery.RUN_SCHEMA_VERSION,
+                run_dir=str(run.resolve()),status='waiting_rework',
+                waiting_started_epoch=time.time(),current_agent_phase='rework',
+                current_agent_phase_started_epoch=time.time(),stages={})
+            delivery._write_state(state_path,state)
+            delivery._switch_agent_phase(str(run),'report_edit')
+            after=json.loads(state_path.read_text(encoding='utf-8'))
+            self.assertEqual(after['current_agent_phase'],'report_edit')
+            self.assertIn('agent_rework',after['stages'])
 
     def test_agent_total_is_inclusive_not_added_to_subphases(self):
         state=dict(stages=dict(
