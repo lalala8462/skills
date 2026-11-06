@@ -151,11 +151,11 @@ coverage 有待复核项时自动记录为 `analysis_authoring`；修复结束�
 - `AGENT_TOTAL`：`agent_between_steps`；
 - `TRACKED_TOTAL`：`SCRIPT_TOTAL + AGENT_TOTAL`。
 
-`review_query.py` 在本次 run 的 `.work/query-metrics.jsonl` 逐次追加轻量统计；不修改 Agent 计时状态，也不保存查询关键词、源码片段或完整参数，只保存请求哈希、模式、视图、状态和体量。下一次编排状态写入时汇总到 `run-state.json.query_stats`，交付后的 run-state 包含完整统计：
+`review_query.py` 仅在本次 run 处于 Agent 等待阶段时向 `.work/query-metrics.jsonl` 逐次追加轻量统计；不修改 Agent 计时状态，也不保存查询关键词、源码片段或完整参数，只保存请求哈希、模式、视图、状态和体量。下一次编排状态写入时汇总到 `run-state.json.query_stats`，交付后的 run-state 包含完整统计：
 
 - `calls / successes / failures`：调用与失败次数；
 - `distinct_requests / repeated_calls`：完全相同的模式、查询参数、视图和分页条件重复调用次数（正常的两次 audit 也会算重复）；
-- `by_mode / by_view`：查询方式分布；
+- `by_mode / by_view / repeated_by_mode`：查询方式、视图和重复调用分布；
 - `returned_items`：工具实际返回的项目计数；
 - `returned_bytes`：生成 JSON 的 UTF-8 字节数；
 - `stdout_bytes`：实际写入终端的响应字节数；`--output` 只在终端输出文件位置；
