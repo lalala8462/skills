@@ -87,8 +87,15 @@ def query_material(analysis,review,context,query=None,unit_id=None):
                                  if _contains(row,needle))
         matched_context_ids.update(row.get('id') for row in context
                                    if row.get('id') and _contains(row,needle))
+        if matched_context_ids:
+            matched_fact_ids.update(
+                identifier for identifier,row in facts.items()
+                if identifier and matched_context_ids & set(row.get('evidence_ids') or []))
+            matched_relation_ids.update(
+                identifier for identifier,row in relations.items()
+                if identifier and matched_context_ids & set(row.get('evidence_ids') or []))
 
-    # 显式命中的事实/关系/facet 反查所属 unit。这里只扩展确定性引用，不做相似度或业务聚类。
+    # 显式命中的事实/关系/evidence/facet 反查所属 unit。这里只扩展确定性引用，不做相似度或业务聚类。
     for identifier,row in units.items():
         if matched_fact_ids & set(row.get('fact_ids') or []):
             matched_unit_ids.add(identifier)
