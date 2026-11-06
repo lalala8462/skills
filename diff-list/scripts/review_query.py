@@ -523,8 +523,6 @@ def main(argv=None):
     except (OSError,ValueError,TypeError,UnicodeError) as exc:
         print('WARNING: 无法定位查询统计目录: '+str(exc),file=sys.stderr)
     try:
-        if not any((args.overview,args.audit,args.query,args.unit,args.fact,args.evidence)):
-            raise ValueError('必须指定一种查询模式')
         if args.matched_only and (not args.query or args.view!='facts'):
             raise ValueError('--matched-only 只能与 --query 和 --view facts 一起使用')
         if not 1<=args.limit<=100 or not 0<=args.source_lines<=100:
@@ -540,8 +538,6 @@ def main(argv=None):
             raise ValueError('--fact/--evidence 不支持 --view/--cursor')
         if args.view=='all' and args.cursor:
             raise ValueError('--view all 不支持 cursor；优先使用分页视图')
-        if args.cursor and args.audit is False and (args.fact or args.evidence):
-            raise ValueError('此模式不支持 cursor')
         analysis=_load_json(args.analysis)
         review=_load_json(args.review)
         analysis_path=Path(args.analysis).resolve()
