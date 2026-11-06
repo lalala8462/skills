@@ -203,6 +203,9 @@ def coverage_matrix(data,analysis,review):
     uncovered_facets=[row['facet_id'] for row in facet_rows if not row['covered_unit_ids']]
     fully=[row['facet_id'] for row in facet_rows if row['covered_unit_ids'] and not row['uncovered_unit_ids']]
     return dict(
+        coverage_schema_version=1,
+        analysis_id=data['analysis_id'],
+        review_schema_version=REVIEW_SCHEMA_VERSION,
         summary=dict(
             unit_count=len(unit_rows),
             covered_unit_count=len(unit_rows)-len(uncovered),
