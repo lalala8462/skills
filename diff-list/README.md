@@ -1,185 +1,182 @@
 # diff-list
 
-基于指定 Git 修订生成最终净变化分析、四类测试用例 Excel 和 Markdown 报告。脚本负责固定范围、源码事实、一层直接影响、复核导航、证据绑定和交付校验；Agent 负责业务解释、测试场景和报告业务正文。
+基于指定 Git 修订生成最终净变化分析、四类测试用例 Excel 和 Markdown 报告。脚本负责固定范围、源码事实、一层直接影响、复核导航、证据绑定、格式预检和交付校验；Agent 负责业务解释、测试设计和业务正文。
 
 ## 设计原则
 
 1. **最终差异是底账**：只以指定修订形成的最终代码结果作为分析范围。
-2. **确定性工作脚本化**：Git、AST、Mapper、配置、参数/返回来源、直接关系、证据绑定和报告固定结构由脚本处理。
-3. **直接影响只展开一层**：不尝试静态证明完整业务链。
-4. **复核优化不裁剪事实**：`change_summary` 只压缩当前变化点直接事实；完整 `fact_ids/fact_catalog/context.jsonl` 始终保留。
-5. **Facet 只做精确导航**：同一类、同一直接调用、同一配置键、同一 Mapper、同一字段分别形成可重叠 facet，不做传递闭包，不把弱相关变化串成大组。
-6. **覆盖矩阵只做遗漏检查**：未引用 unit/facet 会提示，但不自动判失败，也不自动生成低价值用例。
-7. **Agent 不操作 fact/evidence ID**：测试用例只引用 `review_unit_ids`，最终源码 fact/evidence 由脚本自动展开。
-8. **固定报告内容不交给 Agent**：项目/SHA、配置变化、Excel 数量和静态验证说明由脚本生成。
+2. **完整事实与阅读入口分离**：完整关系保留在 review_facets，Agent 首轮只看高价值 navigation_facets。
+3. **不为覆盖率造用例**：coverage 输出待复核清单；已有场景可覆盖多个变化点时，直接把对应 review_unit_id 绑定到已有用例。
+4. **格式错误前置**：测试用例 JSON、报告字段、Mermaid 等纯格式问题必须在 Excel/报告生成前一次性检查。
+5. **一个入口完成编排**：正常使用只调用 scripts/run_delivery.py；其余脚本作为内部步骤或调试入口。
+6. **最终交付唯一**：每次运行使用独立目录，根目录最终只发布 test-cases.xlsx、report.md、coverage.json。
 
-## 当前流程
+## 推荐执行方式
 
-运行环境：Windows PowerShell、Git、Python 3.8+、JDK 8+。来源仓库以只读方式使用，分析在独立 clone 中完成。
+环境：Windows PowerShell、Git、Python 3.8+、JDK 8+。来源仓库只读，分析在独立 clone 中完成。
 
-### 1. 静态分析
+首次执行：
 
-```powershell
-py -3 .\scripts\analyze.py --repo https://github.com/example/project --rev FULL_SHA --outdir G:\tmp\analysis-run
-```
+    py -3 .\scripts\run_delivery.py --repo https://github.com/example/project --rev FULL_SHA --runs-root G:\tmp\diff-list\runs
 
-输出：
+脚本自动创建唯一运行目录，例如：
 
-- `analysis.json`：完整事实、直接关系、Git 摘要、固定快照和错误；
-- `context.jsonl`：可回查源码证据。
+    runs/20261106-140500-123/
 
-当前分析契约：`schema_version=2`、`analyzer_version=2.1.0`。
+内部结构：
 
-### 2. 复核材料和输入骨架
+    .work/
+      analysis/
+        analysis.json
+        context.jsonl
+      review.json
+      test-cases.json
+      report-data.json
+      run-state.json
 
-```powershell
-py -3 .\scripts\review_workbench.py --analysis G:\tmp\analysis-run\analysis.json --output G:\tmp\delivery\review.json --cases-template G:\tmp\delivery\test-cases.json --report-template G:\tmp\delivery\report-data.json
-```
+首次执行完成 analyze → review_workbench 后进入 waiting_agent。Agent 只需要编辑：
 
-`review.json` 使用 `review_schema_version=3`。
+- .work/test-cases.json
+- .work/report-data.json
 
-每个 `review_unit` 对应一个变化方法或项目级变化，包含：
+然后使用同一个入口继续：
 
-- `id / scope / symbol`
-- `change_summary`：只摘要直接绑定当前变化点的事实
-- `direct_fact_ids / context_fact_ids`：明确区分直接事实与一层上下文事实
-- `direct_fact_groups / context_fact_groups`：对应事实类型统计
-- `fact_ids / relation_ids`
-- `facet_ids`
+    py -3 .\scripts\run_delivery.py --resume G:\tmp\diff-list\runs\20261106-140500-123
 
-`change_summary` 只是阅读入口。需要确认完整条件、返回来源、Mapper、分支或其它上下文时，仍按 fact ID 回查 `fact_catalog / analysis.json / context.jsonl`。
+脚本执行：
 
-### 3. review_facets
+    preflight → coverage
 
-`review_facets` 按单一精确锚点生成，可重叠，一个 unit 可以属于多个 facet。当前锚点包括：
+如果 coverage.json 中仍有 pending_review，流程会暂停为 waiting_coverage_review。Agent 对每个待复核 unit 做二选一：
 
-- `owner`：同一变化类；
-- `direct_call`：同一直接调用目标；
-- `config`：同一配置键；
-- `mapper`：同一 Mapper statement；
-- `field`：同一字段。
+- 已有测试场景实际覆盖该变化点：把该 review_unit_id 加到已有用例；
+- 没有现成场景：补充新的测试用例。
 
-Facet 不做 A-B、B-C ⇒ A-B-C 的传递合并。它只帮助减少重复阅读，不表示同一业务需求。
+修改后再次执行同一个 --resume 命令。只有 pending_review=0 后才继续：
 
-### 4. 测试用例
+    excel → report → finalize
 
-`test-cases.json` 使用 `schema_version=4`。每条用例只引用实际支撑该场景的 `review_unit_ids`：
+成功后运行目录根部只保留唯一正式交付：
 
-```json
-{
-  "schema_version": 4,
-  "analysis_id": "本次 analysis_id",
-  "purpose_cases": {
-    "acceptance": [
-      {
-        "case_id": "A-001",
-        "title": "验证修改后的业务规则",
-        "preconditions": "准备满足触发条件的数据",
-        "steps": ["发起请求", "检查业务结果"],
-        "expected": ["修改后的规则生效"],
-        "observable_evidence": [
-          {
-            "surface": "接口",
-            "target": "响应字段",
-            "assertion": "status=SUCCESS"
-          }
-        ],
-        "review_unit_ids": ["RU-xxxxxxxxxxxx"]
-      }
-    ],
-    "core_regression": [],
-    "related_regression": [],
-    "boundary": []
-  }
-}
-```
+    test-cases.xlsx
+    report.md
+    coverage.json
 
-四类固定为：
+中间材料继续保存在 .work/，不再生成 *-final.* 双版本文件。
 
-- `acceptance`：需求验收；
-- `core_regression`：既有核心流程回归；
-- `related_regression`：关联回归；
-- `boundary`：业务规则与边界验证。
+## 复核导航
 
-### 5. 结构覆盖检查
+当前 review_schema_version=4。
 
-Agent 完成第一版用例后运行：
+每个 review_unit 仍是测试与源码证据绑定的最小单元，包含直接变化摘要、直接事实、一层上下文事实和完整 facet 归属。
 
-```powershell
-py -3 .\scripts\validate_analysis.py --analysis G:\tmp\analysis-run\analysis.json --review G:\tmp\delivery\review.json --cases G:\tmp\delivery\test-cases.json --coverage-output G:\tmp\delivery\coverage.json
-```
+### review_facets
 
-`coverage.json` 使用 `coverage_schema_version=1`，给出：
+review_facets 是完整结构关系，用于 coverage、结构检查和必要时回查。当前精确锚点包括：
 
-- 每个 review unit 被哪些用例、哪些用例类型引用；
-- 未被引用的 unit；
-- 每个 facet 内已覆盖/未覆盖的 unit；
-- 完全覆盖、部分覆盖、完全未覆盖的 facet。
+- owner：同一变化类；
+- direct_call：同一直接调用目标；
+- config：同一配置键；
+- mapper：同一 Mapper statement；
+- field：同一字段。
 
-**这不是覆盖率门槛。** Agent 只对真正有业务价值的遗漏补用例；不能为了让数字变成 100% 而重复或制造无意义场景。结构覆盖也不证明分支覆盖、业务语义正确或预期结果正确。
+完整 facet 不裁剪，也不做传递闭包。
 
-### 6. Excel
+### navigation_facets
 
-```powershell
-py -3 .\scripts\export_test_cases.py --input G:\tmp\delivery\test-cases.json --output G:\tmp\delivery\test-cases.xlsx --analysis G:\tmp\analysis-run\analysis.json --review G:\tmp\delivery\review.json
-```
+navigation_facets 只是 Agent 首轮阅读入口，是 review_facets 的高价值子集。优先级为：
 
-导出前脚本根据 `review_unit_ids` 自动展开 fact/evidence，并重新核对固定 Git tree/blob。
+1. 配置键；
+2. Mapper / SQL；
+3. 字段；
+4. 与其它变化方法直接关联的调用；
+5. 同一变化类；
+6. 其它直接业务调用。
 
-Excel 固定四个工作表和五列：用例编号、用例名称、前置条件、步骤描述、预期结果。每条用例必须包含至少一个可观察、可判定结果。
+Util / Utils / Helper / Common / Base / Support / Framework 等普通共享调用不作为首轮导航，但仍完整保留在 review_facets。
 
-### 7. 报告
+推荐阅读顺序：
 
-`report-data.json` 只保留 Agent 必须填写的业务字段：
+1. navigation_facets
+2. unit 的 change_summary
+3. 必要时回查 review_facets / fact_catalog / analysis.json / context.jsonl
 
-```json
-{
-  "requirements": "最终需求改动",
-  "ddl": "无",
-  "dml": "无",
-  "flow": "业务流程说明",
-  "mermaid": "Mermaid 代码块或无",
-  "special_rules": "特殊规则或无",
-  "existing_impact": "既有功能影响或无"
-}
-```
+## Coverage 待复核清单
 
-脚本自动生成项目/SHA、配置变化、第 4 章固定结构、Excel 数量和本技能静态验证说明。
+当前 coverage_schema_version=2。
 
-```powershell
-py -3 .\scripts\generate_report.py --data G:\tmp\delivery\report-data.json --analysis G:\tmp\analysis-run\analysis.json --review G:\tmp\delivery\review.json --cases G:\tmp\delivery\test-cases.json --excel G:\tmp\delivery\test-cases.xlsx --output G:\tmp\delivery\report.md
+coverage 不再只给“未覆盖数量”，同时输出 pending_review。每项包含：
 
-py -3 .\scripts\append_run_dirs.py G:\tmp\delivery\report.md --source G:\tmp\analysis-run\analysis.json
+- unit_id
+- 项目、scope、symbol
+- direct_change
+- high_value_facets
+- 完整 all_facet_ids
+- 处置提示
 
-py -3 .\scripts\validate_report.py G:\tmp\delivery\report.md --analysis G:\tmp\analysis-run\analysis.json --review G:\tmp\delivery\review.json --cases G:\tmp\delivery\test-cases.json --finalize
-```
+它用于回答“是否需要新增用例”，不是覆盖率门槛，也不证明分支覆盖或业务正确性。
 
-## 质量与性价比
+## 前置格式校验
 
-本流程优先消除重复搜索、重复读源码和机械证据绑定，但不以减少 Agent 阅读量为唯一目标：
+delivery_preflight.py 在 Excel/报告生成前一次性检查：
 
-- 摘要没有删除完整事实；
-- facet 没有改变分析范围；
-- 未形成 facet 的 unit 仍必须正常复核；
-- 覆盖矩阵只提示遗漏，不替代业务判断；
-- 高风险状态、金额、幂等、配置、DB/渠道副作用、接口契约和异常恢复仍按检查清单复核；
-- 任何摘要不清晰、context fact 较多或存在 unresolved/hard error 的变化点，都应回查完整 fact/evidence。
+- test-cases.json 分组、字段、数组、可观察证据和 review unit 引用；
+- report-data.json 固定字段、空值、非法 Markdown 标题；
+- Mermaid 代码围栏；
+- Mermaid 起始语法只允许 flowchart TD 或 sequenceDiagram，graph TD 会直接在预检阶段报错；
+- analysis / review / cases 身份是否属于同一次分析。
 
-## 校验
+因此格式问题不会再等到最终报告阶段串行暴露。
 
-最终校验包括：
+## 真实耗时
 
-- `analysis_id`
-- `review_schema_version=3`
-- `test-cases schema_version=4`
-- review unit 与 analysis fact 的归属
-- 自动展开后的 evidence 与固定 Git 快照
-- 结构覆盖提示
-- Excel/报告用例数量
-- 报告范围、章节和配置块结构
+每个阶段的开始时间、结束时间、耗时和状态记录在：
 
-离线回归命令：
+    .work/run-state.json
 
-```powershell
-py -3 -B -m unittest discover -s tests -v
-```
+典型阶段：
+
+    analyze
+    review_workbench
+    agent_between_steps
+    preflight
+    coverage
+    excel
+    report
+    finalize
+
+agent_between_steps 会累计首次业务复核和 coverage 待复核阶段的真实等待时间，从而区分脚本耗时与 Agent 业务判断耗时。
+
+## 测试用例契约
+
+test-cases.json 当前 schema_version=4。四类固定为：
+
+- acceptance：需求验收；
+- core_regression：既有核心流程回归；
+- related_regression：关联回归；
+- boundary：业务规则与边界验证。
+
+每条用例固定包含：
+
+- case_id
+- title
+- preconditions
+- steps
+- expected
+- observable_evidence
+- review_unit_ids
+
+Agent 不手工填写 fact/evidence ID，脚本根据 review_unit_ids 自动展开源码事实与证据。预期结果必须至少包含一个可观察、可判定证据。
+
+## 质量边界
+
+- 摘要和导航不删除完整 fact/evidence；
+- facet 不代表同一业务需求；
+- coverage 不自动生成测试；
+- unresolved、hard_errors、状态、金额、幂等、配置、数据库/渠道副作用、接口契约和异常恢复仍需按风险回查；
+- 未实际执行的构建、单元测试、数据库验证或环境联调不得写成已验证；
+- 手工调用 analyze.py、review_workbench.py、validate_analysis.py 等只用于调试，不再作为推荐操作流程。
+
+## 回归测试
+
+    py -3 -B -m unittest discover -s tests -v
