@@ -751,6 +751,16 @@ class Task implements Runnable{@Override public void run(){System.out.println("p
         self.assertEqual(len(callbacks),2)
         self.assertTrue(all(e['status']=='convention_inferred' for e in callbacks))
 
+    def test_generic_custom_token_only_applies_when_explicitly_supplied(self):
+        graph=self.graph({'scope':'''package demo;
+class ExampleAdapter {String getValue(){return "a";}}
+class Consumer {ExampleAdapter adapter;
+ void run(){String value=adapter.getValue();}
+}'''})
+        edge=next(e for e in graph.edges if e['site']['name']=='getValue')
+        self.assertFalse(relation_affects_review_scope(edge,graph))
+        self.assertTrue(relation_affects_review_scope(edge,graph,('ExampleAdapter',)))
+
     def test_unresolved_relation_scope_keeps_database_effects_and_drops_plain_accessors(self):
         graph=self.graph({'scope':'''package p;
 class Helper {String getValue(){return "value";}String convert(String value){return value;}}
