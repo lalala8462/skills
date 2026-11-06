@@ -34,7 +34,7 @@ py -3 .\scripts\analyze.py --repo https://github.com/example/project --rev FULL_
 py -3 .\scripts\review_workbench.py --analysis G:\tmp\analysis-run\analysis.json --output G:\tmp\delivery\fast10-review.json --cases-template G:\tmp\delivery\test-cases.json
 ```
 
-`fast10-review.json` 以 `review_units` 为主要入口。每个变化方法只携带直接关联的方法、fact ID、relation ID 和 evidence ID；完整事实只在 `fact_catalog` 中保存一次。
+`fast10-review.json` 以 `review_units` 为主要入口。每个变化方法只携带直接关联的方法、fact ID、relation ID 和 evidence ID；`fact_catalog` 只保存关键字段预览，完整 fact 仍在 `analysis.json` 中按 ID 回查。
 
 项目级配置文件变化等无法绑定到单一方法的主事实放在 `project_fact_ids`。需要进一步核对时，再根据 fact/evidence ID 回查 `analysis.json` 和 `context.jsonl`。
 
