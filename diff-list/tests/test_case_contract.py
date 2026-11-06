@@ -84,6 +84,7 @@ class CaseContractTest(unittest.TestCase):
         self.assertEqual(matrix['summary']['pending_review_count'],1)
         self.assertEqual(matrix['pending_review'][0]['unit_id'],'RU-2')
         self.assertEqual(matrix['pending_review'][0]['high_value_facets'][0]['facet_id'],'RF-1')
+        self.assertEqual(matrix['pending_review'][0]['candidate_case_ids'],['A-001'])
         self.assertIn('待复核',matrix['note'])
 
     def test_review_unit_direct_context_contract_is_strict(self):
