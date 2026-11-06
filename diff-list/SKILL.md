@@ -102,7 +102,7 @@ pending_review 是遗漏复核清单，不是覆盖率门槛，也不证明业�
 
 ## Agent 子阶段计时
 
-run_schema_version=2。
+run_schema_version=3。
 
 初次进入 Agent 阶段自动开始 source_review。工作重点变化时切换：
 
