@@ -56,6 +56,27 @@ class DiffListTest(unittest.TestCase):
         self.assertEqual(set(report['sections']),set(module('generate_report').SECTION_KEYS))
         self.assertTrue(all(value=='' for value in report['sections'].values()))
 
+    def test_review_workbench_writes_review_and_input_skeletons(self):
+        review=module('review_workbench')
+        version=module('analysis_engine').VERSION
+        analysis=dict(schema_version=2,analyzer_version=version,analysis_id='analysis-1',
+                      projects=[dict(name='sample',change_seeds=[],facts=[],relations=[],
+                                    hard_errors=[],stats={})],
+                      cross_project_relations=[])
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td)
+            source=root/'analysis.json'
+            source.write_text(json.dumps(analysis),encoding='utf-8')
+            review_path=root/'review.json'
+            cases_path=root/'cases.json'
+            report_path=root/'report-data.json'
+            self.assertEqual(review.main(['--analysis',str(source),'--output',str(review_path),
+                '--cases-template',str(cases_path),'--report-template',str(report_path)]),0)
+            self.assertTrue(review_path.is_file())
+            self.assertEqual(json.loads(cases_path.read_text(encoding='utf-8'))['analysis_id'],'analysis-1')
+            self.assertEqual(set(json.loads(report_path.read_text(encoding='utf-8'))['sections']),
+                             set(module('generate_report').SECTION_KEYS))
+
     def test_template_heading_only(self):
         template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
         self.assertTrue(all(not line.strip() or line.startswith('# ' ) or line.startswith('## ')
