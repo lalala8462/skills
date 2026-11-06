@@ -91,31 +91,35 @@ def summarize_queries(work_dir):
     if not path.is_file():
         return summary
     modes,views,identities=Counter(),Counter(),Counter()
-    with path.open('r',encoding='utf-8-sig') as stream:
-        for line in stream:
-            if not line.strip():
-                continue
-            try:
-                row=json.loads(line)
-                if (row.get('version')!=QUERY_METRICS_VERSION
-                        or not isinstance(row.get('request_hash'),str)
-                        or len(row['request_hash'])!=64
-                        or row.get('status') not in ('ok','error')
-                        or any(type(row.get(name))!=int or row[name]<0
-                               for name in ('returned_bytes','stdout_bytes','returned_items'))):
-                    raise ValueError('invalid metrics event')
-            except (ValueError,TypeError,AttributeError):
-                summary['invalid_events']+=1
-                continue
-            summary['calls']+=1
-            summary['successes']+=int(row['status']=='ok')
-            summary['failures']+=int(row['status']=='error')
-            summary['returned_bytes']+=row['returned_bytes']
-            summary['stdout_bytes']+=row['stdout_bytes']
-            summary['returned_items']+=row['returned_items']
-            modes[row.get('mode') or 'unknown']+=1
-            views[row.get('view') or 'unknown']+=1
-            identities[row['request_hash']]+=1
+    try:
+        lines=path.read_text(encoding='utf-8-sig').splitlines()
+    except (OSError,UnicodeError) as exc:
+        summary['read_error']=str(exc)
+        return summary
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            row=json.loads(line)
+            if (row.get('version')!=QUERY_METRICS_VERSION
+                    or not isinstance(row.get('request_hash'),str)
+                    or len(row['request_hash'])!=64
+                    or row.get('status') not in ('ok','error')
+                    or any(type(row.get(name))!=int or row[name]<0
+                           for name in ('returned_bytes','stdout_bytes','returned_items'))):
+                raise ValueError('invalid metrics event')
+        except (ValueError,TypeError,AttributeError):
+            summary['invalid_events']+=1
+            continue
+        summary['calls']+=1
+        summary['successes']+=int(row['status']=='ok')
+        summary['failures']+=int(row['status']=='error')
+        summary['returned_bytes']+=row['returned_bytes']
+        summary['stdout_bytes']+=row['stdout_bytes']
+        summary['returned_items']+=row['returned_items']
+        modes[row.get('mode') or 'unknown']+=1
+        views[row.get('view') or 'unknown']+=1
+        identities[row['request_hash']]+=1
     summary['distinct_requests']=len(identities)
     summary['repeated_calls']=sum(count-1 for count in identities.values())
     summary['by_mode']=dict(sorted(modes.items()))
