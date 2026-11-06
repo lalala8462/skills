@@ -21,8 +21,9 @@ DB_KINDS={'mapper_statement','field_source'}
 VIEW_CHOICES=('index','facts','relations','evidence','db','calls','conditions','all')
 AUDIT_VIEWS=(
     'missing_seeds','unassigned_primary_facts','unindexed_facts','unindexed_relations',
-    'unresolved_relations','missing_evidence','hard_errors',
-    'invalid_unit_references','cross_source_missing'
+    'unresolved_relations','missing_evidence','unreferenced_evidence',
+    'evidence_project_mismatch','hard_errors','invalid_unit_references',
+    'cross_source_missing'
 )
 NOTE=('结果基于确定性索引或显式匹配；分类视图不代表完整业务影响。'
       '未命中的事实、关系及源码仍保留在 analysis.json / context.jsonl。')
@@ -254,12 +255,24 @@ def _audit_rows(analysis,indexes):
         if row.get('status')=='unresolved':
             result['unresolved_relations'].append(dict(id=identifier,project=row['_project'],
                 source=row.get('source'),reason=row.get('reason')))
+    referenced_evidence=set()
     for key,collection in (('fact',facts),('relation',relations)):
         for identifier,row in sorted(collection.items()):
-            missing=sorted(set(row.get('evidence_ids') or [])-set(context))
-            if missing or not row.get('evidence_ids'):
+            evidence_ids=set(row.get('evidence_ids') or [])
+            referenced_evidence.update(evidence_ids)
+            missing=sorted(evidence_ids-set(context))
+            if missing or not evidence_ids:
                 result['missing_evidence'].append(dict(kind=key,id=identifier,
-                    missing_ids=missing,no_evidence=not bool(row.get('evidence_ids'))))
+                    missing_ids=missing,no_evidence=not bool(evidence_ids)))
+            for evidence_id in sorted(evidence_ids & set(context)):
+                if context[evidence_id].get('project')!=row['_project']:
+                    result['evidence_project_mismatch'].append(dict(kind=key,
+                        id=identifier,evidence_id=evidence_id,
+                        expected_project=row['_project'],
+                        actual_project=context[evidence_id].get('project')))
+    for evidence_id in sorted(set(context)-referenced_evidence):
+        result['unreferenced_evidence'].append(dict(
+            id=evidence_id,project=context[evidence_id].get('project')))
     for identifier,row in sorted(all_units.items()):
         for key,collection in (('fact_ids',facts),('relation_ids',relations),
                                ('facet_ids',indexes['facets'])):
@@ -414,6 +427,8 @@ def main(argv=None):
         if args.audit:
             if args.view!='index' and args.view not in AUDIT_VIEWS:
                 raise ValueError('--audit --view 支持: '+','.join(AUDIT_VIEWS))
+            if args.view=='index' and args.cursor:
+                raise ValueError('--audit 概览不支持 cursor，请在 --view 分类中分页')
         elif args.view not in VIEW_CHOICES:
             raise ValueError('未知 --view: '+args.view)
         if (args.fact or args.evidence) and (args.view!='index' or args.cursor):
