@@ -125,3 +125,36 @@ fact ID 由项目、kind、data 和 evidence_ids 稳定计算。
 - 上下文最多 8 MiB。
 
 变更 Java 索引失败、关键证据超过限制或当前分析范围发生硬错误时写入 `hard_errors`。
+
+
+## review.json
+
+- `review_schema_version=2`
+- `review_units`：变化方法或项目级变化的最小复核单元
+- `review_groups`：基于共享类、直接调用、配置键、Mapper、字段等确定性锚点生成的机械关联组
+- `fact_catalog`：本轮复核所需 fact 的关键字段预览
+- `relation_catalog`：本轮复核所需直接关系预览
+
+`review_groups` 只用于减少重复阅读，不表示业务需求归属。
+
+## test-cases.json
+
+- `schema_version=4`
+- 每条用例只引用 `review_unit_ids`
+- 不接受用例级 `fact_ids/evidence_ids`
+
+导出和最终校验阶段根据 review unit 自动展开对应 analysis fact 和 evidence。
+
+## report-data.json
+
+只包含 Agent 必须填写的业务字段：
+
+- `requirements`
+- `ddl`
+- `dml`
+- `flow`
+- `mermaid`
+- `special_rules`
+- `existing_impact`
+
+项目/SHA、配置变化、Excel 数量和静态验证说明由脚本生成。
