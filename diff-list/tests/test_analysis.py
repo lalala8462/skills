@@ -484,6 +484,13 @@ class Handler {
             (out/filename).write_text(json.dumps(value,ensure_ascii=False),encoding='utf-8')
         (out/'context.jsonl').write_text('\n'.join(json.dumps(r,ensure_ascii=False) for r in self.context),encoding='utf-8')
         report=self.delivery_report(out,data)
+        from validate_analysis import main as validate_main
+        self.assertEqual(validate_main(['--analysis',str(out/'analysis.json'),
+            '--review',str(out/'review.json'),'--cases',str(out/'cases.json'),
+            '--coverage-output',str(out/'coverage.json')]),0)
+        coverage=json.loads((out/'coverage.json').read_text(encoding='utf-8'))
+        self.assertGreaterEqual(coverage['summary']['unit_count'],1)
+        self.assertIn('uncovered_unit_ids',coverage)
         self.assertEqual(export_main(['--input',str(out/'cases.json'),'--output',str(out/'cases.xlsx'),
             '--analysis',str(out/'analysis.json'),'--review',str(out/'review.json')]),0)
         from validate_report import main as report_main
