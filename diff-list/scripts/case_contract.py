@@ -138,11 +138,21 @@ def review_facet_index(review):
             unknown=[unit_id for unit_id in unit_ids if unit_id not in units]
             if unknown:
                 raise ValueError('review facet references unknown unit: '+unknown[0])
+            if facet.get('unit_count')!=len(unit_ids):
+                raise ValueError('review facet unit_count mismatch: '+identifier)
             facets[identifier]=dict(
                 project=project.get('name'),
                 type=_text(facet.get('type'),'review_facet.type'),
                 anchor=_text(facet.get('anchor'),'review_facet.anchor'),
                 unit_ids=unit_ids)
+    expected_membership={unit_id:set() for unit_id in units}
+    for facet_id,facet in facets.items():
+        for unit_id in facet['unit_ids']:
+            expected_membership[unit_id].add(facet_id)
+    for unit_id,row in units.items():
+        actual=set(_strings(row['unit'].get('facet_ids') or [],'review_unit.facet_ids'))
+        if actual!=expected_membership[unit_id]:
+            raise ValueError('review unit facet membership mismatch: '+unit_id)
     return facets
 
 
