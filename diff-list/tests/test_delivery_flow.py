@@ -10,6 +10,7 @@ sys.path.insert(0,str(ROOT/'scripts'))
 
 from delivery_preflight import case_shape_errors, report_data_errors
 from review_workbench import build_navigation_facets
+from run_delivery import _record_stage_attempt
 
 
 class DeliveryFlowTest(unittest.TestCase):
@@ -58,6 +59,16 @@ class DeliveryFlowTest(unittest.TestCase):
         self.assertTrue(any('case_id' in error for error in errors))
         self.assertTrue(any('steps' in error for error in errors))
         self.assertTrue(any('observable_evidence' in error for error in errors))
+
+
+    def test_repeated_stage_timing_is_accumulated(self):
+        state={'stages':{}}
+        _record_stage_attempt(state,'coverage',10.0,11.25,'completed',0)
+        _record_stage_attempt(state,'coverage',20.0,20.75,'completed',0)
+        row=state['stages']['coverage']
+        self.assertEqual(row['elapsed_seconds'],2.0)
+        self.assertEqual(len(row['attempts']),2)
+        self.assertEqual(row['status'],'completed')
 
 
 if __name__=='__main__':
