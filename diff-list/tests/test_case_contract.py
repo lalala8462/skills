@@ -80,6 +80,18 @@ class CaseContractTest(unittest.TestCase):
         self.assertEqual(matrix['partially_covered_facet_ids'],['RF-1'])
         self.assertIn('不证明',matrix['note'])
 
+    def test_review_unit_direct_context_contract_is_strict(self):
+        broken=copy.deepcopy(review())
+        broken['projects'][0]['review_units'][0]['context_fact_ids']=['fact-1']
+        with self.assertRaisesRegex(ValueError,'direct/context facts overlap'):
+            validate_cases(cases(),analysis(),broken)
+
+    def test_coverage_matrix_has_current_schema_identity(self):
+        matrix=coverage_matrix(cases(),analysis(),review())
+        self.assertEqual(matrix['coverage_schema_version'],1)
+        self.assertEqual(matrix['review_schema_version'],3)
+        self.assertEqual(matrix['analysis_id'],'analysis-1')
+
     def test_unknown_review_unit_is_rejected(self):
         data=cases();data['purpose_cases']['acceptance'][0]['review_unit_ids']=['RU-missing']
         with self.assertRaisesRegex(ValueError,'unknown review unit'):
