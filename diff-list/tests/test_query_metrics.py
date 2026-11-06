@@ -123,6 +123,12 @@ class QueryMetricsTest(unittest.TestCase):
                 analysis,run/'unrelated-review.json',run_delivery.RUN_SCHEMA_VERSION))
             self.assertIsNone(query_metrics.metrics_path(
                 analysis,review,run_delivery.RUN_SCHEMA_VERSION-1))
+            state_path=run/'.work'/'run-state.json'
+            state=json.loads(state_path.read_text(encoding='utf-8'))
+            state['status']='completed'
+            run_delivery._write_state(state_path,state)
+            self.assertIsNone(query_metrics.metrics_path(
+                analysis,review,run_delivery.RUN_SCHEMA_VERSION))
 
 
 if __name__=='__main__':
