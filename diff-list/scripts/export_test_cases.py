@@ -72,10 +72,10 @@ def _case(item, ids):
     return identifier, title, preconditions, steps, expected
 
 
-def normalize(data, analysis):
+def normalize(data, analysis, review):
     """只接受当前四类用例；源码和覆盖校验由交付入口先执行。"""
-    from case_contract import PURPOSES, validate_cases
-    validate_cases(data, analysis)
+    from case_contract import validate_cases
+    validate_cases(data, analysis, review)
     return _normalize_validated(data)
 
 
