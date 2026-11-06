@@ -13,10 +13,11 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
 
 from delivery_preflight import case_shape_errors, report_errors
-from generate_report import AGENT_PLACEHOLDER, AGENT_HEADINGS, initial_report, refresh_report
+from generate_report import AGENT_PLACEHOLDER, AGENT_HEADINGS, DRAFT_MARKER, DRAFT_STATUS, initial_report, refresh_report
 import review_query as query_tool
 from review_query import query_material
 from analysis_engine import VERSION
+from validate_report import without_draft_status
 from review_workbench import build_navigation_facets
 import run_delivery as delivery
 from run_delivery import _close_current_agent_phase, _record_stage_attempt
@@ -101,6 +102,19 @@ class DeliveryFlowTest(unittest.TestCase):
         self.assertNotIn(AGENT_PLACEHOLDER,refreshed)
         self.assertEqual(refreshed.count('**既有功能影响：**'),1)
         self.assertEqual(refreshed.count('报告状态：未完成'),1)
+        # Agent 抄入业务正文时没有保留机器标记，刷新自动恢复。
+        raw=edited.replace(DRAFT_MARKER+'\n'+DRAFT_STATUS,'')
+        self.assertFalse(any('草稿标记' in issue for issue in report_errors(raw,template)))
+        restored=refresh_report(raw,template,analysis,cases,None)
+        self.assertEqual(restored.count(DRAFT_MARKER),1)
+        self.assertIn('**既有功能影响：** 原有退款查询接口受影响',restored)
+        self.assertEqual(without_draft_status(restored).count(DRAFT_MARKER),0)
+        self.assertEqual(without_draft_status(raw),raw)
+        with self.assertRaisesRegex(ValueError,'重复'):
+            without_draft_status(restored+'\n'+DRAFT_MARKER+'\n'+DRAFT_STATUS)
+        with self.assertRaisesRegex(ValueError,'不一致'):
+            without_draft_status(DRAFT_MARKER)
+
 
     def test_coverage_wait_uses_analysis_authoring_not_old_phase(self):
         with tempfile.TemporaryDirectory() as td:
@@ -154,6 +168,7 @@ class DeliveryFlowTest(unittest.TestCase):
                 'review_units':[{
                     'id':'RU-1','symbol':'sample.RefundService#refund()',
                     'change_summary':[],'fact_ids':['F-1','F-2'],'relation_ids':[],
+                    'direct_fact_ids':['F-1'],'context_fact_ids':['F-2'],
                     'facet_ids':['RF-1']
                 }],
                 'review_facets':[{
@@ -181,6 +196,9 @@ class DeliveryFlowTest(unittest.TestCase):
         self.assertNotIn('facts',compact)
         self.assertEqual(compact['page']['total'],1)
         self.assertEqual(compact['items'][0]['unit_id'],'RU-1')
+        self.assertEqual(compact['items'][0]['direct_fact_ids'],['F-1'])
+        self.assertEqual(compact['items'][0]['direct_evidence_ids'],['E-1'])
+        self.assertEqual(compact['items'][0]['context_fact_count'],1)
         args.view='facts'
         first_page=query_tool._render_request(args,analysis,review,context)
         self.assertEqual(first_page['page']['total'],2)
@@ -190,6 +208,16 @@ class DeliveryFlowTest(unittest.TestCase):
         second_page=query_tool._render_request(args,analysis,review,context)
         self.assertTrue(second_page['page']['complete'])
         self.assertNotEqual(first_page['items'][0]['id'],second_page['items'][0]['id'])
+        args.matched_only=True
+        args.cursor=None
+        exact=query_tool._render_request(args,analysis,review,context)
+        self.assertEqual(exact['page']['total'],1)
+        self.assertEqual(exact['items'][0]['id'],'F-1')
+        self.assertEqual(exact['related_unit_ids'],['RU-1'])
+        self.assertEqual(exact['selected_totals']['facts_count'],2)
+        args.view='relations'
+        with self.assertRaisesRegex(ValueError,'matched-only'):
+            query_tool._render_request(args,analysis,review,context)
 
         context_only=[
             {'id':'E-1','snippet':'private String originalTradeNo;'},
@@ -231,6 +259,37 @@ class DeliveryFlowTest(unittest.TestCase):
         self.assertEqual(result['counts']['evidence_project_mismatch'],1)
         self.assertTrue(result['requires_attention'])
         self.assertIn('不证明业务场景完整',result['note'])
+
+    def test_audit_distinguishes_retained_configuration_from_direct_change(self):
+        analysis=dict(schema_version=2,analyzer_version=VERSION,analysis_id='a1',
+            projects=[dict(name='sample',change_seeds=['sample.Service#changed()'],
+                facts=[
+                    dict(id='F-context',kind='configuration',data=dict(
+                        change='retained_or_consumers_changed',key='test.enabled'),
+                        evidence_ids=['E-1']),
+                    dict(id='F-direct',kind='configuration_file_change',data=dict(
+                        change='modified',key='test.enabled'),evidence_ids=['E-1'])],
+                relations=[
+                    dict(id='R-context',source='sample.Service#unchanged()',
+                         targets=[],status='unresolved',reason='unknown',
+                         evidence_ids=['E-1']),
+                    dict(id='R-direct',source='sample.Service#changed()',
+                         targets=[],status='unresolved',reason='unknown',
+                         evidence_ids=['E-1'])],hard_errors=[])],
+            cross_project_relations=[])
+        review=dict(review_schema_version=4,analysis_id='a1',
+            projects=[dict(name='sample',review_units=[],review_facets=[],
+                           navigation_facets=[])])
+        context=[dict(id='E-1',project='sample',snippet='configuration')]
+        audit=query_tool.audit_material(analysis,review,context)
+        self.assertEqual(audit['counts']['unassigned_primary_facts'],1)
+        self.assertEqual(audit['counts']['unindexed_facts'],2)
+        self.assertEqual(audit['scope_tiers']['supporting_unindexed'],1)
+        self.assertEqual(audit['scope_tiers']['change_touched_unresolved'],1)
+        self.assertEqual(audit['scope_tiers']['supporting_unresolved'],1)
+        indexes=query_tool._indexes(analysis,review,context)
+        rows=query_tool._audit_rows(analysis,indexes)['unresolved_relations']
+        self.assertEqual([row['id'] for row in rows],['R-direct','R-context'])
 
     def test_lookup_does_not_silently_drop_missing_fact_ids(self):
         analysis=dict(schema_version=2,analyzer_version=VERSION,analysis_id='a1',
