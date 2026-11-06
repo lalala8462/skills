@@ -249,17 +249,17 @@ def build_review(analysis):
         project_facts=[fact for fact in facts
                        if fact.get('kind') in primary_kinds and not symbols_by_fact[fact['id']]]
         if project_facts:
-            project_fact_ids=sorted(fact['id'] for fact in project_facts)
+            project_unit_fact_ids=sorted(fact['id'] for fact in project_facts)
             units.append(dict(
-                id='RU-'+stable(source['name'],'project',project_fact_ids)[:12],
+                id='RU-'+stable(source['name'],'project',project_unit_fact_ids)[:12],
                 scope='project',
                 symbol=None,
                 flow='项目级变化',
                 related_symbols=[],
                 fact_groups=fact_group_summary(project_facts),
-                fact_ids=project_fact_ids,
+                fact_ids=project_unit_fact_ids,
                 relation_ids=[]))
-            selected_fact_ids.update(project_fact_ids)
+            selected_fact_ids.update(project_unit_fact_ids)
 
         fact_catalog=[fact_preview(facts_by_id[identifier]) for identifier in sorted(selected_fact_ids)]
         relation_catalog=[relation_preview(selected_relations[identifier]) for identifier in sorted(selected_relations)]
