@@ -26,10 +26,8 @@ def _string(value, label):
 
 
 def _lines(value, label):
-    if isinstance(value, str):
-        return _string(value, label)
     if not isinstance(value, list) or not value:
-        raise ValueError(label + ' must be a nonempty string or string array')
+        raise ValueError(label + ' must be a nonempty string array')
     items = [_string(item, label) for item in value]
     return '\n'.join('{}. {}'.format(n, item) for n, item in enumerate(items, 1))
 

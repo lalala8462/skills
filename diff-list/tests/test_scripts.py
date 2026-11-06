@@ -124,7 +124,7 @@ class DiffListTest(unittest.TestCase):
                 None)
         analysis={'projects':[{'name':'webapi','git':{'selection':[{'type':'commit','sha':sha}]}}]}
         self.assertEqual(generator.preflight(rendered,template,analysis,
-            {'purpose_cases':{'acceptance':[{}],'core_regression':[],'related_regression':[],'boundary':[]}},[]),[])
+            {'purpose_cases':{'acceptance':[{}],'core_regression':[],'related_regression':[],'boundary':[]}}),[])
 
     def test_collect_selected_and_intervening(self):
         collector=module('collect_git')
@@ -246,7 +246,7 @@ class DiffListTest(unittest.TestCase):
         errors,_=val.validate(report,template,[])
         self.assertTrue(any('既有功能影响' in e for e in errors))
         corrected=report.replace('新增字段对旧调用方的影响。',
-                                 '既有功能影响：旧调用方可能忽略该字段，需验证向后兼容。')
+                                 '既有功能影响：旧调用方可能忽略该字段，需验证已有调用方行为。')
         errors,_=val.validate(corrected,template,[])
         self.assertEqual(errors, [])
 
@@ -378,12 +378,12 @@ class DiffListTest(unittest.TestCase):
                 evidence.write_text(json.dumps({'schema_version':2,'analyzer_version':module('analysis_engine').VERSION,
                     'projects':[{'analysis_clone':str(clone)}]}),
                                     encoding='utf-8')
-                dirs=writer.append(report,[str(evidence)],[str(clone)])
+                dirs=writer.append(report,[str(evidence)])
                 self.assertEqual(dirs,[str(clone.parent)])
                 self.assertIn(str(clone.parent),report.read_text(encoding='utf-8'))
                 self.assertIn('请后续手动删除',report.read_text(encoding='utf-8'))
                 with self.assertRaises(ValueError):
-                    writer.append(report,[str(evidence)],[])
+                    writer.append(report,[str(evidence)])
 
     def test_append_run_dirs_requires_project_clone_metadata(self):
         writer=module('append_run_dirs')

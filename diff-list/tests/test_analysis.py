@@ -224,7 +224,7 @@ class Handler {
 
     def test_non_utf8_file_is_reported(self):
         path=self.source/'src/Legacy.java';path.write_bytes(b'//\xff\xfe\nclass Legacy {}')
-        git(self.source,'add','.');git(self.source,'commit','-qm','legacy encoding')
+        git(self.source,'add','.');git(self.source,'commit','-qm','encoding fixture')
         result,_=self.analyze([git(self.source,'rev-parse','HEAD')])
         project=result['projects'][0]
         self.assertTrue(any('src/Legacy.java' in error for error in project['hard_errors']))
@@ -284,7 +284,7 @@ class Handler {
 
     def direct_cases(self,fact=None):
         from case_contract import PURPOSES
-        from review_workbench import fast10_view
+        from review_workbench import build_review
         groups={purpose:[] for purpose in PURPOSES}
         if fact is None:
             fact=next(f for f in self.analysis['projects'][0]['facts']
@@ -298,7 +298,7 @@ class Handler {
             observable_evidence=[dict(surface='接口',target='业务响应',
                                       assertion='响应字段与本次修改后的源码行为一致')],
             fact_ids=[fact['id']],evidence_ids=[fact['evidence_ids'][0]]))
-        return dict(schema_version=3,analysis_id=self.analysis['analysis_id'],purpose_cases=groups),fast10_view(self.analysis)
+        return dict(schema_version=3,analysis_id=self.analysis['analysis_id'],purpose_cases=groups),build_review(self.analysis)
 
     def test_direct_cases_validate_only_referenced_source_evidence(self):
         from export_test_cases import normalize
@@ -316,9 +316,9 @@ class Handler {
         errors,_=validate(tampered,self.context,review,data)
         self.assertTrue(any('fact identity mismatch' in error for error in errors))
 
-    def test_fast10_review_uses_net_changes_and_direct_relations_without_caps(self):
+    def test_review_uses_net_changes_and_direct_relations_without_caps(self):
         from analysis_engine import VERSION
-        from review_workbench import fast10_view
+        from review_workbench import build_review
         facts=[];relations=[]
         for index in range(12):
             symbol='sample.service.RefundService#run{}()'.format(index)
@@ -330,10 +330,10 @@ class Handler {
                                   reason='source_resolved',receiver_type='sample.StoreDao',field=None,
                                   evidence_ids=[],site=dict(name='queryById',receiver='dao',
                                   expression='dao.queryById(value{})'.format(index),arguments=['value{}'.format(index)])))
-        analysis=dict(schema_version=2,analyzer_version=VERSION,analysis_id='fast10-test',
+        analysis=dict(schema_version=2,analyzer_version=VERSION,analysis_id='review-test',
             projects=[dict(name='sample',change_seeds=[fact['data']['symbol'] for fact in facts],facts=facts,relations=relations,hard_errors=[],stats={})],
             cross_project_relations=[])
-        compact=fast10_view(analysis)['projects'][0]
+        compact=build_review(analysis)['projects'][0]
         self.assertEqual(compact['review_summary']['change_seed_count'],12)
         self.assertEqual(compact['review_summary']['review_unit_count'],12)
         self.assertEqual(compact['review_summary']['selected_relation_count'],12)
@@ -344,9 +344,9 @@ class Handler {
                          {fact['id'] for fact in facts})
         self.assertEqual(len(compact['relation_catalog']),12)
 
-    def test_fast10_keeps_config_files_and_mapper_facts_without_scope_expansion(self):
+    def test_review_keeps_config_files_and_mapper_facts_without_scope_expansion(self):
         from analysis_engine import VERSION
-        from review_workbench import fast10_view
+        from review_workbench import build_review
         changed='sample.Flow#run()';mapper='sample.Store#list(String)'
         facts=[
             dict(id='change',kind='method_change',classification='source_fact',
@@ -363,34 +363,34 @@ class Handler {
                         reason='source_resolved',receiver_type='sample.Store',field=None,
                         evidence_ids=['method-evidence'],site=dict(name='list',receiver='store',
                         expression='store.list(orderNo)',arguments=['orderNo']))]
-        analysis=dict(schema_version=2,analyzer_version=VERSION,analysis_id='fast10-supporting-test',
+        analysis=dict(schema_version=2,analyzer_version=VERSION,analysis_id='review-supporting-test',
             projects=[dict(name='sample',change_seeds=[changed],facts=facts,relations=relations,hard_errors=[],stats={})],
             cross_project_relations=[])
-        compact=fast10_view(analysis)['projects'][0]
+        compact=build_review(analysis)['projects'][0]
         kinds={fact['kind'] for fact in compact['fact_catalog']}
         self.assertIn('configuration_file_change',kinds)
         self.assertIn('mapper_statement',kinds)
         self.assertEqual(compact['review_summary']['selected_relation_count'],1)
         self.assertIn('config',compact['project_fact_ids'])
 
-    def test_fast10_business_names_do_not_filter_net_changes(self):
+    def test_review_business_names_do_not_filter_net_changes(self):
         from analysis_engine import VERSION
-        from review_workbench import fast10_view
+        from review_workbench import build_review
         facts=[]
         for index,symbol in enumerate(('sample.enums.ATypeEnum#mapDao()','sample.ZPayService#aggregatePay()')):
             facts.append(dict(id='change-fact-{}'.format(index),kind='method_change',classification='source_fact',
                               data=dict(symbol=symbol,change='added'),evidence_ids=[]))
-        analysis=dict(schema_version=2,analyzer_version=VERSION,analysis_id='fast10-priority-test',
+        analysis=dict(schema_version=2,analyzer_version=VERSION,analysis_id='review-priority-test',
             projects=[dict(name='sample',change_seeds=[fact['data']['symbol'] for fact in facts],facts=facts,relations=[],hard_errors=[],stats={})],
             cross_project_relations=[])
-        compact=fast10_view(analysis)['projects'][0]
+        compact=build_review(analysis)['projects'][0]
         self.assertEqual({unit['symbol'] for unit in compact['review_units']},
                          {'sample.enums.ATypeEnum#mapDao()','sample.ZPayService#aggregatePay()'})
         self.assertEqual(compact['review_summary']['change_seed_count'],2)
 
-    def test_fast10_shared_evidence_does_not_expand_unrelated_facts(self):
+    def test_review_shared_evidence_does_not_expand_unrelated_facts(self):
         from analysis_engine import VERSION
-        from review_workbench import fast10_view
+        from review_workbench import build_review
         changed='sample.Pay#run()'
         unrelated='sample.Other#work()'
         facts=[
@@ -399,10 +399,10 @@ class Handler {
             dict(id='branch',kind='branch',classification='source_fact',
                  data=dict(symbol=unrelated,condition='x',then='a',otherwise='b'),evidence_ids=['shared'])
         ]
-        analysis=dict(schema_version=2,analyzer_version=VERSION,analysis_id='fast10-shared-evidence',
+        analysis=dict(schema_version=2,analyzer_version=VERSION,analysis_id='review-shared-evidence',
             projects=[dict(name='sample',change_seeds=[changed],facts=facts,relations=[],hard_errors=[],stats={})],
             cross_project_relations=[])
-        compact=fast10_view(analysis)['projects'][0]
+        compact=build_review(analysis)['projects'][0]
         self.assertEqual([fact['id'] for fact in compact['fact_catalog']],['change'])
 
     def delivery_report(self,out,data):
@@ -436,9 +436,9 @@ class Handler {
             '--review',str(out/'review.json'),'--cases',str(out/'cases.json')]),0)
 
     def test_non_current_case_formats_are_rejected_by_analysis_validation(self):
-        from review_workbench import fast10_view
-        review=fast10_view(self.analysis)
-        for cases in ({'cases':[]},{'focus_cases':[],'regular_cases':[]}):
+        from review_workbench import build_review
+        review=build_review(self.analysis)
+        for cases in ({'cases':[]},{'purpose_cases':[]}):
             errors,_=validate(self.analysis,self.context,review,cases)
             self.assertTrue(any('invalid test cases' in error for error in errors),errors)
 

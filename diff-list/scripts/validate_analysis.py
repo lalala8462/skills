@@ -72,8 +72,8 @@ def validate(analysis,context,review,cases,verify_sources=True):
                     [(project['name'],project['repository'],project['snapshots']) for project in projects])
     if analysis.get('analysis_id')!=expected:
         errors.append('analysis snapshot identity mismatch')
-    if review.get('analysis_id')!=analysis.get('analysis_id') or not review.get('fast10_mode'):
-        errors.append('review belongs to a different analysis or is not a fast10 review')
+    if review.get('analysis_id')!=analysis.get('analysis_id') or review.get('review_schema_version')!=1:
+        errors.append('review belongs to a different analysis or has an unsupported review schema')
     try:
         validate_cases(cases,analysis)
     except (ValueError,TypeError,KeyError) as exc:
