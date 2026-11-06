@@ -64,6 +64,17 @@ def case_shape_errors(data):
     errors=[]
     if not isinstance(data,dict):
         return ['test-cases 必须是 JSON object']
+    root_fields={'schema_version','analysis_id','purpose_cases'}
+    missing_root=sorted(root_fields-set(data))
+    extra_root=sorted(set(data)-root_fields)
+    if missing_root:
+        errors.append('test-cases 缺少根字段: '+', '.join(missing_root))
+    if extra_root:
+        errors.append('test-cases 包含不支持根字段: '+', '.join(extra_root))
+    if data.get('schema_version')!=4:
+        errors.append('test-cases.schema_version 必须为 4')
+    if not _nonempty_text(data.get('analysis_id')):
+        errors.append('test-cases.analysis_id 必须是非空字符串')
     groups=data.get('purpose_cases')
     if not isinstance(groups,dict):
         return ['test-cases.purpose_cases 必须是 object']
