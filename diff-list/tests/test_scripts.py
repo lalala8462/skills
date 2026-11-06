@@ -81,6 +81,7 @@ class DiffListTest(unittest.TestCase):
             self.assertEqual(review.main(['--analysis',str(source),'--output',str(review_path),
                 '--cases-template',str(cases_path),'--report-template',str(report_path)]),0)
             self.assertTrue(review_path.is_file())
+            self.assertEqual(json.loads(review_path.read_text(encoding='utf-8'))['review_schema_version'],2)
             self.assertEqual(json.loads(cases_path.read_text(encoding='utf-8'))['analysis_id'],'analysis-1')
             self.assertEqual(set(json.loads(report_path.read_text(encoding='utf-8'))),
                              set(module('generate_report').REPORT_FIELDS))
@@ -120,8 +121,11 @@ class DiffListTest(unittest.TestCase):
             'special_rules':'无',
             'existing_impact':'无'
         }
-        analysis={'projects':[{'name':'webapi','facts':[],
-                              'git':{'selection':[{'type':'commit','sha':sha}]}}]}
+        analysis={'projects':[{'name':'webapi','facts':[
+                                  {'kind':'configuration_file_change','data':{
+                                      'path':'application.properties','key':'pay.enabled',
+                                      'change':'modified','before':'false','after':'true'}}
+                              ],'git':{'selection':[{'type':'commit','sha':sha}]}}]}
         case_data={'purpose_cases':{'acceptance':[{}],'core_regression':[],'related_regression':[],'boundary':[]}}
         rendered,_,_=generator.render(template,report_data,analysis,case_data,'webapi-cases.xlsx')
         broken=dict(report_data,requirements='### 额外标题\n修改支付入口。')
@@ -130,8 +134,11 @@ class DiffListTest(unittest.TestCase):
                 {'purpose_cases':{'acceptance':[],'core_regression':[],'related_regression':[],'boundary':[]}},
                 None)
         self.assertIn('## 1. 分析范围\n\n- webapi='+sha,rendered)
-        self.assertIn('### 2.4 配置文件调整\n\n无',rendered)
+        self.assertIn('### 2.4 配置文件调整',rendered)
+        self.assertIn('pay.enabled modified',rendered)
+        self.assertIn('before=false | after=true',rendered)
         self.assertIn('既有功能影响：无',rendered)
+        self.assertIn('未执行构建、单元测试、数据库验证或环境联调',rendered)
         self.assertEqual(generator.preflight(rendered,template,analysis,case_data),[])
 
     def test_collect_selected_and_intervening(self):
