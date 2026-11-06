@@ -161,7 +161,7 @@ def unit_anchors(unit,facts_by_id,relations_by_id):
     symbol=unit.get('symbol')
     if symbol:
         anchors.add(('owner',symbol.split('#',1)[0]))
-    for fact_id in unit.get('fact_ids') or []:
+    for fact_id in unit.get('direct_fact_ids') or []:
         fact=facts_by_id.get(fact_id)
         if fact:
             anchors.update(_data_anchors(fact.get('data') or {}))
