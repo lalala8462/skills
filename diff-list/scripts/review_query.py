@@ -190,7 +190,14 @@ def query_material(analysis,review,context,query=None,unit_id=None):
 
 def _unit_index(row,indexes):
     fact_ids=set(row.get('fact_ids') or [])
+    direct_fact_ids=sorted(set(row.get('direct_fact_ids') or []))
+    context_fact_ids=set(row.get('context_fact_ids') or [])
     relation_ids=set(row.get('relation_ids') or [])
+    direct_evidence_ids=set()
+    for fact_id in direct_fact_ids:
+        fact=indexes['facts'].get(fact_id)
+        if fact:
+            direct_evidence_ids.update(fact.get('evidence_ids') or [])
     counts={}
     evidence_ids=set()
     for identifier in fact_ids:
@@ -205,8 +212,13 @@ def _unit_index(row,indexes):
             evidence_ids.update(relation.get('evidence_ids') or [])
     missing_refs=(fact_ids-set(indexes['facts'])) | (relation_ids-set(indexes['relations'])) | (
         set(row.get('facet_ids') or [])-set(indexes['facets']))
+    missing_refs.update(set(direct_fact_ids)-set(indexes['facts']))
+    missing_refs.update(direct_evidence_ids-set(indexes['evidence']))
     return dict(unit_id=row['id'],project=row['_project'],scope=row.get('scope'),
         symbol=row.get('symbol'),direct_change_count=len(row.get('change_summary') or []),
+        direct_fact_ids=direct_fact_ids,
+        direct_evidence_ids=sorted(direct_evidence_ids),
+        context_fact_count=len(context_fact_ids),
         invalid_reference_count=len(missing_refs),
         fact_count=len(fact_ids),relation_count=len(relation_ids),
         evidence_count=len(evidence_ids),facet_count=len(row.get('facet_ids') or []),
@@ -391,12 +403,16 @@ def _render_request(args,analysis,review,context):
                     totals=audit['scope'],audit_counts=audit['counts'],note=NOTE)
 
     matched,expanded,cross=_lookup_selection(indexes,analysis,args.query,args.unit)
+    matched_only=getattr(args,'matched_only',False)
+    if matched_only and (not args.query or args.view!='facts'):
+        raise ValueError('--matched-only 只能与 --query 和 --view facts 一起使用')
     match_summary={key+'_count':len(value) for key,value in matched.items()}
     if args.view=='index':
         items=[_unit_index(indexes['units'][i],indexes)
                for i in sorted(matched['units']) if i in indexes['units']]
     elif args.view=='facts':
-        items=[indexes['facts'][i] for i in sorted(expanded['facts']) if i in indexes['facts']]
+        selected_ids=matched['facts'] if matched_only else expanded['facts']
+        items=[indexes['facts'][i] for i in sorted(selected_ids) if i in indexes['facts']]
     elif args.view=='relations':
         items=[indexes['relations'][i] for i in sorted(expanded['relations'])
                if i in indexes['relations']]
@@ -417,9 +433,11 @@ def _render_request(args,analysis,review,context):
         return dict(mode='lookup',view='all',analysis_id=analysis['analysis_id'],
                     complete=True,**query_material(analysis,review,context,args.query,args.unit))
     selected,page=_paginate(items,analysis['analysis_id'],
-        'lookup:{}:{}:{}'.format(args.unit or '',args.query or '',args.view),
+        'lookup:{}:{}:{}:{}'.format(args.unit or '',args.query or '',args.view,matched_only),
         args.limit,args.cursor)
     return dict(mode='lookup',query=args.query,unit_id=args.unit,view=args.view,
+                matched_only=matched_only,
+                related_unit_ids=sorted(matched['units']) if matched_only else [],
                 analysis_id=analysis['analysis_id'],matched=match_summary,
                 selected_totals={key+'_count':len(value) for key,value in expanded.items()},
                 cross_project_relation_count=len(cross),
@@ -461,6 +479,8 @@ def main(argv=None):
     parser.add_argument('--view',default='index',help='查询层级：index/facts/relations/evidence/db/calls/conditions/all；audit 可查看异常分类')
     parser.add_argument('--limit',type=int,default=10,help='每页最多 10 项，可按需提高至 100')
     parser.add_argument('--cursor',help='上一页返回的 next_cursor')
+    parser.add_argument('--matched-only',action='store_true',
+                        help='只返回关键词真正命中的 fact，不展开关联 unit；需搭配 --query --view facts')
     parser.add_argument('--source-lines',type=int,default=8,
                         help='evidence 前后各补充的源码行数（0-100）')
     parser.add_argument('--output',help='写入新的 JSON 文件，否则打印 stdout')
@@ -474,6 +494,8 @@ def main(argv=None):
     try:
         if not any((args.overview,args.audit,args.query,args.unit,args.fact,args.evidence)):
             raise ValueError('必须指定一种查询模式')
+        if args.matched_only and (not args.query or args.view!='facts'):
+            raise ValueError('--matched-only 只能与 --query 和 --view facts 一起使用')
         if not 1<=args.limit<=100 or not 0<=args.source_lines<=100:
             raise ValueError('--limit 必须在 1-100，--source-lines 必须在 0-100')
         if args.audit:
