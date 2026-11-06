@@ -20,11 +20,13 @@ def fixture_analysis():
 
 
 def fixture_review():
-    return dict(analysis_id='fixture-analysis',review_schema_version=2,projects=[dict(
+    return dict(analysis_id='fixture-analysis',review_schema_version=3,projects=[dict(
         name='sample',
         fact_catalog=[dict(id='fact-1',kind='method_change',evidence_ids=['evidence-1'])],
         review_units=[dict(id='RU-1',scope='method',symbol='sample.Flow#run()',
-                           fact_ids=['fact-1'],relation_ids=[],related_symbols=[])])])
+                           change_summary=[dict(kind='method_change',fact_id='fact-1',details={})],
+                           direct_fact_ids=['fact-1'],context_fact_ids=[],
+                           fact_ids=['fact-1'],relation_ids=[],related_symbols=[],facet_ids=[])])])
 
 
 def module(name):
@@ -81,7 +83,7 @@ class DiffListTest(unittest.TestCase):
             self.assertEqual(review.main(['--analysis',str(source),'--output',str(review_path),
                 '--cases-template',str(cases_path),'--report-template',str(report_path)]),0)
             self.assertTrue(review_path.is_file())
-            self.assertEqual(json.loads(review_path.read_text(encoding='utf-8'))['review_schema_version'],2)
+            self.assertEqual(json.loads(review_path.read_text(encoding='utf-8'))['review_schema_version'],3)
             self.assertEqual(json.loads(cases_path.read_text(encoding='utf-8'))['analysis_id'],'analysis-1')
             self.assertEqual(set(json.loads(report_path.read_text(encoding='utf-8'))),
                              set(module('generate_report').REPORT_FIELDS))

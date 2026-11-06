@@ -129,13 +129,13 @@ fact ID 由项目、kind、data 和 evidence_ids 稳定计算。
 
 ## review.json
 
-- `review_schema_version=2`
+- `review_schema_version=3`
 - `review_units`：变化方法或项目级变化的最小复核单元
-- `review_groups`：基于共享类、直接调用、配置键、Mapper、字段等确定性锚点生成的机械关联组
+- `review_facets`：按单一精确锚点生成的可重叠复核导航
 - `fact_catalog`：本轮复核所需 fact 的关键字段预览
 - `relation_catalog`：本轮复核所需直接关系预览
 
-`review_groups` 只用于减少重复阅读，不表示业务需求归属。
+`change_summary` 只摘要直接事实，完整 fact/evidence 不删除。`review_facets` 不做传递合并，只用于减少重复阅读，不表示业务需求归属。
 
 ## test-cases.json
 
@@ -158,3 +158,14 @@ fact ID 由项目、kind、data 和 evidence_ids 稳定计算。
 - `existing_impact`
 
 项目/SHA、配置变化、Excel 数量和静态验证说明由脚本生成。
+
+
+## coverage.json
+
+由 `validate_analysis.py --coverage-output` 生成 `coverage_schema_version=1` 的结构覆盖矩阵：
+
+- unit 是否被用例引用；
+- 每个 facet 的已覆盖/未覆盖 unit；
+- 完全覆盖、部分覆盖、完全未覆盖 facet 数量。
+
+该矩阵不作为强制通过门槛，也不证明分支覆盖、业务语义或预期结果正确。
