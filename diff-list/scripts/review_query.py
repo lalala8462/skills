@@ -21,8 +21,8 @@ DB_KINDS={'mapper_statement','field_source'}
 VIEW_CHOICES=('index','facts','relations','evidence','db','calls','conditions','all')
 AUDIT_VIEWS=(
     'missing_seeds','unassigned_primary_facts','unindexed_facts','unindexed_relations',
-    'unresolved_relations','missing_evidence','hard_errors','scope_errors',
-    'evidence_omissions','invalid_unit_references','cross_source_missing'
+    'unresolved_relations','missing_evidence','hard_errors',
+    'invalid_unit_references','cross_source_missing'
 )
 NOTE=('结果基于确定性索引或显式匹配；分类视图不代表完整业务影响。'
       '未命中的事实、关系及源码仍保留在 analysis.json / context.jsonl。')
@@ -271,10 +271,6 @@ def _audit_rows(analysis,indexes):
         name=project['name']
         for message in project.get('hard_errors',[]):
             result['hard_errors'].append(dict(project=name,message=message))
-        for message in project.get('scope_errors',[]):
-            result['scope_errors'].append(dict(project=name,message=message))
-        for message in project.get('critical_evidence_omissions',[]):
-            result['evidence_omissions'].append(dict(project=name,message=message))
     for cross in analysis.get('cross_project_relations',[]):
         if cross.get('source_relation') not in relations:
             result['cross_source_missing'].append(dict(
