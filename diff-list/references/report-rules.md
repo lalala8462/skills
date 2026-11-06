@@ -13,8 +13,6 @@ Agent 直接编辑 report.md 中：
 - Mermaid；
 - 特殊逻辑与测试关注点，其中需要明确既有功能影响。
 
-不再把这些内容先写入 report-data.json。
-
 ## 脚本维护
 
 以下章节由脚本生成或刷新，Agent 不重复维护：
