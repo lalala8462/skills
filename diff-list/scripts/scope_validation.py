@@ -10,8 +10,8 @@ def _read(path):
 
 
 def validate_scope_data(analysis,review,cases):
-    if not review.get('fast10_mode'):
-        raise ValueError('scope validation requires a fast10 review')
+    if review.get('review_schema_version')!=1:
+        raise ValueError('scope validation requires review_schema_version=1')
     validate_cases(cases,analysis)
     allowed_facts=set()
     allowed_evidence=set()
@@ -29,7 +29,7 @@ def validate_scope_data(analysis,review,cases):
             fact_ids=set(case.get('fact_ids') or [])
             evidence_ids=set(case.get('evidence_ids') or [])
             if not fact_ids<=allowed_facts:
-                raise ValueError('case references facts outside fast10 selection: '+case.get('case_id',''))
+                raise ValueError('case references facts outside current review selection: '+case.get('case_id',''))
             if not evidence_ids<=allowed_evidence:
                 raise ValueError('case references evidence outside fast10 selection: '+case.get('case_id',''))
     return True
