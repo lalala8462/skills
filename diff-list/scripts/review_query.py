@@ -474,7 +474,7 @@ def _render_request(args,analysis,review,context):
                 selected_totals={key+'_count':len(value) for key,value in expanded.items()},
                 cross_project_relation_count=len(cross),
                 items=selected,page=page,
-                category_is_exhaustive=args.view in ('facts','relations','evidence','calls'),
+                category_is_exhaustive=(not matched_only and args.view in ('facts','relations','evidence','calls')),
                 note=NOTE)
 
 
