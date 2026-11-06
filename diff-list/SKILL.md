@@ -10,7 +10,7 @@ description: "基于指定仓库与 Git 修订生成最终净变化分析、范�
 ## 执行流程
 
 1. 使用 `scripts/analyze.py` 生成 `analysis.json` 和 `context.jsonl`。
-2. 使用 `scripts/review_workbench.py` 按变化方法生成聚合快审材料，并同时生成合法的空 `test-cases.json`。
+2. 使用 `scripts/review_workbench.py` 按变化方法生成聚合快审材料，并同时生成 `test-cases.json` 与 `report-data.json` 骨架。
 3. AI 以 `review_units` 为主要复核入口，必要时再按 fact/evidence 回查 `analysis.json` 和 `context.jsonl`，直接填充四类用例数组。
 4. 使用 `scripts/export_test_cases.py` 导出 Excel。
 5. AI 只填写固定语义字段的 `report-data.json`，由 `scripts/generate_report.py` 负责 Markdown 标题和顺序。
@@ -36,7 +36,7 @@ description: "基于指定仓库与 Git 修订生成最终净变化分析、范�
 运行：
 
 ```powershell
-py -3 .\scripts\review_workbench.py --analysis G:\tmp\analysis-run\analysis.json --output G:\tmp\delivery\fast10-review.json --cases-template G:\tmp\delivery\test-cases.json
+py -3 .\scripts\review_workbench.py --analysis G:\tmp\analysis-run\analysis.json --output G:\tmp\delivery\fast10-review.json --cases-template G:\tmp\delivery\test-cases.json --report-template G:\tmp\delivery\report-data.json
 ```
 
 脚本同时预生成 `test-cases.json` 和 `report-data.json` 的固定结构。AI 只填充用例数组和报告正文，不重新创建顶层 JSON 结构。
