@@ -28,7 +28,7 @@ description: "基于指定仓库与 Git 修订生成最终净变化分析、范�
 
 `review_units` 是用例和证据绑定的最小复核单元。
 
-每个 unit 的 `change_summary` 只摘要直接绑定当前变化点的事实；`direct_fact_groups` 和 `context_fact_groups` 明确区分直接事实与一层上下文。摘要不得替代 `fact_catalog / analysis.json / context.jsonl`。
+每个 unit 的 `change_summary` 只摘要直接绑定当前变化点的事实；`direct_fact_ids/context_fact_ids` 与对应 group 统计明确区分直接事实和一层上下文。摘要不得替代 `fact_catalog / analysis.json / context.jsonl`。
 
 `review_facets` 只按单一精确锚点形成可重叠集合，不做传递合并。facet 用于减少重复阅读，不承担业务分类。
 
