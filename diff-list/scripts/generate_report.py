@@ -102,9 +102,11 @@ def test_summary(cases,excel_name):
 
 def _render(template,bodies):
     headings=_validate_template(template)
+    template_bodies=sections(template,headings)
     output=[headings[0],'',DRAFT_MARKER,DRAFT_STATUS,'']
     for heading in headings[1:]:
-        output.extend(['',heading,'',bodies.get(heading,'').strip()])
+        # 仅替换明确由 Agent/脚本管理的章节，保留模板的其它静态提示。
+        output.extend(['',heading,'',bodies.get(heading,template_bodies.get(heading,'')).strip()])
     return '\n'.join(output).rstrip()+'\n'
 
 
