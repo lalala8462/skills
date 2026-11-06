@@ -29,14 +29,14 @@ description: "基于指定仓库与 Git 修订生成最终净变化分析、范�
 - `relation_ids`：直接关系；
 - `evidence_ids`：需要复核时使用的源码证据。
 
-完整事实仍保留在 `analysis.json`。需要核对提交意图时读取 `analysis.json.projects[].git.commit_review`。
+`review.json` 固定使用 `review_schema_version=1`。完整事实仍保留在 `analysis.json`。需要核对提交意图时读取 `analysis.json.projects[].git.commit_review`。
 
 ## test-cases.json
 
 运行：
 
 ```powershell
-py -3 .\scripts\review_workbench.py --analysis G:\tmp\analysis-run\analysis.json --output G:\tmp\delivery\fast10-review.json --cases-template G:\tmp\delivery\test-cases.json --report-template G:\tmp\delivery\report-data.json
+py -3 .\scripts\review_workbench.py --analysis G:\tmp\analysis-run\analysis.json --output G:\tmp\delivery\review.json --cases-template G:\tmp\delivery\test-cases.json --report-template G:\tmp\delivery\report-data.json
 ```
 
 脚本同时预生成 `test-cases.json` 和 `report-data.json` 的固定结构。AI 只填充用例数组和报告正文，不重新创建顶层 JSON 结构。
