@@ -162,7 +162,7 @@ fact ID 由项目、kind、data 和 evidence_ids 稳定计算。
 
 ## coverage.json
 
-由 `validate_analysis.py --coverage-output` 生成结构覆盖矩阵：
+由 `validate_analysis.py --coverage-output` 生成 `coverage_schema_version=1` 的结构覆盖矩阵：
 
 - unit 是否被用例引用；
 - 每个 facet 的已覆盖/未覆盖 unit；
