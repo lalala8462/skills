@@ -468,6 +468,10 @@ def main(argv=None):
     event_path=None
     analysis_id=''
     try:
+        event_path=metrics_path(args.analysis,args.review,RUN_SCHEMA_VERSION)
+    except (OSError,ValueError,TypeError,UnicodeError) as exc:
+        print('WARNING: 无法定位查询统计目录: '+str(exc),file=sys.stderr)
+    try:
         if not any((args.overview,args.audit,args.query,args.unit,args.fact,args.evidence)):
             raise ValueError('必须指定一种查询模式')
         if not 1<=args.limit<=100 or not 0<=args.source_lines<=100:
@@ -494,10 +498,6 @@ def main(argv=None):
             raise ValueError('context.jsonl 必须与 analysis.json 位于同一目录')
         context=_load_context(context_path)
         analysis_id=analysis.get('analysis_id') or ''
-        try:
-            event_path=metrics_path(analysis_path,args.review,RUN_SCHEMA_VERSION)
-        except (OSError,ValueError,TypeError) as exc:
-            print('WARNING: 无法定位查询统计目录: '+str(exc),file=sys.stderr)
         result=_render_request(args,analysis,review,context)
         rendered=json.dumps(result,ensure_ascii=False,indent=2,allow_nan=False)+'\n'
         output_bytes=len(rendered.encode('utf-8'))
