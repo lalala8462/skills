@@ -42,8 +42,8 @@ py -3 .\scripts\review_workbench.py --analysis G:\tmp\analysis-run\analysis.json
 
 - `id / scope / symbol`
 - `change_summary`：只摘要直接绑定当前变化点的事实
-- `direct_fact_groups`：直接事实类型统计
-- `context_fact_groups`：一层相关方法事实类型统计
+- `direct_fact_ids / context_fact_ids`：明确区分直接事实与一层上下文事实
+- `direct_fact_groups / context_fact_groups`：对应事实类型统计
 - `fact_ids / relation_ids`
 - `facet_ids`
 
@@ -109,7 +109,7 @@ Agent 完成第一版用例后运行：
 py -3 .\scripts\validate_analysis.py --analysis G:\tmp\analysis-run\analysis.json --review G:\tmp\delivery\review.json --cases G:\tmp\delivery\test-cases.json --coverage-output G:\tmp\delivery\coverage.json
 ```
 
-`coverage.json` 给出：
+`coverage.json` 使用 `coverage_schema_version=1`，给出：
 
 - 每个 review unit 被哪些用例、哪些用例类型引用；
 - 未被引用的 unit；
