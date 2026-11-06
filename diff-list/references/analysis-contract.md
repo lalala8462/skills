@@ -56,8 +56,6 @@ review_query.py 是查证工具，不产生新的业务结论。
 
 ## report.md
 
-不再存在 report-data.json 中转层。
-
 Agent 直接维护业务章节：
 
 - 需求改动；
