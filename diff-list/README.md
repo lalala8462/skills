@@ -11,7 +11,7 @@
 3. **索引不等于结论**：review unit / facet / review_query 只帮助查找材料，不代表同一业务需求。
 4. **navigation_facets 只排序，不过滤**：它可以提示先看什么，但不能定义 Agent 只看什么。
 5. **脚本不自动归纳业务**：不生成“业务变化候选组”作为正式范围，不按代码关系直接生成业务测试结论。
-6. **Agent 直接维护业务产物**：测试写入 test-cases.json，报告业务章节直接写入 report.md，不再经过 report-data.json 中转。
+6. **Agent 直接维护业务产物**：测试写入 test-cases.json，报告业务章节直接写入 report.md。
 7. **coverage 只防遗漏**：pending_review 表示某个 review unit 尚未绑定测试场景，不证明业务覆盖充分。
 8. **一个入口完成编排**：正常使用 scripts/run_delivery.py；其它脚本是内部能力或查证工具。
 9. **最终交付唯一**：每次运行根目录只发布 test-cases.xlsx、report.md、coverage.json。
