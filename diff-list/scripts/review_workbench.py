@@ -161,20 +161,20 @@ def unit_anchors(unit,facts_by_id,relations_by_id):
     symbol=unit.get('symbol')
     if symbol:
         anchors.add(('owner',symbol.split('#',1)[0]))
-    for related in unit.get('related_symbols') or []:
-        anchors.add(('related_symbol',related))
     for fact_id in unit.get('fact_ids') or []:
         fact=facts_by_id.get(fact_id)
         if fact:
             anchors.update(_data_anchors(fact.get('data') or {}))
     for relation_id in unit.get('relation_ids') or []:
         relation=relations_by_id.get(relation_id) or {}
-        for target in relation.get('targets') or []:
+        targets=relation.get('targets') or []
+        for target in targets:
             anchors.add(('direct_call',target))
-        receiver=relation.get('receiver_type')
-        name=(relation.get('site') or {}).get('name')
-        if isinstance(receiver,str) and receiver and isinstance(name,str) and name:
-            anchors.add(('direct_call',receiver+'#'+name))
+        if not targets:
+            receiver=relation.get('receiver_type')
+            name=(relation.get('site') or {}).get('name')
+            if isinstance(receiver,str) and receiver and isinstance(name,str) and name:
+                anchors.add(('direct_call',receiver+'#'+name))
     return anchors
 
 
