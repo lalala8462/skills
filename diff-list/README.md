@@ -110,17 +110,11 @@ navigation_facets 只用于“先看什么”。普通 Util/Common/Base/Helper �
 
 按关键词：
 
-    py -3 .\scripts\review_query.py ^
-      --analysis <run>\.work\analysis\analysis.json ^
-      --review <run>\.work\review.json ^
-      --query originalTradeNo
+    py -3 .\scripts\review_query.py --analysis <run>\.work\analysis\analysis.json --review <run>\.work\review.json --query originalTradeNo
 
 按复核单元：
 
-    py -3 .\scripts\review_query.py ^
-      --analysis <run>\.work\analysis\analysis.json ^
-      --review <run>\.work\review.json ^
-      --unit RU-xxxxxxxxxxxx
+    py -3 .\scripts\review_query.py --analysis <run>\.work\analysis\analysis.json --review <run>\.work\review.json --unit RU-xxxxxxxxxxxx
 
 查询结果会展开：
 
