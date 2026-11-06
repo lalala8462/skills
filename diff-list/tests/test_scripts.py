@@ -128,6 +128,8 @@ class DiffListTest(unittest.TestCase):
                               ],'git':{'selection':[{'type':'commit','sha':sha}]}}]}
         case_data={'purpose_cases':{'acceptance':[{}],'core_regression':[],'related_regression':[],'boundary':[]}}
         rendered,_,_=generator.render(template,report_data,analysis,case_data,'webapi-cases.xlsx')
+        with self.assertRaisesRegex(ValueError,'fixed business fields'):
+            generator.render(template,{'sections':report_data},analysis,case_data,'webapi-cases.xlsx')
         broken=dict(report_data,requirements='### 额外标题\n修改支付入口。')
         with self.assertRaisesRegex(ValueError,'must not contain Markdown headings'):
             generator.render(template,broken,analysis,
