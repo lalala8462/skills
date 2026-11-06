@@ -24,7 +24,9 @@ def fixture_review():
         name='sample',
         fact_catalog=[dict(id='fact-1',kind='method_change',evidence_ids=['evidence-1'])],
         review_units=[dict(id='RU-1',scope='method',symbol='sample.Flow#run()',
-                           fact_ids=['fact-1'],relation_ids=[],related_symbols=[])])])
+                           change_summary=[dict(kind='method_change',fact_id='fact-1',details={})],
+                           direct_fact_ids=['fact-1'],context_fact_ids=[],
+                           fact_ids=['fact-1'],relation_ids=[],related_symbols=[],facet_ids=[])])])
 
 
 def module(name):
