@@ -191,9 +191,12 @@ class DeliveryFlowTest(unittest.TestCase):
             cursor=page['next_cursor']
         self.assertEqual(all_ids,['F-0','F-1','F-2','F-3','F-4'])
         self.assertTrue(page['complete'])
+        valid_cursor=query_tool._paginate(rows,'a1','facts',2,None)[1]['next_cursor']
         with self.assertRaisesRegex(ValueError,'cursor'):
-            query_tool._paginate(rows,'a1','relations',2,
-                query_tool._paginate(rows,'a1','facts',2,None)[1]['next_cursor'])
+            query_tool._paginate(rows,'a1','relations',2,valid_cursor)
+        altered=[dict(row,changed=True) if row['id']=='F-2' else row for row in rows]
+        with self.assertRaisesRegex(ValueError,'cursor'):
+            query_tool._paginate(altered,'a1','facts',2,valid_cursor)
 
     def test_evidence_expansion_validates_snapshot_before_returning_source(self):
         record=dict(id='E-1',project='sample',side='result',tree='a'*40,
