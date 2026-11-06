@@ -246,7 +246,7 @@ class DiffListTest(unittest.TestCase):
         errors,_=val.validate(report,template,[])
         self.assertTrue(any('既有功能影响' in e for e in errors))
         corrected=report.replace('新增字段对旧调用方的影响。',
-                                 '既有功能影响：旧调用方可能忽略该字段，需验证向后兼容。')
+                                 '既有功能影响：旧调用方可能忽略该字段，需验证已有调用方行为。')
         errors,_=val.validate(corrected,template,[])
         self.assertEqual(errors, [])
 
