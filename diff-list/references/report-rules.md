@@ -24,6 +24,8 @@ Agent 直接编辑 report.md 中：
 
 配置变化由 configuration_file_change / configuration_parse_boundary 生成标准化内容，敏感值继续使用分析阶段的脱敏值。
 
+报告初始化由模板预置“既有功能影响”填写位置；Agent 应填写现有功能受影响情况，明确核实无影响时填写“无”，不可直接保留占位符。
+
 脚本 refresh 只能改写这些机器维护章节，必须保留 Agent 已填写的业务章节。
 
 ## 测试用例
