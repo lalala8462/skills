@@ -224,7 +224,7 @@ class Handler {
 
     def test_non_utf8_file_is_reported(self):
         path=self.source/'src/Legacy.java';path.write_bytes(b'//\xff\xfe\nclass Legacy {}')
-        git(self.source,'add','.');git(self.source,'commit','-qm','legacy encoding')
+        git(self.source,'add','.');git(self.source,'commit','-qm','encoding fixture')
         result,_=self.analyze([git(self.source,'rev-parse','HEAD')])
         project=result['projects'][0]
         self.assertTrue(any('src/Legacy.java' in error for error in project['hard_errors']))
