@@ -275,6 +275,10 @@ def _prepare(args):
     print('AGENT_INPUT: '+str(cases))
     print('AGENT_INPUT: '+str(report))
     print('REVIEW: '+str(review))
+    print('OVERVIEW: {} -B {} --analysis {} --review {} --overview'.format(
+        sys.executable,SCRIPT_DIR/'review_query.py',analysis,review))
+    print('AUDIT: {} -B {} --analysis {} --review {} --audit'.format(
+        sys.executable,SCRIPT_DIR/'review_query.py',analysis,review))
     print('QUERY_EXAMPLE: {} -B {} --analysis {} --review {} --query <关键词>'.format(
         sys.executable,SCRIPT_DIR/'review_query.py',analysis,review))
     print('PHASE: {} -B {} --run-dir {} --mark-agent-phase business_reasoning'.format(
