@@ -86,11 +86,11 @@ def summarize_queries(work_dir):
         calls=0,successes=0,failures=0,
         distinct_requests=0,repeated_calls=0,
         returned_items=0,returned_bytes=0,stdout_bytes=0,
-        by_mode={},by_view={},invalid_events=0,
+        by_mode={},by_view={},repeated_by_mode={},invalid_events=0,
         note='returned_bytes 是查询生成 JSON 的 UTF-8 字节数，不等于 Agent 实际读取 Token；stdout_bytes 是直接终端输出字节数。')
     if not path.is_file():
         return summary
-    modes,views,identities=Counter(),Counter(),Counter()
+    modes,views,identities,repeat_modes=Counter(),Counter(),Counter(),Counter()
     try:
         lines=path.read_text(encoding='utf-8-sig').splitlines()
     except (OSError,UnicodeError) as exc:
@@ -120,8 +120,11 @@ def summarize_queries(work_dir):
         modes[row.get('mode') or 'unknown']+=1
         views[row.get('view') or 'unknown']+=1
         identities[row['request_hash']]+=1
+        if identities[row['request_hash']]>1:
+            repeat_modes[row.get('mode') or 'unknown']+=1
     summary['distinct_requests']=len(identities)
     summary['repeated_calls']=sum(count-1 for count in identities.values())
     summary['by_mode']=dict(sorted(modes.items()))
     summary['by_view']=dict(sorted(views.items()))
+    summary['repeated_by_mode']=dict(sorted(repeat_modes.items()))
     return summary
