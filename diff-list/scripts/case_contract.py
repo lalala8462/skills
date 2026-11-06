@@ -3,7 +3,7 @@
 PURPOSES=('acceptance','core_regression','related_regression','boundary')
 PURPOSE_NAMES=('需求验收','既有核心流程回归','关联回归','业务规则与边界验证')
 SCHEMA_VERSION=4
-REVIEW_SCHEMA_VERSION=3
+REVIEW_SCHEMA_VERSION=4
 
 
 def empty_cases(analysis_id):
@@ -177,11 +177,48 @@ def review_facet_index(review):
     return facets
 
 
+def navigation_facet_index(review):
+    """校验首轮 navigation_facets；它必须是完整 review_facets 的严格子集/同构引用。"""
+    units=review_unit_index(review)
+    full=review_facet_index(review)
+    navigation={}
+    for project in review.get('projects') or []:
+        for facet in project.get('navigation_facets') or []:
+            if not isinstance(facet,dict):
+                raise ValueError('navigation facet must be an object')
+            identifier=_text(facet.get('id'),'navigation_facet.id')
+            if identifier in navigation:
+                raise ValueError('duplicate navigation facet: '+identifier)
+            if identifier not in full:
+                raise ValueError('navigation facet must reference review_facets: '+identifier)
+            unit_ids=_strings(facet.get('unit_ids'),'navigation_facet.unit_ids',True)
+            base=full[identifier]
+            if (base['project']!=project.get('name') or base['type']!=facet.get('type')
+                    or base['anchor']!=facet.get('anchor') or base['unit_ids']!=unit_ids):
+                raise ValueError('navigation facet differs from full facet: '+identifier)
+            priority=facet.get('navigation_priority')
+            if type(priority)!=int or priority<0:
+                raise ValueError('navigation facet requires nonnegative navigation_priority: '+identifier)
+            reason=_text(facet.get('navigation_reason'),'navigation_facet.navigation_reason')
+            navigation[identifier]=dict(base,navigation_priority=priority,navigation_reason=reason)
+    expected_membership={unit_id:set() for unit_id in units}
+    for facet_id,facet in navigation.items():
+        for unit_id in facet['unit_ids']:
+            expected_membership[unit_id].add(facet_id)
+    for unit_id,row in units.items():
+        actual=set(_strings(row['unit'].get('navigation_facet_ids') or [],
+                            'review_unit.navigation_facet_ids'))
+        if actual!=expected_membership[unit_id]:
+            raise ValueError('review unit navigation facet membership mismatch: '+unit_id)
+    return navigation
+
+
 def coverage_matrix(data,analysis,review):
     """输出结构覆盖矩阵；只提示未引用范围，不证明业务覆盖充分。"""
     validate_cases(data,analysis,review)
     units=review_unit_index(review)
     facets=review_facet_index(review)
+    navigation_facets=navigation_facet_index(review)
     cases_by_unit={unit_id:[] for unit_id in units}
     purposes_by_unit={unit_id:set() for unit_id in units}
     for purpose in PURPOSES:
@@ -201,6 +238,7 @@ def coverage_matrix(data,analysis,review):
             scope=unit.get('scope'),
             symbol=unit.get('symbol'),
             facet_ids=sorted(unit.get('facet_ids') or []),
+            navigation_facet_ids=sorted(unit.get('navigation_facet_ids') or []),
             change_summary=unit.get('change_summary') or [],
             direct_fact_groups=unit.get('direct_fact_groups') or {},
             context_fact_groups=unit.get('context_fact_groups') or {},
@@ -231,8 +269,31 @@ def coverage_matrix(data,analysis,review):
     partially=[row['facet_id'] for row in facet_rows if row['covered_unit_ids'] and row['uncovered_unit_ids']]
     uncovered_facets=[row['facet_id'] for row in facet_rows if not row['covered_unit_ids']]
     fully=[row['facet_id'] for row in facet_rows if row['covered_unit_ids'] and not row['uncovered_unit_ids']]
+    pending_review=[]
+    for row in unit_rows:
+        if row['covered']:
+            continue
+        high_value=[]
+        for facet_id in row['navigation_facet_ids']:
+            facet=navigation_facets[facet_id]
+            high_value.append(dict(
+                facet_id=facet_id,
+                type=facet['type'],
+                anchor=facet['anchor'],
+                navigation_priority=facet['navigation_priority'],
+                navigation_reason=facet['navigation_reason']))
+        high_value.sort(key=lambda item:(item['navigation_priority'],item['type'],item['anchor']))
+        pending_review.append(dict(
+            unit_id=row['unit_id'],
+            project=row['project'],
+            scope=row['scope'],
+            symbol=row['symbol'],
+            direct_change=row['change_summary'],
+            high_value_facets=high_value,
+            all_facet_ids=row['facet_ids'],
+            decision='待 Agent 判断：补充测试用例，或确认已由现有业务场景隐含覆盖'))
     return dict(
-        coverage_schema_version=1,
+        coverage_schema_version=2,
         analysis_id=data['analysis_id'],
         review_schema_version=REVIEW_SCHEMA_VERSION,
         summary=dict(
@@ -242,6 +303,8 @@ def coverage_matrix(data,analysis,review):
             uncovered_method_unit_count=len(uncovered_method),
             uncovered_project_unit_count=len(uncovered_project),
             facet_count=len(facet_rows),
+            navigation_facet_count=len(navigation_facets),
+            pending_review_count=len(pending_review),
             fully_covered_facet_count=len(fully),
             partially_covered_facet_count=len(partially),
             uncovered_facet_count=len(uncovered_facets)),
@@ -250,6 +313,7 @@ def coverage_matrix(data,analysis,review):
         uncovered_project_unit_ids=uncovered_project,
         partially_covered_facet_ids=partially,
         uncovered_facet_ids=uncovered_facets,
+        pending_review=pending_review,
         unit_coverage=unit_rows,
         facet_coverage=facet_rows,
-        note='该矩阵只检查 review unit 是否被测试用例结构引用，不证明分支、业务规则或预期结果正确。')
+        note='pending_review 是待复核清单，不是覆盖率门槛；完整 review_facets 仍用于结构回查，navigation_facets 只提供高价值首轮导航。')
