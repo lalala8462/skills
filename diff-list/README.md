@@ -28,7 +28,7 @@ py -3 .\scripts\analyze.py --repo https://github.com/example/project --rev FULL_
 
 `analysis.json` 使用 `schema_version=2`、`analyzer_version=2.1.0`。调用关系最多 1 层、每侧最多 100 个方法；相同 blob 在同一次分析中复用解析结果。
 
-### 2. 聚合快审和用例骨架
+### 2. 聚合快审和输入骨架
 
 ```powershell
 py -3 .\scripts\review_workbench.py --analysis G:\tmp\analysis-run\analysis.json --output G:\tmp\delivery\review.json --cases-template G:\tmp\delivery\test-cases.json --report-template G:\tmp\delivery\report-data.json
@@ -89,7 +89,7 @@ py -3 .\scripts\validate_report.py G:\tmp\delivery\report.md --analysis G:\tmp\a
 
 ## 执行约束
 
-较大的 `test-cases.json` 和 `report-data.json` 直接写文件，不把完整 JSON 放进命令行参数。这样可避免 Windows 命令行长度限制，也不依赖 JavaScript 环境提供 `TextEncoder`、`btoa` 等能力。
+较大的 `test-cases.json` 和 `report-data.json` 直接写文件，不把完整 JSON 放进命令行参数，避免 Windows 命令行长度限制。
 
 ## 处理链路
 
