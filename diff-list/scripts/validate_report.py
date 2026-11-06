@@ -198,7 +198,7 @@ def without_draft_status(text):
     if not marker_count:
         return text
     candidate,count=re.subn(
-        r'(?m)^<!-- diff-list-status: draft -->\\r?\\n\\*\\*报告状态：未完成。\\*\\*[^\\r\\n]*\\r?\\n?',
+        r'(?m)^<!-- diff-list-status: draft -->\r?\n\*\*报告状态：未完成。\*\*[^\r\n]*\r?\n?',
         '',text,count=1)
     if count!=1:
         raise ValueError('could not clear the generated draft marker/status')
