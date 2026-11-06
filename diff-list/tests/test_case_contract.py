@@ -52,6 +52,11 @@ class CaseContractTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'schema_version=4'):
             validate_cases(data,analysis(),review())
 
+    def test_old_review_schema_is_rejected(self):
+        old=copy.deepcopy(review());old['review_schema_version']=1
+        with self.assertRaisesRegex(ValueError,'review_schema_version=2'):
+            validate_cases(cases(),analysis(),old)
+
     def test_unknown_review_unit_is_rejected(self):
         data=cases();data['purpose_cases']['acceptance'][0]['review_unit_ids']=['RU-missing']
         with self.assertRaisesRegex(ValueError,'unknown review unit'):
