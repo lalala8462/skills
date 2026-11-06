@@ -85,7 +85,7 @@ pending_review 表示尚未被测试用例引用的 review unit，并提供 high
 
 ## run-state.json
 
-当前 run_schema_version=2。
+当前 run_schema_version=3。
 
 除脚本阶段外，单独记录：
 
