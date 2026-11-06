@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from analysis_engine import VERSION, redact
-from case_contract import coverage_matrix, resolve_case_sources
+from case_contract import REVIEW_SCHEMA_VERSION, coverage_matrix, resolve_case_sources
 from source_index import batch_blobs, git_bytes, stable, source_lines
 
 
@@ -72,7 +72,8 @@ def validate(analysis,context,review,cases,verify_sources=True):
                     [(project['name'],project['repository'],project['snapshots']) for project in projects])
     if analysis.get('analysis_id')!=expected:
         errors.append('analysis snapshot identity mismatch')
-    if review.get('analysis_id')!=analysis.get('analysis_id') or review.get('review_schema_version')!=3:
+    if (review.get('analysis_id')!=analysis.get('analysis_id')
+            or review.get('review_schema_version')!=REVIEW_SCHEMA_VERSION):
         errors.append('review belongs to a different analysis or has an unsupported review schema')
 
     facts={}
@@ -134,14 +135,14 @@ def validate(analysis,context,review,cases,verify_sources=True):
 
     coverage=coverage_matrix(cases,analysis,review)
     summary=coverage['summary']
-    warnings.append('Structural unit coverage: {}/{} referenced; uncovered={}'.format(
-        summary['covered_unit_count'],summary['unit_count'],
-        ','.join(coverage['uncovered_unit_ids']) or 'none'))
-    warnings.append('Structural facet coverage: full={}, partial={}, none={}; partial_ids={}; uncovered_ids={}'.format(
+    warnings.append('Structural unit coverage: {}/{} referenced; pending_review={}'.format(
+        summary['covered_unit_count'],summary['unit_count'],summary['pending_review_count']))
+    if coverage.get('pending_review'):
+        warnings.append('Pending review units: '+','.join(
+            row['unit_id'] for row in coverage['pending_review']))
+    warnings.append('Structural facet coverage: full={}, partial={}, none={}; navigation_facets={}'.format(
         summary['fully_covered_facet_count'],summary['partially_covered_facet_count'],
-        summary['uncovered_facet_count'],
-        ','.join(coverage['partially_covered_facet_ids']) or 'none',
-        ','.join(coverage['uncovered_facet_ids']) or 'none'))
+        summary['uncovered_facet_count'],summary['navigation_facet_count']))
     warnings.append('Structural coverage only checks review-unit references; it does not prove branch or business coverage.')
     warnings.append('Static evidence does not prove test execution, runtime binding or business correctness.')
     return errors,warnings
