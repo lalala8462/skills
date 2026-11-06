@@ -206,9 +206,8 @@ def _unit_index(row,indexes):
 
 def _paginate(rows,analysis_id,scope,limit,cursor):
     # Token 绑定范围和内容 ID，材料变化或跨视图重用会直接拒绝。
-    identity=[row.get('id',row.get('unit_id',row.get('symbol',str(row)))) for row in rows]
     signature=hashlib.sha256(json.dumps(
-        [analysis_id,scope,limit,identity],ensure_ascii=False,
+        [analysis_id,scope,limit,rows],ensure_ascii=False,
         sort_keys=True).encode('utf-8')).hexdigest()[:20]
     start=0
     if cursor:
