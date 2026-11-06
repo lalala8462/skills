@@ -31,7 +31,7 @@ def validate_scope_data(analysis,review,cases):
             if not fact_ids<=allowed_facts:
                 raise ValueError('case references facts outside current review selection: '+case.get('case_id',''))
             if not evidence_ids<=allowed_evidence:
-                raise ValueError('case references evidence outside fast10 selection: '+case.get('case_id',''))
+                raise ValueError('case references evidence outside current review selection: '+case.get('case_id',''))
     return True
 
 
