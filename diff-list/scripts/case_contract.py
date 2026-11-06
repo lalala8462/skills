@@ -283,6 +283,19 @@ def coverage_matrix(data,analysis,review):
                 navigation_priority=facet['navigation_priority'],
                 navigation_reason=facet['navigation_reason']))
         high_value.sort(key=lambda item:(item['navigation_priority'],item['type'],item['anchor']))
+        candidate_case_ids=sorted({
+            case_id
+            for facet_id in row['navigation_facet_ids']
+            for unit_id in navigation_facets[facet_id]['unit_ids']
+            if unit_id!=row['unit_id']
+            for case_id in cases_by_unit[unit_id]
+        })
+        related_covered_unit_ids=sorted({
+            unit_id
+            for facet_id in row['navigation_facet_ids']
+            for unit_id in navigation_facets[facet_id]['unit_ids']
+            if unit_id!=row['unit_id'] and cases_by_unit[unit_id]
+        })
         pending_review.append(dict(
             unit_id=row['unit_id'],
             project=row['project'],
@@ -290,6 +303,8 @@ def coverage_matrix(data,analysis,review):
             symbol=row['symbol'],
             direct_change=row['change_summary'],
             high_value_facets=high_value,
+            candidate_case_ids=candidate_case_ids,
+            related_covered_unit_ids=related_covered_unit_ids,
             all_facet_ids=row['facet_ids'],
             decision='待 Agent 判断：补充测试用例，或确认已由现有业务场景隐含覆盖'))
     return dict(
