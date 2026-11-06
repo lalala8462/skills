@@ -59,7 +59,9 @@
 - 接口契约；
 - 异常恢复和边界条件。
 
-branch、switch、contains、集合数量等源码事实由 AI 结合业务变化形成测试场景。
+branch、switch、contains、集合数量等源码事实由 Agent 结合业务变化形成测试场景。脚本不从这些事实直接生成正式业务测试结论。
+
+当某个字段、方法、配置键、Mapper 或 review unit 需要深查时，优先使用 `review_query.py` 展开其完整 fact/relation/evidence，减少手工在多个材料间跳转。查询结果只是索引，不代表未命中材料无关。
 
 ## 6. 测试用例
 
