@@ -1,15 +1,15 @@
 # diff-list
 
-基于指定 Git 仓库和修订生成代码差异分析、范围报告和测试用例 Excel。脚本负责固定修订、解析源码、定位一层直接影响和整理源码证据，AI 只处理业务复核、测试设计和章节正文。
+基于指定 Git 修订生成最终净变化分析、四类测试用例 Excel 和 Markdown 报告。脚本负责固定范围、源码事实、一层直接影响、机械关联分组、证据绑定和交付校验；Agent 负责业务解释、测试场景和少量报告业务正文。
 
 ## 设计原则
 
-1. **最终差异是底账**：以指定修订形成的最终结果作为分析基础。
-2. **确定性工作脚本化**：AST、字段/方法变化、直接调用、Mapper、配置消费者、参数来源等由脚本提取。
-3. **直接影响一层展开**：从变化方法向上、向下各分析一层。
-4. **快审按变化点聚合**：不因多个事实共享同一源码 evidence 而把整个方法的所有事实平铺给模型。
-5. **机器结构由脚本负责**：用例顶层结构、报告标题和章节顺序不交给 AI 手工构造。
-6. **交付证据可回查**：最终用例引用的 fact/evidence 会重新核对固定 Git 快照。
+1. **最终差异是底账**：只以指定修订形成的最终代码结果作为分析范围。
+2. **确定性工作脚本化**：Git、AST、Mapper、配置、参数/返回来源、直接关系、证据绑定和报告固定结构由脚本处理。
+3. **直接影响只展开一层**：不尝试静态证明完整业务链。
+4. **机械聚合不替代业务判断**：脚本只按类、直接依赖、配置键、Mapper、字段等确定性锚点生成 `review_groups`。
+5. **Agent 不操作 fact/evidence ID**：测试用例只引用 `review_unit_ids`，最终源码 fact/evidence 由脚本自动展开。
+6. **固定报告内容不交给 Agent**：项目/SHA、配置变化、Excel 数量和静态验证说明由脚本生成。
 
 ## 当前流程
 
@@ -23,59 +23,107 @@ py -3 .\scripts\analyze.py --repo https://github.com/example/project --rev FULL_
 
 输出：
 
-- `analysis.json`：完整静态事实、关系、Git 摘要、限制和错误；
-- `context.jsonl`：源码证据片段。
+- `analysis.json`：完整事实、直接关系、Git 摘要、固定快照和错误；
+- `context.jsonl`：可回查源码证据。
 
-`analysis.json` 使用 `schema_version=2`、`analyzer_version=2.1.0`。调用关系最多 1 层、每侧最多 100 个方法；相同 blob 在同一次分析中复用解析结果。
+当前分析契约：`schema_version=2`、`analyzer_version=2.1.0`。
 
-### 2. 聚合快审和输入骨架
+### 2. 聚合复核材料和输入骨架
 
 ```powershell
 py -3 .\scripts\review_workbench.py --analysis G:\tmp\analysis-run\analysis.json --output G:\tmp\delivery\review.json --cases-template G:\tmp\delivery\test-cases.json --report-template G:\tmp\delivery\report-data.json
 ```
 
-`review.json` 使用 `review_schema_version=1`，以 `review_units` 为主要入口。每个变化方法只携带直接关联的方法、fact ID、relation ID 和 evidence ID；`fact_catalog` 只保存关键字段预览，完整 fact 仍在 `analysis.json` 中按 ID 回查。
+`review.json` 使用 `review_schema_version=2`。
 
-项目级配置文件变化等无法绑定到单一方法的主事实放在 `project_fact_ids`。需要进一步核对时，再根据 fact/evidence ID 回查 `analysis.json` 和 `context.jsonl`。
+每个 `review_unit` 对应一个变化方法或项目级变化，包含：
 
-同时生成的 `test-cases.json` 已经是合法的 `schema_version=3` 四类空骨架，`report-data.json` 也已包含固定语义字段；AI 只填内容。四类用例为：
+- `id`
+- `scope`
+- `symbol`
+- `related_symbols`
+- `fact_groups / fact_ids`
+- `relation_ids`
+
+脚本进一步生成 `review_groups`。同组只表示源码结构或直接依赖相关，例如同一类、共享直接调用、配置键、Mapper 或字段；**不表示它们一定属于同一业务需求**。
+
+Agent 优先按 `review_groups` 阅读，再落到必要的 `review_units`。完整 fact 仍在 `analysis.json`，源码证据仍在 `context.jsonl`。
+
+### 3. 测试用例
+
+`test-cases.json` 使用 `schema_version=4`。Agent 不再填写 `fact_ids/evidence_ids`，每条用例只引用实际支撑该场景的 `review_unit_ids`：
+
+```json
+{
+  "schema_version": 4,
+  "analysis_id": "本次 analysis_id",
+  "purpose_cases": {
+    "acceptance": [
+      {
+        "case_id": "A-001",
+        "title": "验证修改后的业务规则",
+        "preconditions": "准备满足触发条件的数据",
+        "steps": ["发起请求", "检查业务结果"],
+        "expected": ["修改后的规则生效"],
+        "observable_evidence": [
+          {
+            "surface": "接口",
+            "target": "响应字段",
+            "assertion": "status=SUCCESS"
+          }
+        ],
+        "review_unit_ids": ["RU-xxxxxxxxxxxx"]
+      }
+    ],
+    "core_regression": [],
+    "related_regression": [],
+    "boundary": []
+  }
+}
+```
+
+四类固定为：
 
 - `acceptance`：需求验收；
 - `core_regression`：既有核心流程回归；
 - `related_regression`：关联回归；
 - `boundary`：业务规则与边界验证。
 
-`steps`、`expected` 都必须是非空字符串数组。
+导出前，脚本根据 `review_unit_ids` 自动展开对应 fact 和 evidence，并重新核对固定 Git tree/blob。
 
-### 3. Excel
+### 4. Excel
 
 ```powershell
 py -3 .\scripts\export_test_cases.py --input G:\tmp\delivery\test-cases.json --output G:\tmp\delivery\test-cases.xlsx --analysis G:\tmp\analysis-run\analysis.json --review G:\tmp\delivery\review.json
 ```
 
-Excel 固定四个工作表和五列：用例编号、用例名称、前置条件、步骤描述、预期结果。预期结果必须包含可判定的页面、接口、日志、数据库、文件或下游行为证据。
+Excel 固定四个工作表和五列：用例编号、用例名称、前置条件、步骤描述、预期结果。每条用例必须有至少一个可观察、可判定结果。
 
-### 4. 报告
+### 5. 报告
 
-`report-data.json` 只接受固定语义字段，不接受模板标题作为 key：
+`report-data.json` 只保留 Agent 必须填写的业务字段：
 
 ```json
 {
-  "sections": {
-    "scope": "example FULL_SHA",
-    "requirements": "本次最终生效的需求改动",
-    "ddl": "无",
-    "dml": "无",
-    "config": "无",
-    "flow": "无",
-    "mermaid": "无",
-    "special": "无",
-    "verification": "仅完成静态分析与交付物校验。"
-  }
+  "requirements": "最终需求改动",
+  "ddl": "无",
+  "dml": "无",
+  "flow": "业务流程说明",
+  "mermaid": "Mermaid 代码块或无",
+  "special_rules": "特殊规则或无",
+  "existing_impact": "既有功能影响或无"
 }
 ```
 
-正文中不要自行加入 Markdown 标题。生成器负责映射到模板：
+脚本自动生成：
+
+- 第 1 章项目/SHA 范围；
+- 第 2.4 节配置文件变化及标准化差异块；
+- 第 4 章固定“特殊规则 / 既有功能影响”结构；
+- 第 5 章 Excel 文件名和四类用例数量；
+- 第 6 章本技能实际执行的静态验证说明。
+
+生成和定稿：
 
 ```powershell
 py -3 .\scripts\generate_report.py --data G:\tmp\delivery\report-data.json --analysis G:\tmp\analysis-run\analysis.json --review G:\tmp\delivery\review.json --cases G:\tmp\delivery\test-cases.json --excel G:\tmp\delivery\test-cases.xlsx --output G:\tmp\delivery\report.md
@@ -85,38 +133,42 @@ py -3 .\scripts\append_run_dirs.py G:\tmp\delivery\report.md --source G:\tmp\ana
 py -3 .\scripts\validate_report.py G:\tmp\delivery\report.md --analysis G:\tmp\analysis-run\analysis.json --review G:\tmp\delivery\review.json --cases G:\tmp\delivery\test-cases.json --finalize
 ```
 
-`append_run_dirs.py --source` 读取当前 `schema_version=2` 的 `analysis.json`，直接取得本轮隔离 clone。
-
-## 执行约束
-
-较大的 `test-cases.json` 和 `report-data.json` 直接写文件，不把完整 JSON 放进命令行参数，避免 Windows 命令行长度限制。
-
 ## 处理链路
 
 ```text
 Git 修订
   ↓
-静态索引与完整事实
+analysis.json + context.jsonl
   ↓
-按变化方法聚合的一层快审
+review_units
   ↓
-AI 业务复核 + 填充测试用例骨架
+确定性 review_groups
   ↓
-Excel
+Agent 业务归纳 + 测试设计
   ↓
-AI 填写固定语义报告字段
+test-cases.json（只引用 review_unit_ids）
   ↓
-脚本生成 Markdown + 最终校验
+脚本自动展开 fact/evidence
+  ↓
+Excel + 自动固定章节 + Agent 业务正文
+  ↓
+最终静态校验
 ```
 
 ## 校验
 
-交付时校验 `analysis_id`、`review_schema_version=1`、用例引用 fact/evidence 的归属、固定 Git 快照源码、聚合快审范围以及 Excel/报告中的四类用例数量。
+最终校验包括：
+
+- `analysis_id`
+- `review_schema_version=2`
+- `test-cases schema_version=4`
+- review unit 与 analysis fact 的归属
+- 自动展开后的 evidence 与固定 Git 快照
+- Excel/报告用例数量
+- 报告范围、章节和配置块结构
 
 离线回归命令：
 
 ```powershell
 py -3 -B -m unittest discover -s tests -v
 ```
-
-报告第 6 章只记录实际执行过的静态分析、构建测试、数据库验证和环境联调。

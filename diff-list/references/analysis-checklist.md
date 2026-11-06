@@ -69,7 +69,7 @@ branch、switch、contains、集合数量等源码事实由 AI 结合业务变�
 - 写清配置和数据前提；
 - 步骤可执行；
 - 结果可观察；
-- 只引用实际依赖的 fact/evidence。
+- 只引用实际支撑该场景的 `review_unit_ids`；fact/evidence 由脚本自动展开。
 
 正常逻辑已在需求验收中覆盖时，不在回归或边界 sheet 重复。
 

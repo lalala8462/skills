@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""校验最终用例只引用当前快审范围内的事实和证据。"""
+"""校验最终用例只引用当前复核范围内的 review unit。"""
 import json
 from pathlib import Path
-from case_contract import PURPOSES, validate_cases
+from case_contract import validate_cases,review_unit_index
 
 
 def _read(path):
@@ -10,28 +10,13 @@ def _read(path):
 
 
 def validate_scope_data(analysis,review,cases):
-    if review.get('review_schema_version')!=1:
-        raise ValueError('scope validation requires review_schema_version=1')
-    validate_cases(cases,analysis)
-    allowed_facts=set()
-    allowed_evidence=set()
-    for project in review.get('projects',[]):
-        facts=project.get('fact_catalog') or []
-        relations=project.get('relation_catalog') or []
-        allowed_facts.update(row.get('id') for row in facts if row.get('id'))
-        allowed_evidence.update(identifier for row in facts for identifier in row.get('evidence_ids',[]))
-        allowed_evidence.update(identifier for relation in relations
-                                for identifier in relation.get('evidence_ids',[]))
-        allowed_evidence.update(identifier for unit in project.get('review_units',[])
-                                for identifier in unit.get('evidence_ids',[]))
-    for purpose in PURPOSES:
-        for case in cases['purpose_cases'][purpose]:
-            fact_ids=set(case.get('fact_ids') or [])
-            evidence_ids=set(case.get('evidence_ids') or [])
-            if not fact_ids<=allowed_facts:
-                raise ValueError('case references facts outside current review selection: '+case.get('case_id',''))
-            if not evidence_ids<=allowed_evidence:
-                raise ValueError('case references evidence outside current review selection: '+case.get('case_id',''))
+    validate_cases(cases,analysis,review)
+    known_facts={fact.get('id') for project in analysis.get('projects',[])
+                 for fact in project.get('facts',[]) if fact.get('id')}
+    units=review_unit_index(review)
+    for identifier,row in units.items():
+        if not set(row['fact_ids'])<=known_facts:
+            raise ValueError('review unit references facts outside current analysis: '+identifier)
     return True
 
 

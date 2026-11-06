@@ -1,34 +1,34 @@
-# 快审范围模板
+# 聚合复核材料
 
-## 目标
+`review.json` 使用 `review_schema_version=2`。
 
-围绕最终净变化和一层直接影响完成业务核实、测试用例、Excel 和 Markdown 报告。
+## review_units
 
-## 生成快审材料
+每个 unit 对应一个变化方法或项目级主事实，是测试用例引用源码事实的唯一入口。
 
-```powershell
-py -3 .\scripts\review_workbench.py --analysis G:\tmp\analysis-run\analysis.json --output G:\tmp\delivery\review.json --cases-template G:\tmp\delivery\test-cases.json --report-template G:\tmp\delivery\report-data.json
-```
+关键字段：
 
-`review.json` 使用 `review_schema_version=1`。
+- `id`
+- `scope`
+- `symbol`
+- `related_symbols`
+- `fact_groups`
+- `fact_ids`
+- `relation_ids`
 
-主要内容：
+## review_groups
 
-- `review_units`：按变化方法聚合的一层复核单元；
-- `fact_catalog`：本轮所需 fact 的关键字段预览；
-- `relation_catalog`：本轮所需直接关系预览；
-- `project_fact_ids`：无法绑定到单一方法的项目级主事实；
-- `hard_errors`：当前分析硬错误。
+脚本按以下确定性锚点做连通聚合：
 
-完整 fact 在 `analysis.json`，源码 evidence 在 `context.jsonl`；只有需要进一步核实时才按 ID 回查。
+- 同一变化类；
+- 共享直接调用目标；
+- 共享接收类型 + 方法；
+- 共享配置键；
+- 共享 Mapper statement；
+- 共享字段。
 
-## 复核顺序
+分组只用于减少重复阅读，不代表业务需求归属。Agent 负责判断最终业务分组。
 
-1. 按 `review_units` 明确修改点和直接影响；
-2. 核实配置、DB/Mapper、渠道、通知和响应结果；
-3. 必要时按 fact/evidence ID 回查完整源码；
-4. 填充四类测试用例；
-5. 导出 Excel；
-6. 填写 `report-data.json` 正文并生成报告。
+## 用例绑定
 
-变更源码无法索引、关键证据缺失或 `hard_errors` 非空时，不标记为正式完成。
+Agent 在测试用例里只填写 `review_unit_ids`。导出和最终校验阶段由脚本自动展开 unit 对应的 fact/evidence。

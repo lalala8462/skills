@@ -224,7 +224,7 @@ def main(argv=None):
         source_errors,source_warnings=validate_files(a.analysis,a.review,a.cases)
         errors.extend(source_errors);warnings.extend(source_warnings)
         errors.extend(validate_case_counts(candidate_text,case_data,analysis))
-        warnings.append('已校验当前快审范围和最终引用源码证据')
+        warnings.append('已校验当前复核范围和自动展开后的源码证据')
     except (OSError,UnicodeError,ValueError,KeyError,TypeError,IndexError) as exc:
         print('ERROR: '+str(exc),file=sys.stderr)
         return 2

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render a report candidate from semantic section content and test-case data."""
+"""Render a report candidate from Agent business conclusions plus deterministic analysis data."""
 import argparse
 import json
 import os
@@ -8,51 +8,96 @@ import sys
 import tempfile
 from pathlib import Path
 
+REPORT_FIELDS=('requirements','ddl','dml','flow','mermaid','special_rules','existing_impact')
 SECTION_HEADINGS={
-    'scope':'## 1. 分析范围',
     'requirements':'### 2.1 需求改动',
     'ddl':'### 2.2 表字段 DDL 修改',
     'dml':'### 2.3 表配置 DML 准备清单',
-    'config':'### 2.4 配置文件调整',
     'flow':'### 3.1 整体流程说明',
-    'mermaid':'### 3.2 Mermaid 流程图',
-    'special':'## 4. 特殊逻辑与测试关注点',
-    'verification':'## 6. 验证情况'
+    'mermaid':'### 3.2 Mermaid 流程图'
 }
-SECTION_KEYS=tuple(SECTION_HEADINGS)
 
 
 def empty_report_data():
-    """生成固定语义字段的报告输入骨架，正文由模型填充。"""
-    return {'sections':{key:'' for key in SECTION_KEYS}}
+    """只生成 Agent 必须填写的业务字段。"""
+    return {key:'' for key in REPORT_FIELDS}
 
 
 def headings(text):
     return [line.strip() for line in text.splitlines() if re.fullmatch(r'#{1,6} .+', line.strip())]
 
 
-def render(template, report_data, cases, excel_name):
+def _validate_report_data(report_data):
+    if not isinstance(report_data,dict) or set(report_data)!=set(REPORT_FIELDS):
+        missing=sorted(set(REPORT_FIELDS)-set(report_data or {}))
+        extra=sorted(set(report_data or {})-set(REPORT_FIELDS))
+        raise ValueError('report-data requires fixed business fields; missing={}, extra={}'.format(missing,extra))
+    for key,value in report_data.items():
+        if not isinstance(value,str) or not value.strip():
+            raise ValueError('report field {} requires reviewed text or the explicit word 无'.format(key))
+        if re.search(r'(?m)^\s*#{1,6}\s+',value):
+            raise ValueError('report field {} must not contain Markdown headings'.format(key))
+
+
+def scope_section(analysis):
+    from validate_report import expected_project_shas
+    mappings=expected_project_shas(analysis)
+    if not mappings:
+        raise ValueError('analysis.json 中无法推导项目与完整 Git SHA')
+    return '\n'.join('- '+pair for pair in mappings)
+
+
+def configuration_section(analysis):
+    changes=[]
+    boundaries=[]
+    for project in analysis.get('projects',[]):
+        for fact in project.get('facts',[]):
+            data=fact.get('data') or {}
+            if fact.get('kind')=='configuration_file_change':
+                changes.append(dict(project=project.get('name'),path=data.get('path'),key=data.get('key'),
+                    change=data.get('change'),before=data.get('before'),after=data.get('after')))
+            elif fact.get('kind')=='configuration_parse_boundary':
+                boundaries.append(dict(project=project.get('name'),path=data.get('path'),
+                                       reason=data.get('reason') or data.get('kind') or '无法结构化解析'))
+    if not changes and not boundaries:
+        return '无'
+    lines=[]
+    normalized=[]
+    for row in sorted(changes,key=lambda r:(str(r['project']),str(r['path']),str(r['key']))):
+        lines.append('- {} / {}：{} {}'.format(
+            row.get('project') or '',row.get('path') or '',row.get('key') or '',row.get('change') or 'modified'))
+        normalized.append('{} | {} | before={} | after={}'.format(
+            row.get('path') or '',row.get('key') or '',row.get('before'),row.get('after')))
+    for row in sorted(boundaries,key=lambda r:(str(r['project']),str(r['path']))):
+        lines.append('- {} / {}：配置结构无法自动展开，需按源码证据复核。'.format(
+            row.get('project') or '',row.get('path') or ''))
+        normalized.append('{} | parse-boundary | {}'.format(row.get('path') or '',row.get('reason') or ''))
+    return '\n'.join(lines)+"\n\n~~~text\n"+'\n'.join(normalized)+"\n~~~"
+
+
+def special_section(report_data):
+    return '特殊规则：{}\n\n既有功能影响：{}'.format(
+        report_data['special_rules'].strip(),report_data['existing_impact'].strip())
+
+
+def verification_section():
+    return ('已完成固定 Git 快照静态分析、复核范围校验、review unit 到源码事实/证据的自动展开校验、'
+            '测试用例结构校验和报告结构预检。未执行构建、单元测试、数据库验证或环境联调。')
+
+
+def render(template,report_data,analysis,cases,excel_name):
+    _validate_report_data(report_data)
     template_headings=headings(template)
     if not template_headings:
         raise ValueError('report template has no headings')
-    missing_template=[heading for heading in SECTION_HEADINGS.values() if heading not in template_headings]
-    if missing_template:
-        raise ValueError('report template is missing required headings: '+', '.join(missing_template))
+    required=set(SECTION_HEADINGS.values())|{
+        '## 1. 分析范围','### 2.4 配置文件调整','## 4. 特殊逻辑与测试关注点',
+        '## 5. 测试用例导出','## 6. 验证情况'}
+    missing=sorted(required-set(template_headings))
+    if missing:
+        raise ValueError('report template is missing required headings: '+', '.join(missing))
 
-    sections=report_data.get('sections')
-    if not isinstance(sections,dict):
-        raise ValueError('report-data JSON requires a sections object with fixed semantic keys')
-    if set(sections)!=set(SECTION_KEYS):
-        missing=sorted(set(SECTION_KEYS)-set(sections))
-        extra=sorted(set(sections)-set(SECTION_KEYS))
-        raise ValueError('report sections require fixed semantic keys; missing={}, extra={}'.format(missing,extra))
-    for key,value in sections.items():
-        if not isinstance(value,str) or not value.strip():
-            raise ValueError('report section {} requires reviewed text or the explicit word 无'.format(key))
-        if re.search(r'(?m)^\s*#{1,6}\s+',value):
-            raise ValueError('report section {} must not contain Markdown headings'.format(key))
-
-    from case_contract import PURPOSES, PURPOSE_NAMES
+    from case_contract import PURPOSES,PURPOSE_NAMES
     groups=cases.get('purpose_cases')
     if not isinstance(groups,dict) or set(groups)!=set(PURPOSES):
         raise ValueError('cases must contain exactly the four current purpose arrays')
@@ -66,8 +111,14 @@ def render(template, report_data, cases, excel_name):
     else:
         summary='无'
 
-    bodies={SECTION_HEADINGS[key]:sections[key].strip() for key in SECTION_KEYS}
-    bodies['## 5. 测试用例导出']=summary
+    bodies={SECTION_HEADINGS[key]:report_data[key].strip() for key in SECTION_HEADINGS}
+    bodies.update({
+        '## 1. 分析范围':scope_section(analysis),
+        '### 2.4 配置文件调整':configuration_section(analysis),
+        '## 4. 特殊逻辑与测试关注点':special_section(report_data),
+        '## 5. 测试用例导出':summary,
+        '## 6. 验证情况':verification_section()
+    })
     title=template_headings[0]
     output=[]
     for line in template.splitlines():
@@ -87,7 +138,6 @@ def render(template, report_data, cases, excel_name):
 
 
 def preflight(rendered,template,analysis,cases):
-    """候选报告落盘前复用正式报告正文校验，并补验分析边界和用例数量。"""
     marker='<!-- diff-list-status: draft -->'
     status='报告状态：未完成'
     draft_line=re.compile(
@@ -96,8 +146,7 @@ def preflight(rendered,template,analysis,cases):
     candidate_text,replaced=draft_line.subn('',rendered,count=1)
     if replaced!=1 or rendered.count(marker)!=1 or rendered.count(status)!=1:
         return ['生成候选缺少唯一且完整的草稿标记']
-
-    from validate_report import validate, validate_case_counts, expected_project_shas
+    from validate_report import validate,validate_case_counts,expected_project_shas
     mappings=expected_project_shas(analysis)
     if not mappings:
         return ['analysis.json 中无法推导项目与完整 Git SHA']
@@ -108,15 +157,15 @@ def preflight(rendered,template,analysis,cases):
 
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--data',required=True,help='结构化报告 JSON：sections 使用固定语义字段')
+    parser.add_argument('--data',required=True,help='Agent 业务结论 JSON')
     parser.add_argument('--analysis',required=True,help='本次固定分析结果')
-    parser.add_argument('--review',required=True,help='本次快审结果')
+    parser.add_argument('--review',required=True,help='本次聚合复核结果')
     parser.add_argument('--cases',required=True,help='本次四类结构化用例 JSON')
     parser.add_argument('--excel',help='已生成的独立 Excel 路径；报告内只写文件名')
     parser.add_argument('--template',default=str(Path(__file__).resolve().parents[1]/'assets'/'diff-list-template.md'))
     parser.add_argument('--output',required=True,help='新建报告候选路径；不得指向已交付报告')
     parser.add_argument('--replace-draft',action='store_true',
-                        help='只重写带 diff-list 草稿标记的候选报告，供结构化数据修正后重生成')
+                        help='只重写带 diff-list 草稿标记的候选报告')
     args=parser.parse_args(argv)
     try:
         data=json.loads(Path(args.data).read_text(encoding='utf-8-sig'))
@@ -132,8 +181,8 @@ def main(argv=None):
             if excel_path is None or not excel_path.is_file():
                 raise ValueError('test cases exist but the separate Excel file is missing')
             if excel_path.resolve().parent!=Path(args.output).resolve().parent:
-                raise ValueError('Excel and report candidate must share a directory for the relative workbook link')
-        rendered,counts,total=render(template,data,cases,excel_path.name if excel_path else None)
+                raise ValueError('Excel and report candidate must share a directory')
+        rendered,counts,total=render(template,data,analysis,cases,excel_path.name if excel_path else None)
         errors=preflight(rendered,template,analysis,cases)
         if errors:
             raise ValueError('report preflight failed: '+'; '.join(errors[:12]))
@@ -143,9 +192,8 @@ def main(argv=None):
             if not args.replace_draft:
                 raise ValueError('output already exists; use --replace-draft only for an internal draft candidate')
             old=output.read_text(encoding='utf-8-sig')
-            if (old.count('<!-- diff-list-status: draft -->')!=1 or
-                    old.count('报告状态：未完成')!=1):
-                raise ValueError('--replace-draft refuses to overwrite a file without one internal draft marker and status')
+            if old.count('<!-- diff-list-status: draft -->')!=1 or old.count('报告状态：未完成')!=1:
+                raise ValueError('--replace-draft refuses to overwrite a non-draft file')
             handle=tempfile.NamedTemporaryFile(mode='w',encoding='utf-8',newline='\n',
                 prefix=output.name+'.',suffix='.tmp',dir=str(output.parent),delete=False)
             temporary=Path(handle.name)
