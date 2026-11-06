@@ -86,20 +86,7 @@ def render(template, report_data, cases, excel_name):
     return '\n'.join(output).rstrip()+'\n',counts,total
 
 
-def expected_project_shas(analysis):
-    """从本次固定取证结果提取报告必须逐行对应的项目与修订。"""
-    expected=[]
-    for project in analysis.get('projects',[]):
-        name=project.get('name')
-        git_data=project.get('git') or {}
-        for item in git_data.get('selection',[]):
-            sha=item.get('head') if item.get('type')=='range' else item.get('sha')
-            if name and isinstance(sha,str) and re.fullmatch(r'[0-9a-fA-F]{40}',sha):
-                expected.append('{}={}'.format(name,sha))
-    return list(dict.fromkeys(expected))
-
-
-def preflight(rendered,template,analysis,cases,expected):
+def preflight(rendered,template,analysis,cases):
     """候选报告落盘前复用正式报告正文校验，并补验分析边界和用例数量。"""
     marker='<!-- diff-list-status: draft -->'
     status='报告状态：未完成'
@@ -110,12 +97,12 @@ def preflight(rendered,template,analysis,cases,expected):
     if replaced!=1 or rendered.count(marker)!=1 or rendered.count(status)!=1:
         return ['生成候选缺少唯一且完整的草稿标记']
 
-    from validate_report import validate, validate_case_counts
-    mappings=expected or expected_project_shas(analysis)
+    from validate_report import validate, validate_case_counts, expected_project_shas
+    mappings=expected_project_shas(analysis)
+    if not mappings:
+        return ['analysis.json 中无法推导项目与完整 Git SHA']
     errors,_=validate(candidate_text,template,mappings)
     errors.extend(validate_case_counts(candidate_text,cases,analysis))
-    if not mappings:
-        errors.append('无法从 analysis.json 推导项目与 SHA；请传入 --expect 项目名=40位SHA')
     return errors
 
 
@@ -128,8 +115,6 @@ def main(argv=None):
     parser.add_argument('--excel',help='已生成的独立 Excel 路径；报告内只写文件名')
     parser.add_argument('--template',default=str(Path(__file__).resolve().parents[1]/'assets'/'diff-list-template.md'))
     parser.add_argument('--output',required=True,help='新建报告候选路径；不得指向已交付报告')
-    parser.add_argument('--expect',action='append',default=[],
-                        help='项目名=40位SHA；可重复，未提供时从 analysis.json 推导')
     parser.add_argument('--replace-draft',action='store_true',
                         help='只重写带 diff-list 草稿标记的候选报告，供结构化数据修正后重生成')
     args=parser.parse_args(argv)
@@ -149,7 +134,7 @@ def main(argv=None):
             if excel_path.resolve().parent!=Path(args.output).resolve().parent:
                 raise ValueError('Excel and report candidate must share a directory for the relative workbook link')
         rendered,counts,total=render(template,data,cases,excel_path.name if excel_path else None)
-        errors=preflight(rendered,template,analysis,cases,args.expect)
+        errors=preflight(rendered,template,analysis,cases)
         if errors:
             raise ValueError('report preflight failed: '+'; '.join(errors[:12]))
         output=Path(args.output)
