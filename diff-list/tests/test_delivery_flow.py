@@ -108,6 +108,15 @@ class DeliveryFlowTest(unittest.TestCase):
         self.assertEqual([row['id'] for row in result['evidence']],['E-1','E-2'])
         self.assertIn('未命中的 analysis/review 材料仍保留',result['note'])
 
+        context_only=[
+            {'id':'E-1','snippet':'private String originalTradeNo;'},
+            {'id':'E-2','snippet':'if (status == SUCCESS) { /* sourceOnlyMarker */ }'}
+        ]
+        context_result=query_material(analysis,review,context_only,query='sourceOnlyMarker')
+        self.assertEqual(context_result['matched']['fact_ids'],['F-2'])
+        self.assertEqual(context_result['matched']['unit_ids'],['RU-1'])
+        self.assertEqual([row['id'] for row in context_result['facts']],['F-1','F-2'])
+
     def test_agent_subphase_timing_is_recorded_separately(self):
         state={
             'stages':{},
