@@ -141,16 +141,11 @@ run_schema_version=2。
     py -3 .\scripts\run_delivery.py --run-dir <run> --mark-agent-phase test_design
     py -3 .\scripts\run_delivery.py --run-dir <run> --mark-agent-phase report_edit
 
-coverage 暂停时自动记录 coverage_review。
+coverage 暂停时自动记录 coverage_review。若 preflight、coverage、Excel、报告刷新或 finalize 在 resume 期间失败，脚本立即进入 `waiting_rework`，自动开始 `agent_rework` 计时；修正材料后继续使用原来的 `--resume`，下一次调用会先结算修复区间。需要更细分时可用 `--mark-agent-phase report_edit` 等主动切换。
 
-run-state.json 会同时保留：
+`run-state.json` 记录 `agent_source_review / agent_business_reasoning / agent_test_design / agent_report_edit / agent_coverage_review / agent_rework` 以及 `agent_between_steps`。
 
-- agent_source_review
-- agent_business_reasoning
-- agent_test_design
-- agent_report_edit
-- agent_coverage_review
-- agent_between_steps 总等待时间
+**`agent_between_steps` 是所有 Agent 子阶段的合计，不可再与子阶段相加。** 命令行分开输出脚本合计 `SCRIPT_TOTAL`、Agent 合计 `AGENT_TOTAL` 和真实可相加的 `TRACKED_TOTAL = SCRIPT_TOTAL + AGENT_TOTAL`。失败的脚本尝试保留在相应阶段 `attempts` 中，不计入 Agent 修复时间。
 
 这些计时用于判断下一轮到底应该优化“查源码”“业务判断”“测试设计”还是“报告编写”，而不是先假设某一步一定值得脚本化。
 
