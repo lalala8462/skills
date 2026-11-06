@@ -119,11 +119,15 @@ PowerShell 先定义复核材料路径：
 2. **按需精确查询**：`--unit RU-xxx` 或 `--query originalTradeNo` 默认只返回结构索引；`--unit RU-xxx --view facts`、`--view calls`、`--view db`、`--view conditions`、`--view relations`、`--view evidence` 才会展开详细数据。
 3. **原始源码复核**：`--fact F-xxx` 返回完整事实及 evidence ID；`--evidence E-xxx --source-lines 12` 会校验固定 Git tree/blob 并读取脱敏源码上下文。关键业务判断必须核实 before/after，不能只看摘要。
 
+新增精确命中：`--query originalTradeNo --view facts --matched-only` 只返回关键词直接匹配的事实及关联单元入口，不把命中 unit 的全部事实一并展开；不带 `--matched-only` 时保持完整 unit 上下文模式。`--unit RU-xxx` 的索引直接包含 `direct_fact_ids / direct_evidence_ids / context_fact_count`，可按 ID 回查固定快照。
+
 分页默认 10 项，`--limit` 最多 100。每次响应有 `page.total/returned/complete/next_cursor`；`complete=false` 必须按 `--cursor <next_cursor>` 继续读取，不能将一页当作全部结果。针对分类的 `db/conditions` 是确定性已知类别索引，**不是完整业务范围**；必要时查询 `facts/relations/evidence` 全部分类。只有明确使用 `--view all` 才返回当前命中范围的完整展开，可能占用大量 Token。
 
 Agent 在分析开始和交付前分别执行：
 
     py -3 .\scripts\review_query.py --analysis $a --review $r --audit
+
+审计按“直接变化 / 触及变更方法的未解析关系 / 既有背景”分层提示。配置读取若标记为 `retained_or_consumers_changed`，不再误列为配置新增；所有原始明细仍可分页查证。
 
 审计报告包含：change seed 是否有 unit、未归属主要变化事实、未索引支持性事实/关系、unresolved、缺失或未引用的证据、跨项目证据归属不一致、hard_errors、分析限制及跨项目来源缺失等。按类别翻页查看：
 
@@ -166,16 +170,20 @@ coverage 有待复核项时自动记录为 `analysis_authoring`；修复结束�
 
 ## Coverage 待复核清单
 
-coverage_schema_version=2。
+coverage_schema_version=3。
 
-pending_review 每项包含 direct_change、high_value_facets、candidate_case_ids、related_covered_unit_ids 和完整 facet 引用。
+pending_review 每项包含 direct_change、high_value_facets、candidate_case_ids、related_referenced_unit_ids 和完整 facet 引用。
 
-它只回答“这个变化点是否已经被测试设计考虑”，不回答：
+统计字段使用 `referenced_unit_count`、`referenced_facet_count`（至少一个关联 unit 被引用）、`all_units_referenced_facet_count` 等名称；它们仅表示测试用例引用了复核单元，不代表实际业务覆盖。
+
+它只回答“这个变化点是否已被测试用例显式引用”，不回答：
 
 - 测试是否覆盖所有分支；
 - 多个 unit 是否属于同一业务需求；
 - 某条用例的业务语义是否正确；
 - 是否应该为了覆盖率新增用例。
+
+报告的草稿标记和状态由脚本维护，Agent 可以只复制业务正文；缺失标记时，刷新/最终验证能恢复或接受正常状态，重复及不配对的机器标记仍拒绝。无需为了复用已完成 run 开发旧 schema 迁移。
 
 ## 前置格式校验
 
