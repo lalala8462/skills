@@ -118,7 +118,7 @@ coverage 待复核继续计入 `analysis_authoring`；preflight 等步骤失败�
 
 `agent_between_steps` 是上述三个子阶段合计；总计只使用 `TRACKED_TOTAL = SCRIPT_TOTAL + AGENT_TOTAL`，不可重复加上子阶段。
 
-`review_query.py` 在本轮运行目录内写入 `.work/query-metrics.jsonl`，自动记录次数、按模式/视图计数、重复调用、生成 JSON 字节数、终端响应字节数及返回条数，不记录查询原文。编排脚本下一次保存 run-state 时汇总为 `query_stats`。统计只用于定位重复查询和上下文成本，**输出字节数不等于模型 Token 使用量**。
+`review_query.py` 在本轮 Agent 等待阶段向 `.work/query-metrics.jsonl`，自动记录次数、按模式/视图计数、重复调用、生成 JSON 字节数、终端响应字节数及返回条数，不记录查询原文。编排脚本下一次保存 run-state 时汇总为 `query_stats`。统计只用于定位重复查询和上下文成本，**输出字节数不等于模型 Token 使用量**。
 
 
 ## 质量约束
