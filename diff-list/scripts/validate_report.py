@@ -55,6 +55,18 @@ def fenced_blocks(text):
     return blocks
 
 
+def expected_project_shas(analysis):
+    expected=[]
+    for project in analysis.get('projects',[]):
+        name=project.get('name')
+        git_data=project.get('git') or {}
+        for item in git_data.get('selection',[]):
+            sha=item.get('head') if item.get('type')=='range' else item.get('sha')
+            if name and isinstance(sha,str) and re.fullmatch(r'[0-9a-fA-F]{40}',sha):
+                expected.append('{}={}'.format(name,sha))
+    return list(dict.fromkeys(expected))
+
+
 def validate(text,template,expected):
     errors=[]; warnings=[]
     if '<!-- diff-list-status: draft -->' in text or '报告状态：未完成' in text:
@@ -77,11 +89,11 @@ def validate(text,template,expected):
         errors.append('分析范围缺少完整 40 位 Git SHA')
     for pair in expected:
         if '=' not in pair:
-            errors.append('--expect 格式必须为 项目名=40位SHA: '+pair)
+            errors.append('项目/SHA 映射格式必须为 项目名=40位SHA: '+pair)
             continue
         name,sha=pair.split('=',1)
         if not name.strip() or not re.fullmatch(r'[0-9a-fA-F]{40}',sha):
-            errors.append('--expect 需要非空项目名及40位SHA: '+pair)
+            errors.append('项目/SHA 映射需要非空项目名及40位SHA: '+pair)
             continue
         # Require a single project/SHA mapping in the same logical line/table row.
         # Global substring presence could falsely bind A's SHA to project B.
@@ -181,7 +193,6 @@ def main(argv=None):
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('report')
     p.add_argument('--template',default=str(Path(__file__).resolve().parents[1]/'assets'/'diff-list-template.md'))
-    p.add_argument('--expect',action='append',default=[],help='项目名=40位SHA; repeatable')
     p.add_argument('--analysis',required=True,help='本次当前版本生成的固定取证结果')
     p.add_argument('--review',required=True,help='本次模型源码补查与处置记录')
     p.add_argument('--cases',required=True,help='当前四类用例JSON')
@@ -201,8 +212,11 @@ def main(argv=None):
             if count!=1:
                 raise ValueError('could not clear the generated draft marker/status')
         template=Path(a.template).read_text(encoding='utf-8-sig')
-        errors,warnings=validate(candidate_text,template,a.expect)
         analysis=json.loads(Path(a.analysis).read_text(encoding='utf-8-sig'))
+        expected=expected_project_shas(analysis)
+        if not expected:
+            raise ValueError('analysis.json 中无法推导项目与完整 Git SHA')
+        errors,warnings=validate(candidate_text,template,expected)
         case_data=json.loads(Path(a.cases).read_text(encoding='utf-8-sig'))
         from scope_validation import validate_scope_files
         validate_scope_files(a.analysis,a.review,a.cases)
