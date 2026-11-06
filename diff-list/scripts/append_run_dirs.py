@@ -37,8 +37,8 @@ def input_clones(source):
     return [entry['analysis_clone'] for entry in projects]
 
 
-def append(report, sources, clones):
-    values = list(clones)
+def append(report, sources):
+    values=[]
     for source in sources:
         values.extend(input_clones(source))
     dirs = sorted({str(checked_run_dir(value)) for value in values}, key=str.casefold)
@@ -62,10 +62,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('report')
     parser.add_argument('--source', action='append', default=[],help='本次当前版本生成的 analysis.json，可重复')
-    parser.add_argument('--clone', action='append', default=[],help='本次独立补查创建的隔离仓库目录，可重复')
     args = parser.parse_args(argv)
     try:
-        for path in append(args.report, args.source, args.clone):
+        for path in append(args.report, args.source):
             print('Manual cleanup later: ' + path)
         return 0
     except (ValueError, OSError, UnicodeError) as exc:
