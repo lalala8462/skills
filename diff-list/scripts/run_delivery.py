@@ -36,7 +36,7 @@ def _read_state(run_dir):
         raise ValueError('run 目录缺少 .work/{}'.format(STATE_NAME))
     state=json.loads(state_path.read_text(encoding='utf-8-sig'))
     if state.get('run_schema_version')!=RUN_SCHEMA_VERSION:
-        raise ValueError('不支持旧 run-state；请重新执行当前版本流程')
+        raise ValueError('run-state schema 版本不匹配；请重新执行当前流程')
     if state.get('run_dir')!=str(run_dir):
         raise ValueError('run-state.json 与当前 run 目录不匹配')
     return run_dir,state_path,state
@@ -57,16 +57,9 @@ def _record_stage_attempt(state,name,started,ended,status,returncode):
         status=status,
         returncode=returncode)
     previous=(state.get('stages') or {}).get(name)
-    attempts=[]
-    if previous:
-        attempts=list(previous.get('attempts') or [])
-        if not attempts:
-            attempts.append(dict(
-                started_at=previous.get('started_at'),
-                ended_at=previous.get('ended_at'),
-                elapsed_seconds=float(previous.get('elapsed_seconds',0)),
-                status=previous.get('status'),
-                returncode=previous.get('returncode',0)))
+    if previous and not isinstance(previous.get('attempts'),list):
+        raise ValueError('当前 run-state 阶段记录缺少 attempts: '+name)
+    attempts=list(previous.get('attempts') or []) if previous else []
     attempts.append(attempt)
     state.setdefault('stages',{})[name]=dict(
         started_at=attempts[0]['started_at'],

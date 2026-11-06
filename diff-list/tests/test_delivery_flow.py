@@ -137,6 +137,17 @@ class DeliveryFlowTest(unittest.TestCase):
         self.assertEqual(len(row['attempts']),2)
         self.assertEqual(row['status'],'completed')
 
+    def test_stage_timing_rejects_noncurrent_shape(self):
+        state={'stages':{'coverage':{
+            'started_at':'2026-11-06T00:00:00.000Z',
+            'ended_at':'2026-11-06T00:00:01.000Z',
+            'elapsed_seconds':1.0,
+            'status':'completed',
+            'returncode':0
+        }}}
+        with self.assertRaisesRegex(ValueError,'缺少 attempts'):
+            _record_stage_attempt(state,'coverage',20.0,20.75,'completed',0)
+
 
 if __name__=='__main__':
     unittest.main()

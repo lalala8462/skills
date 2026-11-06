@@ -26,7 +26,7 @@ description: "基于指定仓库与 Git 修订生成最终净变化分析、范�
 - .work/report.md
 - .work/run-state.json
 
-Agent 直接编辑 test-cases.json 与 report.md，不再使用 report-data.json。
+Agent 直接编辑 test-cases.json 与 report.md。
 
 resume 先执行 preflight 和 coverage。pending_review 存在时必须逐项判断：已有场景确实覆盖则补充 review_unit_id；否则新增必要用例。pending_review 清零后自动完成 Excel、报告脚本章节刷新和 finalize。
 
