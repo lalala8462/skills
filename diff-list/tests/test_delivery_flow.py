@@ -92,7 +92,7 @@ class DeliveryFlowTest(unittest.TestCase):
             if heading=='## 4. 特殊逻辑与测试关注点':
                 continue
             edited=edited.replace(heading+'\n\n'+AGENT_PLACEHOLDER,
-                                  heading+'\\n\\n无',1)
+                                  heading+'\n\n无',1)
         cases={'purpose_cases':{
             'acceptance':[],'core_regression':[],
             'related_regression':[],'boundary':[]}}
