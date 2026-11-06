@@ -140,6 +140,9 @@ def _lookup_selection(indexes,analysis,query=None,unit_id=None):
             matched['units'].update(facets[identifier].get('unit_ids') or [])
 
     expanded={key:set(value) for key,value in matched.items()}
+    absent_units=sorted(matched['units']-set(units))
+    if absent_units:
+        raise ValueError('review facet 引用未知 unit，请先执行 --audit: '+','.join(absent_units))
     for identifier in matched['units']:
         row=units[identifier]
         expanded['facts'].update(row.get('fact_ids') or [])
@@ -151,6 +154,11 @@ def _lookup_selection(indexes,analysis,query=None,unit_id=None):
     for identifier in expanded['relations']:
         if identifier in relations:
             expanded['evidence'].update(relations[identifier].get('evidence_ids') or [])
+    for key,collection in (('facts',facts),('relations',relations),
+                           ('facets',facets),('evidence',evidence)):
+        missing=sorted(expanded[key]-set(collection))
+        if missing:
+            raise ValueError('索引引用未知 {}，请先执行 --audit: {}'.format(key,','.join(missing)))
     cross=[row for row in analysis.get('cross_project_relations',[])
            if row.get('source_relation') in expanded['relations']
            or (needle and _contains(row,needle))]
@@ -193,8 +201,11 @@ def _unit_index(row,indexes):
         relation=indexes['relations'].get(identifier)
         if relation:
             evidence_ids.update(relation.get('evidence_ids') or [])
+    missing_refs=(fact_ids-set(indexes['facts'])) | (relation_ids-set(indexes['relations'])) | (
+        set(row.get('facet_ids') or [])-set(indexes['facets']))
     return dict(unit_id=row['id'],project=row['_project'],scope=row.get('scope'),
         symbol=row.get('symbol'),direct_change_count=len(row.get('change_summary') or []),
+        invalid_reference_count=len(missing_refs),
         fact_count=len(fact_ids),relation_count=len(relation_ids),
         evidence_count=len(evidence_ids),facet_count=len(row.get('facet_ids') or []),
         unresolved_relation_count=sum(
@@ -341,9 +352,13 @@ def _render_request(args,analysis,review,context):
             raise ValueError('unknown fact: '+args.fact)
         owners=[key for key,row in indexes['units'].items()
                 if args.fact in (row.get('fact_ids') or [])]
+        evidence_ids=fact.get('evidence_ids') or []
+        missing=sorted(set(evidence_ids)-set(indexes['evidence']))
+        if missing:
+            raise ValueError('fact 引用未知 evidence，请先执行 --audit: '+','.join(missing))
         return dict(mode='fact',analysis_id=analysis['analysis_id'],
                     fact=fact,unit_ids=sorted(owners),
-                    evidence_ids=fact.get('evidence_ids') or [],complete=True,note=NOTE)
+                    evidence_ids=evidence_ids,complete=True,note=NOTE)
     if args.evidence:
         return dict(mode='evidence',analysis_id=analysis['analysis_id'],
                     **_evidence_source(analysis,indexes,args.evidence,args.source_lines))
