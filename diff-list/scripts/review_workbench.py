@@ -409,18 +409,17 @@ def main(argv=None):
     parser.add_argument('--analysis',required=True)
     parser.add_argument('--output',required=True)
     parser.add_argument('--cases-template',help='同时生成合法的空 test-cases.json 骨架')
-    parser.add_argument('--report-template',help='同时生成固定字段的 report-data.json 骨架')
     args=parser.parse_args(argv)
     try:
         analysis=json.loads(Path(args.analysis).read_text(encoding='utf-8-sig'))
         value=build_review(analysis)
         paths=[Path(args.output)]
-        paths.extend(Path(value) for value in (args.cases_template,args.report_template) if value)
+        paths.extend(Path(value) for value in (args.cases_template,) if value)
         resolved=[path.resolve() for path in paths]
         if len(set(resolved))!=len(resolved):
-            raise ValueError('review/cases/report outputs must use different files')
+            raise ValueError('review/cases outputs must use different files')
         if any(path.exists() for path in paths):
-            raise ValueError('review/cases/report output already exists')
+            raise ValueError('review/cases output already exists')
         target=Path(args.output)
         target.parent.mkdir(parents=True,exist_ok=True)
         with target.open('x',encoding='utf-8',newline='\n') as out:
@@ -429,10 +428,7 @@ def main(argv=None):
         if args.cases_template:
             from case_contract import empty_cases
             write_json_template(args.cases_template,empty_cases(analysis['analysis_id']))
-        if args.report_template:
-            from generate_report import empty_report_data
-            write_json_template(args.report_template,empty_report_data())
-        print('已生成聚合复核材料及输入骨架。')
+        print('已生成聚合复核材料及测试用例输入骨架。')
         return 0
     except (ValueError,OSError,KeyError,TypeError) as exc:
         print('ERROR: '+str(exc),file=sys.stderr)
