@@ -63,6 +63,51 @@ def fact_group_summary(facts):
     return dict(sorted(groups.items()))
 
 
+def _preview_value(value,depth=0):
+    if depth>=2:
+        if isinstance(value,(dict,list)):
+            return '<details in analysis.json>'
+        return value[:240]+'…' if isinstance(value,str) and len(value)>240 else value
+    if isinstance(value,str):
+        return value[:320]+'…' if len(value)>320 else value
+    if isinstance(value,list):
+        rows=[_preview_value(item,depth+1) for item in value[:8]]
+        if len(value)>8:
+            rows.append('<{} more>'.format(len(value)-8))
+        return rows
+    if isinstance(value,dict):
+        preferred=('symbol','change','owner','field','key','path','scope','name','statement',
+                   'condition','expression','then','otherwise','source','target','receiver',
+                   'receiver_type','status','reason','origins','consumers','linked_symbols',
+                   'before','after','default','usage','member','collection')
+        keys=[key for key in preferred if key in value]
+        keys.extend(key for key in sorted(value) if key not in keys)
+        result={}
+        for key in keys[:14]:
+            result[key]=_preview_value(value[key],depth+1)
+        if len(keys)>14:
+            result['_omitted_keys']=len(keys)-14
+        return result
+    return value
+
+
+def fact_preview(fact):
+    """快审只保留事实关键字段；完整 data 在 analysis.json 中按 fact id 回查。"""
+    return dict(id=fact['id'],kind=fact.get('kind'),classification=fact.get('classification'),
+                data=_preview_value(fact.get('data') or {}),
+                evidence_ids=sorted(fact.get('evidence_ids') or []))
+
+
+def relation_preview(relation):
+    site=relation.get('site') or {}
+    compact_site={key:_preview_value(site[key]) for key in
+                  ('name','receiver','expression','arguments','usage') if key in site}
+    return dict(id=relation.get('id'),side=relation.get('side'),source=relation.get('source'),
+                targets=relation.get('targets') or [],status=relation.get('status'),
+                reason=relation.get('reason'),receiver_type=relation.get('receiver_type'),
+                site=compact_site,evidence_ids=sorted(relation.get('evidence_ids') or []))
+
+
 def fast10_view(analysis):
     if analysis.get('schema_version')!=2 or analysis.get('analyzer_version')!=VERSION:
         raise ValueError('unsupported analysis schema/analyzer version')
@@ -120,8 +165,8 @@ def fast10_view(analysis):
         project_facts=[fact for fact in facts
                        if fact.get('kind') in primary_kinds and not symbols_by_fact[fact['id']]]
         selected_fact_ids.update(fact['id'] for fact in project_facts)
-        fact_catalog=[facts_by_id[identifier] for identifier in sorted(selected_fact_ids)]
-        relation_catalog=[selected_relations[identifier] for identifier in sorted(selected_relations)]
+        fact_catalog=[fact_preview(facts_by_id[identifier]) for identifier in sorted(selected_fact_ids)]
+        relation_catalog=[relation_preview(selected_relations[identifier]) for identifier in sorted(selected_relations)]
         selected_relation_ids.update(selected_relations)
         evidence_ids=sorted(
             {identifier for fact in fact_catalog for identifier in fact.get('evidence_ids',[])}
@@ -155,12 +200,11 @@ def fast10_view(analysis):
     )
 
 
-def write_cases_template(path,analysis_id):
-    from case_contract import empty_cases
+def write_json_template(path,value):
     target=Path(path)
     target.parent.mkdir(parents=True,exist_ok=True)
     with target.open('x',encoding='utf-8',newline='\n') as out:
-        json.dump(empty_cases(analysis_id),out,ensure_ascii=False,indent=2,allow_nan=False)
+        json.dump(value,out,ensure_ascii=False,indent=2,allow_nan=False)
         out.write('\n')
 
 
@@ -169,6 +213,7 @@ def main(argv=None):
     parser.add_argument('--analysis',required=True)
     parser.add_argument('--output',required=True)
     parser.add_argument('--cases-template',help='同时生成合法的空 test-cases.json 骨架')
+    parser.add_argument('--report-template',help='同时生成固定字段的 report-data.json 骨架')
     args=parser.parse_args(argv)
     try:
         analysis=json.loads(Path(args.analysis).read_text(encoding='utf-8-sig'))
@@ -179,7 +224,11 @@ def main(argv=None):
             json.dump(value,out,ensure_ascii=False,indent=2,allow_nan=False)
             out.write('\n')
         if args.cases_template:
-            write_cases_template(args.cases_template,analysis['analysis_id'])
+            from case_contract import empty_cases
+            write_json_template(args.cases_template,empty_cases(analysis['analysis_id']))
+        if args.report_template:
+            from generate_report import empty_report_data
+            write_json_template(args.report_template,empty_report_data())
         print('已生成按变化点聚合的快审材料。')
         return 0
     except (ValueError,OSError,KeyError,TypeError) as exc:
