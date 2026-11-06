@@ -45,6 +45,34 @@ def _cleanup(paths):
             path.unlink()
 
 
+def _record_stage_attempt(state,name,started,ended,status,returncode):
+    attempt=dict(
+        started_at=_iso(started),
+        ended_at=_iso(ended),
+        elapsed_seconds=round(ended-started,3),
+        status=status,
+        returncode=returncode)
+    previous=(state.get('stages') or {}).get(name)
+    attempts=[]
+    if previous:
+        attempts=list(previous.get('attempts') or [])
+        if not attempts:
+            attempts.append(dict(
+                started_at=previous.get('started_at'),
+                ended_at=previous.get('ended_at'),
+                elapsed_seconds=float(previous.get('elapsed_seconds',0)),
+                status=previous.get('status'),
+                returncode=previous.get('returncode',0)))
+    attempts.append(attempt)
+    state.setdefault('stages',{})[name]=dict(
+        started_at=attempts[0]['started_at'],
+        ended_at=attempt['ended_at'],
+        elapsed_seconds=round(sum(float(row.get('elapsed_seconds',0)) for row in attempts),3),
+        status=status,
+        returncode=returncode,
+        attempts=attempts)
+
+
 def _run_stage(state_path,state,name,commands,cleanup=()):
     _cleanup(cleanup)
     started=time.time()
@@ -61,12 +89,7 @@ def _run_stage(state_path,state,name,commands,cleanup=()):
         status='failed'
         returncode=127
     ended=time.time()
-    state.setdefault('stages',{})[name]=dict(
-        started_at=_iso(started),
-        ended_at=_iso(ended),
-        elapsed_seconds=round(ended-started,3),
-        status=status,
-        returncode=returncode)
+    _record_stage_attempt(state,name,started,ended,status,returncode)
     if status!='completed':
         state['status']='failed'
         state['failed_stage']=name
@@ -220,12 +243,7 @@ def _finalize_stage(state_path,state,run_dir,work,analysis,review,cases,report_d
         status='failed'
         returncode=127
     ended=time.time()
-    state.setdefault('stages',{})['finalize']=dict(
-        started_at=_iso(started),
-        ended_at=_iso(ended),
-        elapsed_seconds=round(ended-started,3),
-        status=status,
-        returncode=returncode)
+    _record_stage_attempt(state,'finalize',started,ended,status,returncode)
     if status=='completed':
         state['status']='completed'
         state['completed_at']=_iso(ended)
