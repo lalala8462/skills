@@ -10,8 +10,8 @@
 
 - `id / scope / symbol`
 - `change_summary`
-- `direct_fact_groups`
-- `context_fact_groups`
+- `direct_fact_ids / context_fact_ids`
+- `direct_fact_groups / context_fact_groups`
 - `fact_ids`
 - `relation_ids`
 - `facet_ids`
