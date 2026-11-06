@@ -80,7 +80,6 @@ class JavaParser:
         self.temp = tempfile.TemporaryDirectory(prefix='diff-list-index-')
         self.root = Path(self.temp.name)
         javac, self.java, tools = jdk_tools()
-        import os
         self.classpath = os.pathsep.join([str(self.root), tools] if tools else [str(self.root)])
         source = Path(__file__).parent / 'java' / 'JavaSourceIndex.java'
         run = subprocess.run([javac, '-source', '8', '-target', '8', '-encoding', 'UTF-8',
