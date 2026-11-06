@@ -138,6 +138,10 @@ def review_facet_index(review):
             unknown=[unit_id for unit_id in unit_ids if unit_id not in units]
             if unknown:
                 raise ValueError('review facet references unknown unit: '+unknown[0])
+            wrong_project=[unit_id for unit_id in unit_ids
+                           if units[unit_id]['project']!=project.get('name')]
+            if wrong_project:
+                raise ValueError('review facet crosses projects: '+wrong_project[0])
             if facet.get('unit_count')!=len(unit_ids):
                 raise ValueError('review facet unit_count mismatch: '+identifier)
             facets[identifier]=dict(
@@ -179,6 +183,10 @@ def coverage_matrix(data,analysis,review):
             project=row['project'],
             scope=unit.get('scope'),
             symbol=unit.get('symbol'),
+            facet_ids=sorted(unit.get('facet_ids') or []),
+            change_summary=unit.get('change_summary') or [],
+            direct_fact_groups=unit.get('direct_fact_groups') or {},
+            context_fact_groups=unit.get('context_fact_groups') or {},
             covered=bool(case_ids),
             case_ids=case_ids,
             purposes=sorted(purposes_by_unit[unit_id])))
@@ -199,6 +207,10 @@ def coverage_matrix(data,analysis,review):
             case_ids=case_ids))
 
     uncovered=[row['unit_id'] for row in unit_rows if not row['covered']]
+    uncovered_method=[row['unit_id'] for row in unit_rows
+                      if not row['covered'] and row['scope']=='method']
+    uncovered_project=[row['unit_id'] for row in unit_rows
+                       if not row['covered'] and row['scope']=='project']
     partially=[row['facet_id'] for row in facet_rows if row['covered_unit_ids'] and row['uncovered_unit_ids']]
     uncovered_facets=[row['facet_id'] for row in facet_rows if not row['covered_unit_ids']]
     fully=[row['facet_id'] for row in facet_rows if row['covered_unit_ids'] and not row['uncovered_unit_ids']]
@@ -210,11 +222,15 @@ def coverage_matrix(data,analysis,review):
             unit_count=len(unit_rows),
             covered_unit_count=len(unit_rows)-len(uncovered),
             uncovered_unit_count=len(uncovered),
+            uncovered_method_unit_count=len(uncovered_method),
+            uncovered_project_unit_count=len(uncovered_project),
             facet_count=len(facet_rows),
             fully_covered_facet_count=len(fully),
             partially_covered_facet_count=len(partially),
             uncovered_facet_count=len(uncovered_facets)),
         uncovered_unit_ids=uncovered,
+        uncovered_method_unit_ids=uncovered_method,
+        uncovered_project_unit_ids=uncovered_project,
         partially_covered_facet_ids=partially,
         uncovered_facet_ids=uncovered_facets,
         unit_coverage=unit_rows,
