@@ -52,18 +52,18 @@ def review_unit_index(review):
     return index
 
 
-def validate_cases(data,analysis=None,review=None):
+def validate_cases(data,analysis,review):
     """只接受当前 schema_version=4、基于 review_unit_ids 的四类直接用例。"""
     _fields(data,('schema_version','analysis_id','purpose_cases'),
             ('schema_version','analysis_id','purpose_cases'),'test cases')
     if data.get('schema_version')!=SCHEMA_VERSION:
         raise ValueError('test cases require schema_version={}'.format(SCHEMA_VERSION))
     analysis_id=_text(data.get('analysis_id'),'analysis_id')
-    if analysis is not None and analysis.get('analysis_id')!=analysis_id:
+    if analysis.get('analysis_id')!=analysis_id:
         raise ValueError('test cases belong to a different analysis')
-    if review is not None and review.get('analysis_id')!=analysis_id:
+    if review.get('analysis_id')!=analysis_id:
         raise ValueError('test cases belong to a different review')
-    units=review_unit_index(review) if review is not None else None
+    units=review_unit_index(review)
     groups=data.get('purpose_cases')
     if not isinstance(groups,dict) or set(groups)!=set(PURPOSES):
         raise ValueError('purpose_cases requires exactly four purpose arrays')
@@ -94,10 +94,9 @@ def validate_cases(data,analysis=None,review=None):
                 _text(item['target'],'observable_evidence.target')
                 _text(item['assertion'],'observable_evidence.assertion')
             unit_ids=_strings(case['review_unit_ids'],'review_unit_ids',True)
-            if units is not None:
-                unknown=[identifier for identifier in unit_ids if identifier not in units]
-                if unknown:
-                    raise ValueError('unknown review unit: '+unknown[0])
+            unknown=[identifier for identifier in unit_ids if identifier not in units]
+            if unknown:
+                raise ValueError('unknown review unit: '+unknown[0])
             result.append(case)
     return result
 
