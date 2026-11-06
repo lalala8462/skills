@@ -181,10 +181,8 @@ def unit_anchors(unit,facts_by_id,relations_by_id):
 def build_facets(project,units,facts_by_id,relations_by_id):
     """按单一精确锚点生成可重叠 facet，避免连通分量把弱相关 unit 串成大组。"""
     inverted={}
-    anchors_by_unit={}
     for unit in units:
         anchors=unit_anchors(unit,facts_by_id,relations_by_id)
-        anchors_by_unit[unit['id']]=anchors
         for facet_type,anchor in anchors:
             inverted.setdefault((facet_type,anchor),set()).add(unit['id'])
     facets=[]
