@@ -13,7 +13,8 @@ from pathlib import Path
 SCRIPT_DIR=Path(__file__).resolve().parent
 STATE_NAME='run-state.json'
 RUN_SCHEMA_VERSION=2
-AGENT_PHASES=('source_review','business_reasoning','test_design','report_edit','coverage_review')
+AGENT_PHASES=('source_review','business_reasoning','test_design','report_edit','coverage_review','rework')
+WAIT_STATUSES=('waiting_agent','waiting_coverage_review','waiting_rework')
 
 
 def _iso(timestamp=None):
@@ -132,6 +133,7 @@ def _record_agent_interval(state_path,state):
     row['elapsed_seconds']=round(float(row.get('elapsed_seconds',0.0))+elapsed,3)
     row['status']='completed'
     row['returncode']=0
+    row['counting_role']='agent_total_includes_subphases'
     row.setdefault('segments',[]).append(dict(
         reason=state.get('waiting_reason') or 'agent_review',
         started_at=_iso(started),
@@ -146,7 +148,7 @@ def _record_agent_interval(state_path,state):
 
 def _switch_agent_phase(run_dir_value,phase):
     run_dir,state_path,state=_read_state(run_dir_value)
-    if state.get('status') not in ('waiting_agent','waiting_coverage_review'):
+    if state.get('status') not in WAIT_STATUSES:
         raise ValueError('只有 Agent 等待阶段可以切换计时子阶段')
     if phase not in AGENT_PHASES:
         raise ValueError('未知 Agent 阶段: '+str(phase))
@@ -167,16 +169,34 @@ def _switch_agent_phase(run_dir_value,phase):
 
 
 def _print_timings(state):
-    order=(
-        'analyze','review_workbench','report_init',
-        'agent_source_review','agent_business_reasoning','agent_test_design',
-        'agent_report_edit','agent_coverage_review','agent_between_steps',
-        'preflight','coverage','excel','report','finalize')
-    for name in order:
-        row=(state.get('stages') or {}).get(name)
+    """agent_between_steps 是子阶段合计，不能和子阶段再次相加。"""
+    stages=state.get('stages') or {}
+    agent_keys={'agent_'+phase for phase in AGENT_PHASES}
+    print('SCRIPT_STAGES (可加总):')
+    script_total=0.0
+    for name,row in stages.items():
+        if name in agent_keys or name=='agent_between_steps':
+            continue
+        elapsed=float(row.get('elapsed_seconds',0))
+        script_total+=elapsed
+        print('  {:<25} {:>9.3f}s  {}'.format(name,elapsed,row.get('status','')))
+    print('SCRIPT_TOTAL: {:.3f}s'.format(script_total))
+    print('AGENT_SUBPHASES (包含于 AGENT_TOTAL，不可重复加总):')
+    subtotal=0.0
+    for phase in AGENT_PHASES:
+        name='agent_'+phase
+        row=stages.get(name)
         if not row:
             continue
-        print('{:<26} {:>9.3f}s  {}'.format(name,float(row.get('elapsed_seconds',0)),row.get('status','')))
+        elapsed=float(row.get('elapsed_seconds',0))
+        subtotal+=elapsed
+        print('  {:<25} {:>9.3f}s'.format(name,elapsed))
+    total=float((stages.get('agent_between_steps') or {}).get('elapsed_seconds',0))
+    print('AGENT_TOTAL: {:.3f}s (已包含所有 Agent 子阶段，不与子阶段相加)'.format(total))
+    print('TRACKED_TOTAL: {:.3f}s (SCRIPT_TOTAL + AGENT_TOTAL)'.format(script_total+total))
+    if abs(total-subtotal)>0.02:
+        print('TIMING_WARNING: Agent 子阶段与总计不一致，差异 {:.3f}s'.format(total-subtotal))
+
 
 
 def _new_run_dir(root):
@@ -311,63 +331,79 @@ def _resume(run_dir_value):
         _print_timings(state)
         print('DELIVERY: '+str(run_dir))
         return 0
-    if state.get('status') not in ('waiting_agent','waiting_coverage_review','failed'):
+    if state.get('status') not in WAIT_STATUSES:
         raise ValueError('当前 run 状态不允许 resume: '+str(state.get('status')))
     _record_agent_interval(state_path,state)
+    state['status']='resuming'
+    _write_state(state_path,state)
 
-    work=run_dir/'.work'
-    analysis=work/'analysis'/'analysis.json'
-    review=work/'review.json'
-    cases=work/'test-cases.json'
-    coverage=work/'coverage.json'
-    excel=work/'test-cases.xlsx'
-    report=work/'report.md'
+    try:
+        work=run_dir/'.work'
+        analysis=work/'analysis'/'analysis.json'
+        review=work/'review.json'
+        cases=work/'test-cases.json'
+        coverage=work/'coverage.json'
+        excel=work/'test-cases.xlsx'
+        report=work/'report.md'
 
-    preflight=[
-        sys.executable,'-B',str(SCRIPT_DIR/'delivery_preflight.py'),
-        '--analysis',str(analysis),'--review',str(review),
-        '--cases',str(cases),'--report',str(report)]
-    _run_stage(state_path,state,'preflight',[preflight])
+        preflight=[
+            sys.executable,'-B',str(SCRIPT_DIR/'delivery_preflight.py'),
+            '--analysis',str(analysis),'--review',str(review),
+            '--cases',str(cases),'--report',str(report)]
+        _run_stage(state_path,state,'preflight',[preflight])
 
-    coverage_command=[
-        sys.executable,'-B',str(SCRIPT_DIR/'validate_analysis.py'),
-        '--analysis',str(analysis),'--review',str(review),'--cases',str(cases),
-        '--coverage-output',str(coverage)]
-    _run_stage(state_path,state,'coverage',[coverage_command],cleanup=(coverage,))
-    coverage_data=json.loads(coverage.read_text(encoding='utf-8-sig'))
-    pending=coverage_data.get('pending_review') or []
-    if pending:
-        state=json.loads(state_path.read_text(encoding='utf-8-sig'))
-        _begin_agent_wait(state_path,state,'waiting_coverage_review','coverage_pending_review','coverage_review')
-        print('COVERAGE_REVIEW: {} pending unit(s)'.format(len(pending)))
-        print('COVERAGE: '+str(coverage))
-        print('PENDING: '+','.join(row.get('unit_id','') for row in pending))
-        print('说明：已有场景确实覆盖时，把对应 review_unit_id 加到该用例；否则补充新用例。')
-        print('RESUME: {} -B {} --resume {}'.format(sys.executable,SCRIPT_DIR/'run_delivery.py',run_dir))
+        coverage_command=[
+            sys.executable,'-B',str(SCRIPT_DIR/'validate_analysis.py'),
+            '--analysis',str(analysis),'--review',str(review),'--cases',str(cases),
+            '--coverage-output',str(coverage)]
+        _run_stage(state_path,state,'coverage',[coverage_command],cleanup=(coverage,))
+        coverage_data=json.loads(coverage.read_text(encoding='utf-8-sig'))
+        pending=coverage_data.get('pending_review') or []
+        if pending:
+            state=json.loads(state_path.read_text(encoding='utf-8-sig'))
+            _begin_agent_wait(state_path,state,'waiting_coverage_review','coverage_pending_review','coverage_review')
+            print('COVERAGE_REVIEW: {} pending unit(s)'.format(len(pending)))
+            print('COVERAGE: '+str(coverage))
+            print('PENDING: '+','.join(row.get('unit_id','') for row in pending))
+            print('说明：已有场景确实覆盖时，把对应 review_unit_id 加到该用例；否则补充新用例。')
+            print('RESUME: {} -B {} --resume {}'.format(sys.executable,SCRIPT_DIR/'run_delivery.py',run_dir))
+            state=json.loads(state_path.read_text(encoding='utf-8-sig'))
+            _print_timings(state)
+            return 0
+
+        excel_command=[
+            sys.executable,'-B',str(SCRIPT_DIR/'export_test_cases.py'),
+            '--input',str(cases),'--output',str(excel),
+            '--analysis',str(analysis),'--review',str(review)]
+        _run_stage(state_path,state,'excel',[excel_command],cleanup=(excel,))
+
+        report_command=[
+            sys.executable,'-B',str(SCRIPT_DIR/'generate_report.py'),
+            '--refresh','--analysis',str(analysis),'--cases',str(cases),
+            '--excel',str(excel),'--report',str(report)]
+        _run_stage(state_path,state,'report',[report_command])
+
+        _finalize_stage(state_path,state,run_dir,analysis,review,cases)
         state=json.loads(state_path.read_text(encoding='utf-8-sig'))
         _print_timings(state)
+        print('DELIVERY: '+str(run_dir))
+        print('OUTPUT: '+str(run_dir/'test-cases.xlsx'))
+        print('OUTPUT: '+str(run_dir/'report.md'))
+        print('OUTPUT: '+str(run_dir/'coverage.json'))
         return 0
 
-    excel_command=[
-        sys.executable,'-B',str(SCRIPT_DIR/'export_test_cases.py'),
-        '--input',str(cases),'--output',str(excel),
-        '--analysis',str(analysis),'--review',str(review)]
-    _run_stage(state_path,state,'excel',[excel_command],cleanup=(excel,))
-
-    report_command=[
-        sys.executable,'-B',str(SCRIPT_DIR/'generate_report.py'),
-        '--refresh','--analysis',str(analysis),'--cases',str(cases),
-        '--excel',str(excel),'--report',str(report)]
-    _run_stage(state_path,state,'report',[report_command])
-
-    _finalize_stage(state_path,state,run_dir,analysis,review,cases)
-    state=json.loads(state_path.read_text(encoding='utf-8-sig'))
-    _print_timings(state)
-    print('DELIVERY: '+str(run_dir))
-    print('OUTPUT: '+str(run_dir/'test-cases.xlsx'))
-    print('OUTPUT: '+str(run_dir/'report.md'))
-    print('OUTPUT: '+str(run_dir/'coverage.json'))
-    return 0
+    except (RuntimeError,ValueError,OSError,KeyError,TypeError,IndexError) as exc:
+        # preflight 等阶段失败后流程已经交还 Agent；从失败时刻开始记录修复耗时。
+        # 失败的脚本尝试仍留在 stages[].attempts 中，不能算成 Agent 时间。
+        _,fresh_path,fresh=_read_state(run_dir)
+        if fresh.get('status')!='completed':
+            failed_stage=fresh.get('failed_stage') or 'resume'
+            _begin_agent_wait(fresh_path,fresh,'waiting_rework',
+                              'repair_'+failed_stage,'rework')
+            print('AGENT_REWORK: {} 失败，修复等待计时已开始'.format(failed_stage))
+            print('RESUME: {} -B {} --resume {}'.format(
+                sys.executable,SCRIPT_DIR/'run_delivery.py',run_dir))
+        raise
 
 
 def main(argv=None):
