@@ -57,16 +57,9 @@ def _record_stage_attempt(state,name,started,ended,status,returncode):
         status=status,
         returncode=returncode)
     previous=(state.get('stages') or {}).get(name)
-    attempts=[]
-    if previous:
-        attempts=list(previous.get('attempts') or [])
-        if not attempts:
-            attempts.append(dict(
-                started_at=previous.get('started_at'),
-                ended_at=previous.get('ended_at'),
-                elapsed_seconds=float(previous.get('elapsed_seconds',0)),
-                status=previous.get('status'),
-                returncode=previous.get('returncode',0)))
+    if previous and not isinstance(previous.get('attempts'),list):
+        raise ValueError('当前 run-state 阶段记录缺少 attempts: '+name)
+    attempts=list(previous.get('attempts') or []) if previous else []
     attempts.append(attempt)
     state.setdefault('stages',{})[name]=dict(
         started_at=attempts[0]['started_at'],
