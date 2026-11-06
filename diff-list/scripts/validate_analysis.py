@@ -135,15 +135,16 @@ def validate(analysis,context,review,cases,verify_sources=True):
 
     coverage=coverage_matrix(cases,analysis,review)
     summary=coverage['summary']
-    warnings.append('Structural unit coverage: {}/{} referenced; pending_review={}'.format(
-        summary['covered_unit_count'],summary['unit_count'],summary['pending_review_count']))
+    warnings.append('复核单元已被测试用例引用: {}/{}；待复核={}'.format(
+        summary['referenced_unit_count'],summary['unit_count'],summary['pending_review_count']))
     if coverage.get('pending_review'):
         warnings.append('Pending review units: '+','.join(
             row['unit_id'] for row in coverage['pending_review']))
-    warnings.append('Structural facet coverage: full={}, partial={}, none={}; navigation_facets={}'.format(
-        summary['fully_covered_facet_count'],summary['partially_covered_facet_count'],
-        summary['uncovered_facet_count'],summary['navigation_facet_count']))
-    warnings.append('Structural coverage only checks review-unit references; it does not prove branch or business coverage.')
+    warnings.append('facet 关联用例（至少一个 unit 被引用）: {}/{}；全部 unit 已引用={}；部分 unit 已引用={}；未引用={}'.format(
+        summary['referenced_facet_count'],summary['facet_count'],
+        summary['all_units_referenced_facet_count'],summary['partially_referenced_facet_count'],
+        summary['unreferenced_facet_count']))
+    warnings.append('这些仅是单元引用统计，不证明分支和业务规则的测试覆盖。')
     warnings.append('Static evidence does not prove test execution, runtime binding or business correctness.')
     return errors,warnings
 
