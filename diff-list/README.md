@@ -111,6 +111,8 @@ coverage 不再只给“未覆盖数量”，同时输出 pending_review。每�
 - 项目、scope、symbol
 - direct_change
 - high_value_facets
+- candidate_case_ids：共享高价值 facet 的现有候选用例
+- related_covered_unit_ids：这些候选用例已绑定的相邻变化单元
 - 完整 all_facet_ids
 - 处置提示
 
@@ -146,6 +148,20 @@ delivery_preflight.py 在 Excel/报告生成前一次性检查：
     finalize
 
 agent_between_steps 会累计首次业务复核和 coverage 待复核阶段的真实等待时间，从而区分脚本耗时与 Agent 业务判断耗时。
+
+## report-data 输入
+
+Agent 只填写以下业务字段：
+
+- requirements
+- ddl
+- dml
+- flow
+- mermaid
+- special_rules
+- existing_impact
+
+项目/SHA、配置变化、Excel 数量和静态验证说明仍由脚本生成。
 
 ## 测试用例契约
 
