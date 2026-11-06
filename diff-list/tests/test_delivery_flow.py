@@ -291,6 +291,23 @@ class DeliveryFlowTest(unittest.TestCase):
         rows=query_tool._audit_rows(analysis,indexes)['unresolved_relations']
         self.assertEqual([row['id'] for row in rows],['R-direct','R-context'])
 
+    def test_background_only_audit_does_not_claim_direct_change_risk(self):
+        analysis=dict(schema_version=2,analyzer_version=VERSION,analysis_id='a2',
+            projects=[dict(name='sample',change_seeds=[],facts=[
+                dict(id='F-context',kind='configuration',data=dict(
+                    change='retained_or_consumers_changed'),evidence_ids=['E-1'])],
+                relations=[dict(id='R-context',status='unresolved',
+                    source='sample.Other#read()',targets=[],evidence_ids=['E-1'])],
+                hard_errors=[])],cross_project_relations=[])
+        review=dict(review_schema_version=4,analysis_id='a2',
+            projects=[dict(name='sample',review_units=[],review_facets=[],
+                           navigation_facets=[])])
+        context=[dict(id='E-1',project='sample',snippet='existing read')]
+        result=query_tool.audit_material(analysis,review,context)
+        self.assertFalse(result['requires_attention'])
+        self.assertEqual(result['scope_tiers']['supporting_unresolved'],1)
+        self.assertEqual(result['counts']['unresolved_relations'],1)
+
     def test_lookup_does_not_silently_drop_missing_fact_ids(self):
         analysis=dict(schema_version=2,analyzer_version=VERSION,analysis_id='a1',
             projects=[dict(name='sample',facts=[],relations=[],change_seeds=[])],
