@@ -312,7 +312,7 @@ def audit_material(analysis,review,context):
     counts={key:len(rows) for key,rows in groups.items()}
     attention_kinds={
         'missing_seeds','unassigned_primary_facts','unresolved_relations',
-        'missing_evidence','unreferenced_evidence','evidence_project_mismatch',
+        'missing_evidence','evidence_project_mismatch',
         'hard_errors','invalid_unit_references','cross_source_missing'
     }
     return dict(analysis_id=analysis['analysis_id'],
@@ -321,7 +321,7 @@ def audit_material(analysis,review,context):
                    evidence_count=len(indexes['evidence']),
                    limits=analysis.get('limits') or {}),
         counts=counts,requires_attention=any(counts[key] for key in attention_kinds),
-        informational_only_views=['unindexed_facts','unindexed_relations'],
+        informational_only_views=['unindexed_facts','unindexed_relations','unreferenced_evidence'],
         available_views=list(AUDIT_VIEWS),
         note=('未索引的支持性事实/关系属于可回查的信息提示，不直接等于业务遗漏；'
               '未归属主要事实、未解析关系与证据异常需要 Agent 重点核查。'
