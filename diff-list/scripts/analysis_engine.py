@@ -68,8 +68,8 @@ def relation_affects_review_scope(edge, graph, custom_tokens=()):
     critical_return_context=(endpoint_annotation or 'controller' in method_meta.get('owner','').casefold()
                              or response_return or business_return)
     scopes=('mapper','dao','repository','jdbc','database','recordindex','store',
-            'channel','proxy','acquirer','qcm','qrcode','notification','notify','callback',
-            'uniquecontrol','fgtradeno','outtradeno','orderno','billno','transtype','mchid','entnum')
+            'channel','proxy','notification','notify','callback','qrcode',
+            'outtradeno','orderno','billno','transtype')
     sink_context=any(token in target_surface for token in scopes)
     custom_target=any(token.casefold() in target_surface for token in custom_tokens)
     raw_receiver=site.get('receiver') or ''
@@ -97,8 +97,6 @@ def relation_affects_review_scope(edge, graph, custom_tokens=()):
             return True
         if candidate_name.startswith(('get','is','has','equals','hashcode','tostring','contains')):
             return (candidate_db and candidate_name.startswith(('getby','find','query','select','count','exists','list','load','read')) or
-                    any(token.casefold() in candidate_target for token in custom_tokens) and
-                    any(token.casefold() in candidate_target for token in ('uniquecontrolapi','fgqrcodehelper')) or
                     any(token in candidate_name for token in ('refundstatus','refundstate','channelrespdesc','channelrefundno','channelparam')))
         return (any(token in candidate_target for token in scopes) or
                 any(token.casefold() in candidate_target for token in custom_tokens) or
@@ -151,8 +149,7 @@ def relation_affects_review_scope(edge, graph, custom_tokens=()):
         # DTO/枚举访问器由字段来源与分支事实覆盖；这里只保留关键状态或副作用数据流。
         database_query=any(token in receiver for token in ('mapper','dao','repository','jdbc','database','recordindex','store')) and name.startswith(
             ('getby','find','query','select','count','exists','list','load','read'))
-        qcm_accessor=custom_target and any(token in receiver for token in ('uniquecontrolapi','fgqrcodehelper'))
-        return state_context or state_branch or sink_flow or database_query or qcm_accessor
+        return state_context or state_branch or sink_flow or database_query
     # DTO 字段填充由字段来源事实表达。
     if name.startswith('set'):
         database_target=any(token in receiver for token in ('mapper','dao','repository','jdbc','database','recordindex','store'))
