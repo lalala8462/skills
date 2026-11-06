@@ -114,7 +114,7 @@ run_schema_version=4。只记录三个 Agent 子阶段：
 
     py -3 .\scripts\run_delivery.py --run-dir <run> --mark-agent-phase analysis_authoring
 
-coverage 待复核继续计入 `analysis_authoring`；preflight 等步骤失败后 `waiting_rework` 自动计时。旧的 business_reasoning/test_design/report_edit/coverage_review 阶段不再存在，也不兼容旧 run-state。
+coverage 待复核继续计入 `analysis_authoring`；preflight 等步骤失败后 `waiting_rework` 自动计时。run-state 只接受当前 schema 4。
 
 `agent_between_steps` 是上述三个子阶段合计；总计只使用 `TRACKED_TOTAL = SCRIPT_TOTAL + AGENT_TOTAL`，不可重复加上子阶段。
 
