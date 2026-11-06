@@ -66,6 +66,7 @@ class QueryMetricsTest(unittest.TestCase):
             self.assertEqual(summary['failures'],1)
             self.assertEqual(summary['distinct_requests'],4)
             self.assertEqual(summary['repeated_calls'],1)
+            self.assertEqual(summary['repeated_by_mode'],{'overview':1})
             self.assertEqual(summary['by_mode'],dict(
                 audit=1,overview=2,query=1,unit=1))
             self.assertGreater(summary['returned_bytes'],0)
