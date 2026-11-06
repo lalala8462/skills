@@ -11,6 +11,8 @@ from pathlib import Path
 from analysis_engine import VERSION, redact
 from source_index import git_bytes, source_lines
 from validate_analysis import verify_evidence
+from query_metrics import metrics_path, record_query
+from run_delivery import RUN_SCHEMA_VERSION
 
 PRIMARY_KINDS={
     'method_change','field_change','class_binding_change','configuration',
@@ -426,6 +428,24 @@ def _render_request(args,analysis,review,context):
                 note=NOTE)
 
 
+def _record_usage(path,args,analysis_id,status,bytes_generated,bytes_printed,item_count):
+    try:
+        record_query(path,args,analysis_id,status,bytes_generated,bytes_printed,item_count)
+    except (OSError,ValueError,TypeError) as exc:
+        print('WARNING: 查询统计写入失败: '+str(exc),file=sys.stderr)
+
+
+def _item_count(result):
+    if isinstance(result.get('items'),list):
+        return len(result['items'])
+    if result.get('mode') in ('fact','evidence'):
+        return 1
+    if result.get('view')=='all':
+        return sum(len(result.get(key) or []) for key in (
+            'review_units','review_facets','facts','relations','cross_project_relations','evidence'))
+    return 0
+
+
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--analysis',required=True)
@@ -445,6 +465,8 @@ def main(argv=None):
                         help='evidence 前后各补充的源码行数（0-100）')
     parser.add_argument('--output',help='写入新的 JSON 文件，否则打印 stdout')
     args=parser.parse_args(argv)
+    event_path=None
+    analysis_id=''
     try:
         if not any((args.overview,args.audit,args.query,args.unit,args.fact,args.evidence)):
             raise ValueError('必须指定一种查询模式')
@@ -471,19 +493,32 @@ def main(argv=None):
         if context_path.resolve().parent!=analysis_path.parent:
             raise ValueError('context.jsonl 必须与 analysis.json 位于同一目录')
         context=_load_context(context_path)
+        analysis_id=analysis.get('analysis_id') or ''
+        try:
+            event_path=metrics_path(analysis_path,args.review,RUN_SCHEMA_VERSION)
+        except (OSError,ValueError,TypeError) as exc:
+            print('WARNING: 无法定位查询统计目录: '+str(exc),file=sys.stderr)
         result=_render_request(args,analysis,review,context)
         rendered=json.dumps(result,ensure_ascii=False,indent=2,allow_nan=False)+'\n'
+        output_bytes=len(rendered.encode('utf-8'))
         if args.output:
             target=Path(args.output)
             target.parent.mkdir(parents=True,exist_ok=True)
             with target.open('x',encoding='utf-8',newline='\n') as stream:
                 stream.write(rendered)
-            print('QUERY_OUTPUT: '+str(target.resolve()))
+            printed='QUERY_OUTPUT: '+str(target.resolve())+'\n'
+            sys.stdout.write(printed)
+            stdout_bytes=len(printed.encode('utf-8'))
         else:
             sys.stdout.write(rendered)
+            stdout_bytes=output_bytes
+        _record_usage(event_path,args,analysis_id,'ok',output_bytes,stdout_bytes,
+                      _item_count(result))
         return 0
     except (OSError,UnicodeError,ValueError,KeyError,TypeError,IndexError) as exc:
-        print('ERROR: '+str(exc),file=sys.stderr)
+        message='ERROR: '+str(exc)+'\n'
+        sys.stderr.write(message)
+        _record_usage(event_path,args,analysis_id,'error',0,0,0)
         return 2
 
 
