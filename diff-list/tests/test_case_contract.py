@@ -36,7 +36,7 @@ def review():
             dict(id='RU-2',scope='method',symbol='sample.Flow#other()',
                  change_summary=[dict(kind='method_change',fact_id='fact-2',details={'change':'modified'})],
                  direct_fact_ids=['fact-2'],context_fact_ids=[],
-                 fact_ids=['fact-2'],relation_ids=[],related_symbols=[],facet_ids=['RF-1'])
+                 fact_ids=['fact-2'],relation_ids=[],related_symbols=[],facet_ids=['RF-1'],navigation_facet_ids=['RF-1'])
         ])])
 
 
