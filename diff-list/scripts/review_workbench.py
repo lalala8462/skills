@@ -205,6 +205,71 @@ def build_facets(project,units,facts_by_id,relations_by_id):
     return facets
 
 
+LOW_VALUE_CALL_OWNER_MARKERS=('.util.','.utils.','.common.','.base.','.support.','.framework.')
+LOW_VALUE_CALL_OWNER_SUFFIXES=('Util','Utils','Helper','Base','Abstract','Support','Builder','Converter')
+LOW_VALUE_CALL_METHODS={
+    'get','set','of','valueOf','toString','hashCode','equals','size','isEmpty','stream',
+    'iterator','add','put','remove','contains','containsKey','copy','clone','format','parse',
+    'trim','substring','split','join','requireNonNull'
+}
+
+
+def _is_low_value_shared_call(anchor):
+    """识别不适合作为首轮导航入口的通用共享调用；完整 facet 仍保留。"""
+    if not isinstance(anchor,str) or '#' not in anchor:
+        return False
+    owner,method=anchor.split('#',1)
+    lowered=owner.casefold()
+    simple_owner=owner.rsplit('.',1)[-1]
+    method_name=method.split('(',1)[0]
+    if any(marker in lowered for marker in LOW_VALUE_CALL_OWNER_MARKERS):
+        return True
+    if simple_owner.endswith(LOW_VALUE_CALL_OWNER_SUFFIXES):
+        return True
+    return method_name in LOW_VALUE_CALL_METHODS
+
+
+def _navigation_rank(facet,changed_symbols):
+    """返回 (priority, reason)；None 表示只保留在完整 review_facets 中。"""
+    facet_type=facet.get('type')
+    anchor=facet.get('anchor')
+    if facet_type=='config':
+        return 10,'配置键变化'
+    if facet_type=='mapper':
+        return 12,'Mapper/SQL 变化'
+    if facet_type=='field':
+        return 14,'字段变化'
+    if facet_type=='direct_call':
+        if anchor in changed_symbols:
+            return 16,'直接关联其它变化方法'
+        if _is_low_value_shared_call(anchor):
+            return None
+        return 30,'变化方法直接关联的业务调用'
+    if facet_type=='owner':
+        return 20,'同一变化类'
+    return None
+
+
+def build_navigation_facets(facets,units):
+    """从完整 facet 中选择首轮阅读入口，不删除任何完整关系。"""
+    changed_symbols={unit.get('symbol') for unit in units if unit.get('symbol')}
+    selected=[]
+    membership={unit['id']:[] for unit in units}
+    for facet in facets:
+        ranked=_navigation_rank(facet,changed_symbols)
+        if ranked is None:
+            continue
+        priority,reason=ranked
+        row=dict(facet,navigation_priority=priority,navigation_reason=reason)
+        selected.append(row)
+        for unit_id in facet['unit_ids']:
+            membership[unit_id].append(facet['id'])
+    selected.sort(key=lambda row:(row['navigation_priority'],row['type'],row['anchor'],row['id']))
+    for unit in units:
+        unit['navigation_facet_ids']=sorted(membership[unit['id']])
+    return selected
+
+
 
 def build_review(analysis):
     if analysis.get('schema_version')!=2 or analysis.get('analyzer_version')!=VERSION:
@@ -290,7 +355,9 @@ def build_review(analysis):
         selected_relation_ids.update(selected_relations)
         units=sorted(units,key=lambda row:row['id'])
         facets=build_facets(source['name'],units,facts_by_id,relations_by_id)
+        navigation_facets=build_navigation_facets(facets,units)
         faceted={unit_id for facet in facets for unit_id in facet['unit_ids']}
+        navigation_faceted={unit_id for facet in navigation_facets for unit_id in facet['unit_ids']}
 
         projects.append(dict(
             name=source['name'],
@@ -298,14 +365,19 @@ def build_review(analysis):
                 change_seed_count=len(change_seeds),
                 review_unit_count=len(units),
                 review_facet_count=len(facets),
+                navigation_facet_count=len(navigation_facets),
                 faceted_unit_count=len(faceted),
                 unfaceted_unit_count=len(units)-len(faceted),
+                navigation_faceted_unit_count=len(navigation_faceted),
+                navigation_unfaceted_unit_count=len(units)-len(navigation_faceted),
                 max_facet_size=max([facet['unit_count'] for facet in facets] or [0]),
+                max_navigation_facet_size=max([facet['unit_count'] for facet in navigation_facets] or [0]),
                 source_fact_count=len(source['facts']),
                 selected_fact_count=len(fact_catalog),
                 source_relation_count=len(source['relations']),
                 selected_relation_count=len(relation_catalog)),
             review_facets=facets,
+            navigation_facets=navigation_facets,
             review_units=units,
             fact_catalog=fact_catalog,
             relation_catalog=relation_catalog,
@@ -317,10 +389,10 @@ def build_review(analysis):
            if row.get('source_relation') in selected_relation_ids]
     return dict(
         analysis_id=analysis['analysis_id'],
-        review_schema_version=3,
+        review_schema_version=4,
         projects=projects,
         cross_project_relations=cross,
-        note='review_facets 只表示共享单一精确结构锚点；change_summary 只压缩直接事实，完整事实仍保留。业务结论由 Agent 判断。'
+        note='review_facets 保留完整精确结构关系；navigation_facets 仅作为 Agent 首轮高价值阅读入口。change_summary 只压缩直接事实，完整事实始终保留。业务结论由 Agent 判断。'
     )
 
 
