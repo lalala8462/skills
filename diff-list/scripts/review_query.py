@@ -191,7 +191,7 @@ def _unit_index(row,indexes):
         if relation:
             evidence_ids.update(relation.get('evidence_ids') or [])
     return dict(unit_id=row['id'],project=row['_project'],scope=row.get('scope'),
-        symbol=row.get('symbol'),change_summary=row.get('change_summary') or [],
+        symbol=row.get('symbol'),direct_change_count=len(row.get('change_summary') or []),
         fact_count=len(fact_ids),relation_count=len(relation_ids),
         evidence_count=len(evidence_ids),facet_count=len(row.get('facet_ids') or []),
         unresolved_relation_count=sum(
