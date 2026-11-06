@@ -16,12 +16,14 @@ def validate_scope_data(analysis,review,cases):
     allowed_facts=set()
     allowed_evidence=set()
     for project in review.get('projects',[]):
-        facts=project.get('facts') or []
+        facts=project.get('fact_catalog') or []
+        relations=project.get('relation_catalog') or []
         allowed_facts.update(row.get('id') for row in facts if row.get('id'))
         allowed_evidence.update(identifier for row in facts for identifier in row.get('evidence_ids',[]))
-        allowed_evidence.update(project.get('normal_flow_review',{}).get('evidence_ids') or [])
-        allowed_evidence.update(identifier for relation in project.get('direct_relations',[])
+        allowed_evidence.update(identifier for relation in relations
                                 for identifier in relation.get('evidence_ids',[]))
+        allowed_evidence.update(identifier for unit in project.get('review_units',[])
+                                for identifier in unit.get('evidence_ids',[]))
     for purpose in PURPOSES:
         for case in cases['purpose_cases'][purpose]:
             fact_ids=set(case.get('fact_ids') or [])
