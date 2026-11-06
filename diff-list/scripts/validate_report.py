@@ -204,13 +204,17 @@ def main(argv=None):
         text=raw.decode('utf-8-sig')
         candidate_text=text
         if a.finalize:
-            if text.count('<!-- diff-list-status: draft -->')!=1 or text.count('报告状态：未完成')!=1:
-                raise ValueError('--finalize requires exactly one generated draft marker and status')
-            candidate_text,count=re.subn(
-                r'(?m)^<!-- diff-list-status: draft -->\r?\n\*\*报告状态：未完成。\*\*[^\r\n]*\r?\n?',
-                '',text,count=1)
-            if count!=1:
-                raise ValueError('could not clear the generated draft marker/status')
+            # 草稿状态由脚本管理，Agent 未保留时不阻断交付；重复或不一致仍拒绝。
+            marker_count=text.count('<!-- diff-list-status: draft -->')
+            status_count=text.count('报告状态：未完成')
+            if marker_count!=status_count or marker_count>1:
+                raise ValueError('报告存在不一致或重复的草稿状态标记')
+            if marker_count:
+                candidate_text,count=re.subn(
+                    r'(?m)^<!-- diff-list-status: draft -->\r?\n\*\*报告状态：未完成。\*\*[^\r\n]*\r?\n?',
+                    '',text,count=1)
+                if count!=1:
+                    raise ValueError('could not clear the generated draft marker/status')
         template=Path(a.template).read_text(encoding='utf-8-sig')
         analysis=json.loads(Path(a.analysis).read_text(encoding='utf-8-sig'))
         expected=expected_project_shas(analysis)
