@@ -110,9 +110,9 @@ run_schema_version=2。
     py -3 .\scripts\run_delivery.py --run-dir <run> --mark-agent-phase test_design
     py -3 .\scripts\run_delivery.py --run-dir <run> --mark-agent-phase report_edit
 
-coverage 暂停自动记录 coverage_review。
+coverage 暂停自动记录 coverage_review；resume 的 preflight / coverage / Excel / report / finalize 失败后自动进入 `waiting_rework`，修复期间计入 `agent_rework`，下次 `--resume` 先结算此区间。可用 `--mark-agent-phase report_edit` 等细分修复工作。
 
-run-state.json 分别记录 source_review、business_reasoning、test_design、report_edit、coverage_review 和 agent_between_steps 总耗时，用真实数据决定下一轮优化方向。
+`agent_between_steps` 是 source_review、business_reasoning、test_design、report_edit、coverage_review、rework 子阶段的**合计值**，不能与这些子阶段再次相加。读取计时只使用 `TRACKED_TOTAL = SCRIPT_TOTAL + AGENT_TOTAL`。失败脚本的尝试次数和用时保留在对应 stage.attempts。
 
 ## 质量约束
 
