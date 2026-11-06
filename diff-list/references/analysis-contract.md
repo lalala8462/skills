@@ -1,175 +1,100 @@
 # analysis.json 契约
 
-## 格式
+## analysis.json
 
-- `schema_version=2`
-- `analyzer_version=2.1.0`
+- schema_version=2
+- analyzer_version=2.1.0
 
-顶层字段：
+analysis_id 由分析器版本、规则和项目固定快照计算。
 
-- `schema_version`
-- `analyzer_version`
-- `analysis_id`
-- `rules`
-- `limits`
-- `status`
-- `context_file`
-- `projects`
-- `cross_project_relations`
-- `note`
+每个 project 保存 repository、analysis_clone、snapshots、change_seeds、git、facts、relations、hard_errors 和 stats。
 
-`analysis_id` 由分析器版本、规则和项目固定快照计算。
+facts 是静态事实底账，主要包括方法/字段/类变化、配置、参数来源、Mapper、字段来源、返回值、分支、集合判断、未解析关系、对象复制和构造映射等。
 
-## project
-
-每个项目包含：
-
-- `name`
-- `repository`
-- `analysis_clone`
-- `snapshots.baseline/result`
-- `change_seeds`
-- `git`
-- `analyzer_version`
-- `facts`
-- `relations`
-- `hard_errors`
-- `stats`
-
-`change_seeds` 是本次最终变化确定出的分析起点方法。
-
-### git
-
-`git.selection` 保存选定修订、父提交和文件列表；`git.net_effect` 保存最终净变化状态；`git.commit_review` 保存提交说明、重复修改文件、文本反向修改线索和范围提示。
-
-分析结果中的 Git 元数据不保存完整 diff 文本。
-
-## facts
-
-事实格式：
-
-```json
-{
-  "id": "...",
-  "kind": "method_change",
-  "classification": "source_fact",
-  "data": {},
-  "evidence_ids": []
-}
-```
-
-主要事实类型：
-
-- `class_binding_change`
-- `method_change`
-- `field_change`
-- `configuration`
-- `configuration_file_change`
-- `configuration_parse_boundary`
-- `argument_source_change`
-- `entrypoint`
-- `mapper_statement`
-- `field_source`
-- `return_sources`
-- `return_override`
-- `branch`
-- `switch_branch`
-- `membership_filter`
-- `constant_or_collection`
-- `unresolved_relation`
-- `flow_boundary`
-- `annotation_binding_unconfigured`
-- `object_copy`
-- `constructor_mapping`
-
-fact ID 由项目、kind、data 和 evidence_ids 稳定计算。
-
-## relations
-
-关系保存与本次变化直接相连的一层调用关系。
-
-状态：
-
-- `source_resolved`
-- `convention_inferred`
-- `unresolved`
-
-跨项目关系使用源码契约匹配结果，记录在 `cross_project_relations`。
+relations 只保存与本次变化直接相连的一层关系，状态包括 source_resolved、convention_inferred、unresolved。跨项目关系记录在 cross_project_relations。
 
 ## context.jsonl
 
-每条 evidence 包含：
+每条 evidence 保存 id、project、side、tree、path、blob、start_line、end_line、digest、snippet。
 
-- id
-- project
-- side
-- tree
-- path
-- blob
-- start_line
-- end_line
-- digest
-- snippet
-
-最终交付重新读取用例实际引用的 evidence，并与固定 Git tree/blob 对比。
-
-## 限制
-
-默认：
-
-- 每快照最多 10,000 文件；
-- 单文件 1 MiB；
-- 总源码 128 MiB；
-- 调用深度 1；
-- 每侧最多 100 方法；
-- 上下文最多 8 MiB。
-
-变更 Java 索引失败、关键证据超过限制或当前分析范围发生硬错误时写入 `hard_errors`。
-
+完整 fact/evidence 不因 review 摘要、facet 或导航而删除。最终交付按 test-cases 中实际引用的 review unit 重新展开和校验证据。
 
 ## review.json
 
-- `review_schema_version=4`
-- `review_units`：变化方法或项目级变化的最小复核单元
-- `review_facets`：按单一精确锚点生成的完整结构关系
-- `navigation_facets`：从完整 facet 中筛出的高价值首轮导航
-- `fact_catalog`：本轮复核所需 fact 的关键字段预览
-- `relation_catalog`：本轮复核所需直接关系预览
+当前 review_schema_version=4。
 
-`change_summary` 只摘要直接事实，完整 fact/evidence 不删除。`review_facets` 不做传递合并，保留完整结构关系；`navigation_facets` 只降低首轮阅读噪声，不改变分析范围，也不表示业务需求归属。
+- review_units：变化方法或项目级变化的最小复核单元；
+- review_facets：按精确结构锚点形成的完整关系索引；
+- navigation_facets：review_facets 的高价值阅读排序子集；
+- fact_catalog：本轮复核相关 fact 预览；
+- relation_catalog：本轮复核相关 relation 预览。
+
+change_summary 只压缩直接事实。
+
+navigation_facets 不能作为范围过滤器。facet 不表示业务需求归属，也不做传递合并。
+
+## review_query.py
+
+review_query.py 是查证工具，不产生新的业务结论。
+
+它接受显式 query 或 review_unit_id，并沿已有确定性引用展开：
+
+- review unit；
+- review facet；
+- fact；
+- relation；
+- cross-project relation；
+- context evidence。
+
+查询未命中的内容仍保留在 analysis/review 原文件中，不代表无关。查询不使用相似度聚类，不自动生成业务组。
 
 ## test-cases.json
 
-- `schema_version=4`
-- 每条用例只引用 `review_unit_ids`
-- 不接受用例级 `fact_ids/evidence_ids`
+当前 schema_version=4。
 
-导出和最终校验阶段根据 review unit 自动展开对应 analysis fact 和 evidence。
+每条用例只引用 review_unit_ids，不接受用例级 fact_ids/evidence_ids。导出和最终校验阶段根据 review unit 自动展开 analysis fact 和 evidence。
 
-## report-data.json
+## report.md
 
-只包含 Agent 必须填写的业务字段：
+不再存在 report-data.json 中转层。
 
-- `requirements`
-- `ddl`
-- `dml`
-- `flow`
-- `mermaid`
-- `special_rules`
-- `existing_impact`
+Agent 直接维护业务章节：
 
-项目/SHA、配置变化、Excel 数量和静态验证说明由脚本生成。
+- 需求改动；
+- DDL；
+- DML；
+- 整体流程；
+- Mermaid；
+- 特殊逻辑与测试关注点/既有功能影响。
 
+脚本维护并在 refresh 时重建：
+
+- 分析范围；
+- 配置文件变化；
+- Excel 文件名和用例数量；
+- 验证说明。
+
+脚本刷新不得改写 Agent 业务章节。
 
 ## coverage.json
 
-由统一交付流程生成 `coverage_schema_version=2` 的待复核材料：
+当前 coverage_schema_version=2。
 
-- unit 是否被用例引用；
-- `pending_review`：尚未被用例引用、需要 Agent 判断的变化单元；
-- `high_value_facets`：该 unit 所属的高价值首轮导航；
-- `candidate_case_ids`：与该 unit 共享高价值 facet 的现有候选用例；
-- `related_covered_unit_ids`：候选用例已经覆盖的相邻变化单元；
-- 完整 facet 的已覆盖/未覆盖结构关系仍保留用于回查。
+pending_review 表示尚未被测试用例引用的 review unit，并提供 high_value_facets、candidate_case_ids、related_covered_unit_ids 和完整 facet 引用。
 
-`pending_review` 是待复核清单，不是覆盖率门槛。已有业务场景确实覆盖某变化点时，应把对应 `review_unit_id` 绑定到已有用例；否则补充必要测试。不得为了数字清零制造重复用例，也不能据此证明分支覆盖、业务语义或预期结果正确。
+它是遗漏复核工具，不是业务覆盖率证明。
+
+## run-state.json
+
+当前 run_schema_version=2。
+
+除脚本阶段外，单独记录：
+
+- agent_source_review
+- agent_business_reasoning
+- agent_test_design
+- agent_report_edit
+- agent_coverage_review
+- agent_between_steps
+
+这些时间用于识别真实瓶颈，不用于评价业务结论质量。
