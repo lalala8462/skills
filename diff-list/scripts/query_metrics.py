@@ -42,6 +42,7 @@ def request_hash(args,analysis_id):
         'fact':args.fact,
         'evidence':args.evidence,
         'view':args.view,
+        'matched_only':getattr(args,'matched_only',False),
         'cursor':args.cursor,
         'limit':args.limit,
         'source_lines':args.source_lines,
