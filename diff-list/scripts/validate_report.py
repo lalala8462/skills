@@ -162,7 +162,7 @@ def validate(text,template,expected):
         if re.search(r'(?:\*\*)?(?:测试点|测试前提|步骤描述|预期结果)[:：]',export_section):
             errors.append('Excel 测试用例不得重复写入 Markdown 报告')
     special=body.get('## 4. 特殊逻辑与测试关注点','')
-    if special and special!='无' and not re.search(r'既有功能影响|历史功能影响',special):
+    if special and special!='无' and '既有功能影响' not in special:
         errors.append('特殊逻辑章节缺少“既有功能影响”说明')
     field_change = (body.get('### 2.1 需求改动','') + '\n' +
                     body.get('### 2.2 表字段 DDL 修改',''))
