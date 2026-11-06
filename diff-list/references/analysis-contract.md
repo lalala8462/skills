@@ -83,20 +83,18 @@ pending_review 表示尚未被测试用例引用的 review unit，并提供 high
 
 它是遗漏复核工具，不是业务覆盖率证明。
 
-## run-state.json
+## run-state.json 与查询计量
 
-当前 run_schema_version=3。
+当前 `run_schema_version=4`，只支持本版状态结构。编排记录三项 Agent 子阶段：
 
-除脚本阶段外，单独记录：
+- `agent_source_review`：源码查证；
+- `agent_analysis_authoring`：综合业务分析、用例设计、报告编写；
+- `agent_rework`：失败后修复。
 
-- agent_source_review
-- agent_business_reasoning
-- agent_test_design
-- agent_report_edit
-- agent_coverage_review
-- agent_rework
-- agent_between_steps（包含所有上述 Agent 子阶段，不可重复相加）
+`agent_between_steps` 是上述子阶段累计总时间，不能与它们重复加总。完整口径：`TRACKED_TOTAL = SCRIPT_TOTAL + agent_between_steps`。失败脚本尝试另记于 `stage.attempts`。
 
-preflight 等 resume 阶段失败后记录 `waiting_rework`，从失败时刻到下一次 resume 的 Agent 修复区间计入总耗时。
+`review_query.py` 只在符合 run 布局与版本的 `.work` 下追加 `query-metrics.jsonl`（仅遥测，不是新的复核材料）。每条事件包含：匿名请求哈希、查询模式、视图、成功/失败、生成响应字节数、终端输出字节数、返回项目数。不会记录原始搜索词、源码内容或完整命令参数。
 
-统计口径：`TRACKED_TOTAL = SCRIPT_TOTAL + agent_between_steps`；子阶段仅用于拆解 `agent_between_steps`，不得再加一次。
+下一次 `run_delivery.py` 写入状态时，从事件日志汇总为 `run-state.json.query_stats`，包含调用数、失败数、重复调用数、模式/视图分布、返回项目数及字节数。对完全相同的请求条件（包括分页 cursor）计算重复。审计前后两次调用若参数相同也计为重复，不表示一定是无效查询。
+
+查询输出字节数不等于 Agent 实际阅读的 Token；只作为趋势指标。原始复核事实及证据结构保持不变。

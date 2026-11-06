@@ -53,7 +53,9 @@ def report_errors(text,template):
                 errors.append('Mermaid 必须以 flowchart TD 或 sequenceDiagram 开始，禁止 graph TD')
 
     special=body.get('## 4. 特殊逻辑与测试关注点','').strip()
-    if special and special not in ('无',AGENT_PLACEHOLDER) and '既有功能影响' not in special:
+    if AGENT_PLACEHOLDER in special:
+        errors.append('特殊逻辑章节的“既有功能影响”仍是模板占位，请填写实际结论或“无”')
+    elif special and special!='无' and '既有功能影响' not in special:
         errors.append('特殊逻辑章节非“无”时必须包含“既有功能影响”说明')
     return errors
 

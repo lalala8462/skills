@@ -13,7 +13,7 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
 
 from delivery_preflight import case_shape_errors, report_errors
-from generate_report import AGENT_PLACEHOLDER, initial_report
+from generate_report import AGENT_PLACEHOLDER, AGENT_HEADINGS, initial_report, refresh_report
 import review_query as query_tool
 from review_query import query_material
 from analysis_engine import VERSION
@@ -62,6 +62,59 @@ class DeliveryFlowTest(unittest.TestCase):
             report=report.replace(heading+'\n\n'+AGENT_PLACEHOLDER,heading+'\n\n'+value,1)
         errors=report_errors(report,template)
         self.assertTrue(any('graph TD' in error for error in errors))
+
+    def test_report_template_requires_real_existing_feature_impact_decision(self):
+        template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
+        sha='a'*40
+        analysis={'projects':[{'name':'sample','facts':[],
+                              'git':{'selection':[{'type':'commit','sha':sha}]}}]}
+        report=initial_report(template,analysis)
+        self.assertIn('**既有功能影响：** '+AGENT_PLACEHOLDER,report)
+        errors=report_errors(report,template)
+        self.assertTrue(any('既有功能影响' in error for error in errors))
+        completed=report.replace(
+            '**既有功能影响：** '+AGENT_PLACEHOLDER,
+            '**既有功能影响：** 已有退款查询流程不变')
+        errors=report_errors(completed,template)
+        self.assertFalse(any('既有功能影响' in error for error in errors))
+        self.assertEqual(completed.count('**既有功能影响：**'),1)
+
+    def test_report_refresh_preserves_existing_function_impact(self):
+        template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
+        sha='a'*40
+        analysis={'projects':[{'name':'sample','facts':[],
+                              'git':{'selection':[{'type':'commit','sha':sha}]}}]}
+        original=initial_report(template,analysis)
+        edited=original.replace(
+            '**既有功能影响：** '+AGENT_PLACEHOLDER,
+            '**既有功能影响：** 原有退款查询接口受影响，应验证查询结果')
+        for heading in AGENT_HEADINGS:
+            if heading=='## 4. 特殊逻辑与测试关注点':
+                continue
+            edited=edited.replace(heading+'\n\n'+AGENT_PLACEHOLDER,
+                                  heading+'\n\n无',1)
+        cases={'purpose_cases':{
+            'acceptance':[],'core_regression':[],
+            'related_regression':[],'boundary':[]}}
+        refreshed=refresh_report(edited,template,analysis,cases,None)
+        self.assertIn('**既有功能影响：** 原有退款查询接口受影响',refreshed)
+        self.assertNotIn(AGENT_PLACEHOLDER,refreshed)
+        self.assertEqual(refreshed.count('**既有功能影响：**'),1)
+        self.assertEqual(refreshed.count('报告状态：未完成'),1)
+
+    def test_coverage_wait_uses_analysis_authoring_not_old_phase(self):
+        with tempfile.TemporaryDirectory() as td:
+            run=Path(td)/'run';work=run/'.work';work.mkdir(parents=True)
+            state_path=work/'run-state.json'
+            state=dict(run_schema_version=delivery.RUN_SCHEMA_VERSION,
+                run_dir=str(run.resolve()),status='waiting_coverage_review',
+                waiting_started_epoch=time.time(),
+                current_agent_phase='analysis_authoring',
+                current_agent_phase_started_epoch=time.time(),stages={})
+            delivery._write_state(state_path,state)
+            with self.assertRaisesRegex(ValueError,'coverage'):
+                delivery._switch_agent_phase(str(run),'source_review')
+            self.assertEqual(delivery._switch_agent_phase(str(run),'analysis_authoring'),0)
 
     def test_preflight_collects_multiple_case_shape_errors(self):
         data=dict(purpose_cases=dict(
@@ -239,7 +292,7 @@ class DeliveryFlowTest(unittest.TestCase):
             state=dict(run_schema_version=delivery.RUN_SCHEMA_VERSION,
                 run_dir=str(run.resolve()),status='waiting_agent',
                 waiting_started_epoch=start,waiting_started_at=delivery._iso(start),
-                waiting_reason='initial_business_review',current_agent_phase='report_edit',
+                waiting_reason='initial_business_review',current_agent_phase='analysis_authoring',
                 current_agent_phase_started_epoch=start,
                 current_agent_phase_started_at=delivery._iso(start),stages={})
             delivery._write_state(state_path,state)
@@ -255,7 +308,7 @@ class DeliveryFlowTest(unittest.TestCase):
             self.assertEqual(after['status'],'waiting_rework')
             self.assertEqual(after['current_agent_phase'],'rework')
             self.assertEqual(after['waiting_reason'],'repair_preflight')
-            self.assertGreaterEqual(after['stages']['agent_report_edit']['elapsed_seconds'],4.9)
+            self.assertGreaterEqual(after['stages']['agent_analysis_authoring']['elapsed_seconds'],4.9)
             self.assertGreaterEqual(after['stages']['agent_between_steps']['elapsed_seconds'],4.9)
 
             # 再次 resume 失败同样会先结算上一段 rework，不会漏记失败后的间隔。
@@ -292,7 +345,7 @@ class DeliveryFlowTest(unittest.TestCase):
             self.assertEqual(after['current_agent_phase'],'rework')
             self.assertGreater(after['stages']['agent_between_steps']['elapsed_seconds'],0)
 
-    def test_agent_rework_phase_can_be_reclassified(self):
+    def test_agent_rework_phase_cannot_be_misclassified(self):
         with tempfile.TemporaryDirectory() as td:
             run=Path(td)/'run';work=run/'.work';work.mkdir(parents=True)
             state_path=work/'run-state.json'
@@ -301,10 +354,11 @@ class DeliveryFlowTest(unittest.TestCase):
                 waiting_started_epoch=time.time(),current_agent_phase='rework',
                 current_agent_phase_started_epoch=time.time(),stages={})
             delivery._write_state(state_path,state)
-            delivery._switch_agent_phase(str(run),'report_edit')
+            with self.assertRaisesRegex(ValueError,'修复阶段'):
+                delivery._switch_agent_phase(str(run),'analysis_authoring')
             after=json.loads(state_path.read_text(encoding='utf-8'))
-            self.assertEqual(after['current_agent_phase'],'report_edit')
-            self.assertIn('agent_rework',after['stages'])
+            self.assertEqual(after['current_agent_phase'],'rework')
+            self.assertNotIn('agent_analysis_authoring',after['stages'])
 
     def test_agent_total_is_inclusive_not_added_to_subphases(self):
         state=dict(stages=dict(
@@ -318,6 +372,17 @@ class DeliveryFlowTest(unittest.TestCase):
         self.assertIn('SCRIPT_TOTAL: 5.000s',out)
         self.assertIn('AGENT_TOTAL: 2.000s',out)
         self.assertIn('TRACKED_TOTAL: 7.000s',out)
+
+    def test_obsolete_timer_phase_is_rejected(self):
+        with tempfile.TemporaryDirectory() as td:
+            run=Path(td)/'run';work=run/'.work';work.mkdir(parents=True)
+            state_path=work/'run-state.json'
+            state=dict(run_schema_version=delivery.RUN_SCHEMA_VERSION,
+                run_dir=str(run.resolve()),status='waiting_agent',
+                waiting_started_epoch=time.time(),stages={})
+            delivery._write_state(state_path,state)
+            with self.assertRaisesRegex(ValueError,'未知 Agent 阶段'):
+                delivery._switch_agent_phase(str(run),'business_reasoning')
 
     def test_agent_subphase_timing_is_recorded_separately(self):
         state={
