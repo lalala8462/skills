@@ -24,7 +24,9 @@ def metrics_path(analysis_path,review_path,run_schema_version):
         return None
     state=json.loads(state_path.read_text(encoding='utf-8-sig'))
     if (state.get('run_schema_version')!=run_schema_version
-            or state.get('run_dir')!=str(work.parent.resolve())):
+            or state.get('run_dir')!=str(work.parent.resolve())
+            or state.get('status') not in (
+                'waiting_agent','waiting_coverage_review','waiting_rework')):
         return None
     return work/LOG_NAME
 
