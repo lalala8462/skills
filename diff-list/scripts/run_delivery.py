@@ -12,7 +12,7 @@ from pathlib import Path
 
 SCRIPT_DIR=Path(__file__).resolve().parent
 STATE_NAME='run-state.json'
-RUN_SCHEMA_VERSION=2
+RUN_SCHEMA_VERSION=3
 AGENT_PHASES=('source_review','business_reasoning','test_design','report_edit','coverage_review','rework')
 WAIT_STATUSES=('waiting_agent','waiting_coverage_review','waiting_rework')
 
