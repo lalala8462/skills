@@ -108,7 +108,7 @@ def relation_preview(relation):
                 site=compact_site,evidence_ids=sorted(relation.get('evidence_ids') or []))
 
 
-def fast10_view(analysis):
+def build_review(analysis):
     if analysis.get('schema_version')!=2 or analysis.get('analyzer_version')!=VERSION:
         raise ValueError('unsupported analysis schema/analyzer version')
     projects=[]
@@ -195,7 +195,7 @@ def fast10_view(analysis):
            if row.get('source_relation') in selected_relation_ids]
     return dict(
         analysis_id=analysis['analysis_id'],
-        fast10_mode=True,
+        review_schema_version=1,
         projects=projects,
         cross_project_relations=cross,
         note='按变化方法聚合最终净变化和一层直接关系；完整事实仍保留在 analysis.json。'
@@ -219,7 +219,7 @@ def main(argv=None):
     args=parser.parse_args(argv)
     try:
         analysis=json.loads(Path(args.analysis).read_text(encoding='utf-8-sig'))
-        value=fast10_view(analysis)
+        value=build_review(analysis)
         paths=[Path(args.output)]
         paths.extend(Path(value) for value in (args.cases_template,args.report_template) if value)
         resolved=[path.resolve() for path in paths]
