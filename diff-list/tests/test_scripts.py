@@ -62,9 +62,6 @@ class DiffListTest(unittest.TestCase):
         self.assertEqual(data['analysis_id'],'analysis-1')
         self.assertEqual(set(data['purpose_cases']),set(contract.PURPOSES))
         self.assertTrue(all(value==[] for value in data['purpose_cases'].values()))
-        report=module('generate_report').empty_report_data()
-        self.assertEqual(set(report),set(module('generate_report').REPORT_FIELDS))
-        self.assertTrue(all(value=='' for value in report.values()))
 
     def test_review_workbench_writes_review_and_input_skeletons(self):
         review=module('review_workbench')
@@ -79,14 +76,11 @@ class DiffListTest(unittest.TestCase):
             source.write_text(json.dumps(analysis),encoding='utf-8')
             review_path=root/'review.json'
             cases_path=root/'cases.json'
-            report_path=root/'report-data.json'
             self.assertEqual(review.main(['--analysis',str(source),'--output',str(review_path),
-                '--cases-template',str(cases_path),'--report-template',str(report_path)]),0)
+                '--cases-template',str(cases_path)]),0)
             self.assertTrue(review_path.is_file())
             self.assertEqual(json.loads(review_path.read_text(encoding='utf-8'))['review_schema_version'],4)
             self.assertEqual(json.loads(cases_path.read_text(encoding='utf-8'))['analysis_id'],'analysis-1')
-            self.assertEqual(set(json.loads(report_path.read_text(encoding='utf-8'))),
-                             set(module('generate_report').REPORT_FIELDS))
 
     def test_template_heading_only(self):
         template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
@@ -96,54 +90,41 @@ class DiffListTest(unittest.TestCase):
 
     def test_generate_and_validate_report_structure(self):
         val=module('validate_report');generator=module('generate_report')
+        preflight=module('delivery_preflight')
         template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
         sha='a'*40
-        sections={'## 1. 分析范围':'webapi '+sha,
-                  '### 2.1 需求改动':'修改支付入口。',
-                  '### 2.2 表字段 DDL 修改':'无',
-                  '### 2.3 表配置 DML 准备清单':'无',
-                  '### 2.4 配置文件调整':'无',
-                  '### 3.1 整体流程说明':'请求后检查支付状态。',
-                  '### 3.2 Mermaid 流程图':'```mermaid\nflowchart TD\n A[请求] --> B[状态]\n```',
-                  '## 4. 特殊逻辑与测试关注点':'无',
-                  '## 5. 测试用例导出':'Excel：webapi-cases.xlsx；需求验收用例数量：1；既有核心流程回归用例数量：0；关联回归用例数量：0；业务规则与边界验证用例数量：0；总用例数量：1',
-                  '## 6. 验证情况':'仅完成静态分析。'}
-        report='\n'.join(line+'\n'+sections.get(line,'') if line.startswith('#') else line
-                         for line in template.splitlines())
-        errors,_=val.validate(report,template,['webapi='+sha])
-        self.assertEqual(errors,[])
-        errors,_=val.validate(report+'\n<!-- diff-list-status: draft -->',template,['webapi='+sha])
-        self.assertTrue(any('标记为未完成' in e for e in errors))
-        report_data={
-            'requirements':'修改支付入口。',
-            'ddl':'无',
-            'dml':'无',
-            'flow':'请求后检查支付状态。',
-            'mermaid':'~~~mermaid\nflowchart TD\n A[请求] --> B[状态]\n~~~',
-            'special_rules':'无',
-            'existing_impact':'无'
-        }
         analysis={'projects':[{'name':'webapi','facts':[
                                   {'kind':'configuration_file_change','data':{
                                       'path':'application.properties','key':'pay.enabled',
                                       'change':'modified','before':'false','after':'true'}}
                               ],'git':{'selection':[{'type':'commit','sha':sha}]}}]}
+        draft=generator.initial_report(template,analysis)
+        self.assertIn(generator.AGENT_PLACEHOLDER,draft)
+        self.assertIn('- webapi='+sha,draft)
+        self.assertIn('pay.enabled modified',draft)
+        self.assertIn('before=false | after=true',draft)
+        replacements={
+            '### 2.1 需求改动':'修改支付入口。',
+            '### 2.2 表字段 DDL 修改':'无',
+            '### 2.3 表配置 DML 准备清单':'无',
+            '### 3.1 整体流程说明':'请求后检查支付状态。',
+            '### 3.2 Mermaid 流程图':'~~~mermaid\nflowchart TD\n A[请求] --> B[状态]\n~~~',
+            '## 4. 特殊逻辑与测试关注点':'既有功能影响：无'
+        }
+        for heading,value in replacements.items():
+            draft=draft.replace(heading+'\n\n'+generator.AGENT_PLACEHOLDER,
+                                heading+'\n\n'+value,1)
+        self.assertEqual(preflight.report_errors(draft,template),[])
         case_data={'purpose_cases':{'acceptance':[{}],'core_regression':[],'related_regression':[],'boundary':[]}}
-        rendered,_,_=generator.render(template,report_data,analysis,case_data,'webapi-cases.xlsx')
-        with self.assertRaisesRegex(ValueError,'fixed business fields'):
-            generator.render(template,{'sections':report_data},analysis,case_data,'webapi-cases.xlsx')
-        broken=dict(report_data,requirements='### 额外标题\n修改支付入口。')
-        with self.assertRaisesRegex(ValueError,'must not contain Markdown headings'):
-            generator.render(template,broken,analysis,
-                {'purpose_cases':{'acceptance':[],'core_regression':[],'related_regression':[],'boundary':[]}},
-                None)
-        self.assertIn('## 1. 分析范围\n\n- webapi='+sha,rendered)
-        self.assertIn('### 2.4 配置文件调整',rendered)
-        self.assertIn('pay.enabled modified',rendered)
-        self.assertIn('before=false | after=true',rendered)
-        self.assertIn('既有功能影响：无',rendered)
-        self.assertIn('未执行构建、单元测试、数据库验证或环境联调',rendered)
-        self.assertEqual(generator.preflight(rendered,template,analysis,case_data),[])
+        refreshed=generator.refresh_report(draft,template,analysis,case_data,'webapi-cases.xlsx')
+        self.assertIn('Excel：[webapi-cases.xlsx](webapi-cases.xlsx)',refreshed)
+        self.assertIn('修改支付入口。',refreshed)
+        self.assertIn('既有功能影响：无',refreshed)
+        self.assertIn('未执行构建、单元测试、数据库验证或环境联调',refreshed)
+
+        finalized=refreshed.replace(generator.DRAFT_MARKER+'\n'+generator.DRAFT_STATUS+'\n','',1)
+        errors,_=val.validate(finalized,template,['webapi='+sha])
+        self.assertEqual(errors,[])
 
     def test_collect_selected_and_intervening(self):
         collector=module('collect_git')
