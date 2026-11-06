@@ -22,6 +22,11 @@ SECTION_HEADINGS={
 SECTION_KEYS=tuple(SECTION_HEADINGS)
 
 
+def empty_report_data():
+    """生成固定语义字段的报告输入骨架，正文由模型填充。"""
+    return {'sections':{key:'' for key in SECTION_KEYS}}
+
+
 def headings(text):
     return [line.strip() for line in text.splitlines() if re.fullmatch(r'#{1,6} .+', line.strip())]
 
@@ -35,9 +40,11 @@ def render(template, report_data, cases, excel_name):
         raise ValueError('report template is missing required headings: '+', '.join(missing_template))
 
     sections=report_data.get('sections')
-    if not isinstance(sections,dict) or set(sections)!=set(SECTION_KEYS):
-        missing=sorted(set(SECTION_KEYS)-set(sections or {}))
-        extra=sorted(set(sections or {})-set(SECTION_KEYS))
+    if not isinstance(sections,dict):
+        raise ValueError('report-data JSON requires a sections object with fixed semantic keys')
+    if set(sections)!=set(SECTION_KEYS):
+        missing=sorted(set(SECTION_KEYS)-set(sections))
+        extra=sorted(set(sections)-set(SECTION_KEYS))
         raise ValueError('report sections require fixed semantic keys; missing={}, extra={}'.format(missing,extra))
     for key,value in sections.items():
         if not isinstance(value,str) or not value.strip():
