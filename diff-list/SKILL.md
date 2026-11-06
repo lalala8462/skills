@@ -70,7 +70,7 @@ Agent 不手工写 fact/evidence ID。一个已有场景可以绑定多个 revie
 
 当前 coverage_schema_version=2。
 
-coverage 的 pending_review 是待复核清单，不是覆盖率门槛。每项直接给出变化摘要、高价值 facet 和完整 facet 引用。
+coverage 的 pending_review 是待复核清单，不是覆盖率门槛。每项直接给出变化摘要、高价值 facet、candidate_case_ids、已覆盖相邻 unit 和完整 facet 引用。
 
 对 pending_review 的处理只能是：
 
@@ -78,6 +78,10 @@ coverage 的 pending_review 是待复核清单，不是覆盖率门槛。每项�
 - 新增必要测试用例。
 
 不得为了数字清零添加没有业务价值的重复用例。
+
+## report-data.json
+
+Agent 只填写 requirements、ddl、dml、flow、mermaid、special_rules、existing_impact。项目/SHA、配置变化、Excel 数量和静态验证说明由脚本生成。
 
 ## 前置格式校验
 
