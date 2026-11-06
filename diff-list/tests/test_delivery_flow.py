@@ -13,7 +13,7 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
 
 from delivery_preflight import case_shape_errors, report_errors
-from generate_report import AGENT_PLACEHOLDER, initial_report
+from generate_report import AGENT_PLACEHOLDER, AGENT_HEADINGS, initial_report, refresh_report
 import review_query as query_tool
 from review_query import query_material
 from analysis_engine import VERSION
@@ -78,6 +78,29 @@ class DeliveryFlowTest(unittest.TestCase):
         errors=report_errors(completed,template)
         self.assertFalse(any('既有功能影响' in error for error in errors))
         self.assertEqual(completed.count('**既有功能影响：**'),1)
+
+    def test_report_refresh_preserves_existing_function_impact(self):
+        template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
+        sha='a'*40
+        analysis={'projects':[{'name':'sample','facts':[],
+                              'git':{'selection':[{'type':'commit','sha':sha}]}}]}
+        original=initial_report(template,analysis)
+        edited=original.replace(
+            '**既有功能影响：** '+AGENT_PLACEHOLDER,
+            '**既有功能影响：** 原有退款查询接口受影响，应验证查询结果')
+        for heading in AGENT_HEADINGS:
+            if heading=='## 4. 特殊逻辑与测试关注点':
+                continue
+            edited=edited.replace(heading+'\\n\\n'+AGENT_PLACEHOLDER,
+                                  heading+'\\n\\n无',1)
+        cases={'purpose_cases':{
+            'acceptance':[],'core_regression':[],
+            'related_regression':[],'boundary':[]}}
+        refreshed=refresh_report(edited,template,analysis,cases,None)
+        self.assertIn('**既有功能影响：** 原有退款查询接口受影响',refreshed)
+        self.assertNotIn(AGENT_PLACEHOLDER,refreshed)
+        self.assertEqual(refreshed.count('**既有功能影响：**'),1)
+        self.assertEqual(refreshed.count('报告状态：未完成'),1)
 
     def test_coverage_wait_uses_analysis_authoring_not_old_phase(self):
         with tempfile.TemporaryDirectory() as td:
