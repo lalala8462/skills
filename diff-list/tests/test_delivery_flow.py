@@ -212,6 +212,7 @@ class DeliveryFlowTest(unittest.TestCase):
         args.cursor=None
         exact=query_tool._render_request(args,analysis,review,context)
         self.assertEqual(exact['page']['total'],1)
+        self.assertFalse(exact['category_is_exhaustive'])
         self.assertEqual(exact['items'][0]['id'],'F-1')
         self.assertEqual(exact['related_unit_ids'],['RU-1'])
         self.assertEqual(exact['selected_totals']['facts_count'],2)
