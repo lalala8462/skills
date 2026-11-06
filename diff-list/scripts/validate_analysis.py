@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""校验当前分析身份，以及最终用例实际引用的源码事实和证据。"""
+"""校验当前分析身份，以及用例 review_unit_ids 自动展开后的源码事实和证据。"""
 import argparse
 import json
 import re
@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from analysis_engine import VERSION, redact
-from case_contract import PURPOSES, validate_cases
+from case_contract import resolve_case_sources
 from source_index import batch_blobs, git_bytes, stable, source_lines
 
 
@@ -72,12 +72,8 @@ def validate(analysis,context,review,cases,verify_sources=True):
                     [(project['name'],project['repository'],project['snapshots']) for project in projects])
     if analysis.get('analysis_id')!=expected:
         errors.append('analysis snapshot identity mismatch')
-    if review.get('analysis_id')!=analysis.get('analysis_id') or review.get('review_schema_version')!=1:
+    if review.get('analysis_id')!=analysis.get('analysis_id') or review.get('review_schema_version')!=2:
         errors.append('review belongs to a different analysis or has an unsupported review schema')
-    try:
-        validate_cases(cases,analysis)
-    except (ValueError,TypeError,KeyError) as exc:
-        return errors+['invalid test cases: '+str(exc)],warnings
 
     facts={}
     for project in projects:
@@ -103,31 +99,27 @@ def validate(analysis,context,review,cases,verify_sources=True):
             errors.append('duplicate evidence id: '+identifier)
         evidence[identifier]=row
 
-    referenced_facts=set()
-    referenced_evidence=set()
-    for purpose in PURPOSES:
-        for case in cases['purpose_cases'][purpose]:
-            referenced_facts.update(case.get('fact_ids') or [])
-            referenced_evidence.update(case.get('evidence_ids') or [])
+    try:
+        resolved=resolve_case_sources(cases,analysis,review)
+    except (ValueError,TypeError,KeyError) as exc:
+        return errors+['invalid test cases: '+str(exc)],warnings
+
+    referenced_facts={identifier for row in resolved.values() for identifier in row['fact_ids']}
+    referenced_evidence={identifier for row in resolved.values() for identifier in row['evidence_ids']}
 
     for identifier in sorted(referenced_facts):
         if identifier not in facts:
-            errors.append('unknown referenced fact: '+identifier)
+            errors.append('unknown resolved fact: '+identifier)
             continue
         project_name,fact=facts[identifier]
-        for ref in set(fact.get('evidence_ids',[])) & referenced_evidence:
+        for ref in fact.get('evidence_ids',[]):
             record=evidence.get(ref)
             if record and record.get('project')!=project_name:
-                errors.append('referenced evidence project mismatch: '+ref)
+                errors.append('resolved evidence project mismatch: '+ref)
 
     for identifier in sorted(referenced_evidence):
         if identifier not in evidence:
-            errors.append('unknown referenced evidence: '+identifier)
-
-    allowed={ref for fact_id in referenced_facts if fact_id in facts
-             for ref in facts[fact_id][1].get('evidence_ids',[])}
-    if not referenced_evidence<=allowed:
-        errors.append('referenced evidence is not attached to the referenced facts')
+            errors.append('unknown resolved evidence: '+identifier)
 
     if verify_sources:
         for project in projects:
