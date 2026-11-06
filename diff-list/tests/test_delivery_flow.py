@@ -1,17 +1,24 @@
 import json
+import io
+from types import SimpleNamespace
+import contextlib
 import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
 
 from delivery_preflight import case_shape_errors, report_errors
 from generate_report import AGENT_PLACEHOLDER, initial_report
+import review_query as query_tool
 from review_query import query_material
+from analysis_engine import VERSION
 from review_workbench import build_navigation_facets
+import run_delivery as delivery
 from run_delivery import _close_current_agent_phase, _record_stage_attempt
 
 
@@ -71,6 +78,9 @@ class DeliveryFlowTest(unittest.TestCase):
 
     def test_review_query_expands_selected_unit_without_business_grouping(self):
         analysis={
+            'schema_version':2,
+            'analyzer_version':VERSION,
+            'analysis_id':'fixture-analysis',
             'projects':[{
                 'name':'sample',
                 'facts':[
@@ -84,6 +94,8 @@ class DeliveryFlowTest(unittest.TestCase):
             'cross_project_relations':[]
         }
         review={
+            'review_schema_version':4,
+            'analysis_id':'fixture-analysis',
             'projects':[{
                 'name':'sample',
                 'review_units':[{
@@ -106,7 +118,25 @@ class DeliveryFlowTest(unittest.TestCase):
         self.assertEqual(result['matched']['unit_ids'],['RU-1'])
         self.assertEqual([row['id'] for row in result['facts']],['F-1','F-2'])
         self.assertEqual([row['id'] for row in result['evidence']],['E-1','E-2'])
-        self.assertIn('未命中的 analysis/review 材料仍保留',result['note'])
+        self.assertIn('未命中的事实、关系及源码仍保留',result['note'])
+
+        # 默认只返回轻量索引；详细 facts 按页读取，不能静默截断。
+        args=SimpleNamespace(fact=None,evidence=None,audit=False,overview=False,
+            query='originalTradeNo',unit=None,view='index',limit=1,cursor=None,
+            source_lines=8)
+        compact=query_tool._render_request(args,analysis,review,context)
+        self.assertNotIn('facts',compact)
+        self.assertEqual(compact['page']['total'],1)
+        self.assertEqual(compact['items'][0]['unit_id'],'RU-1')
+        args.view='facts'
+        first_page=query_tool._render_request(args,analysis,review,context)
+        self.assertEqual(first_page['page']['total'],2)
+        self.assertEqual(first_page['page']['returned'],1)
+        self.assertFalse(first_page['page']['complete'])
+        args.cursor=first_page['page']['next_cursor']
+        second_page=query_tool._render_request(args,analysis,review,context)
+        self.assertTrue(second_page['page']['complete'])
+        self.assertNotEqual(first_page['items'][0]['id'],second_page['items'][0]['id'])
 
         context_only=[
             {'id':'E-1','snippet':'private String originalTradeNo;'},
@@ -116,6 +146,178 @@ class DeliveryFlowTest(unittest.TestCase):
         self.assertEqual(context_result['matched']['fact_ids'],['F-2'])
         self.assertEqual(context_result['matched']['unit_ids'],['RU-1'])
         self.assertEqual([row['id'] for row in context_result['facts']],['F-1','F-2'])
+
+
+    def test_audit_reports_unassigned_and_unresolved_without_assuming_business_coverage(self):
+        analysis=dict(schema_version=2,analyzer_version=VERSION,analysis_id='a1',
+            projects=[dict(name='sample',change_seeds=[
+                'sample.Service#changed()','sample.Service#missing()'],
+                facts=[
+                    dict(id='F-1',kind='method_change',evidence_ids=['E-1'],data={}),
+                    dict(id='F-2',kind='field_change',evidence_ids=['E-2'],data={}),
+                    dict(id='F-3',kind='branch',evidence_ids=['E-3'],data={})],
+                relations=[
+                    dict(id='R-1',source='sample.Service#changed()',status='unresolved',
+                         evidence_ids=['E-1'],reason='unknown_receiver')],
+                hard_errors=['changed evidence limit exceeded'])],
+            cross_project_relations=[])
+        review=dict(review_schema_version=4,analysis_id='a1',
+            projects=[dict(name='sample',review_units=[dict(
+                id='RU-1',scope='method',symbol='sample.Service#changed()',
+                fact_ids=['F-1'],relation_ids=['R-1'],facet_ids=[])],
+                review_facets=[],navigation_facets=[])])
+        context=[dict(id='E-'+str(i),snippet='code',
+                      project='different' if i==2 else 'sample') for i in (1,2,3,4)]
+        result=query_tool.audit_material(analysis,review,context)
+        self.assertEqual(result['counts']['missing_seeds'],1)
+        self.assertEqual(result['counts']['unassigned_primary_facts'],1)
+        self.assertEqual(result['counts']['unindexed_facts'],2)
+        self.assertEqual(result['counts']['unresolved_relations'],1)
+        self.assertEqual(result['counts']['hard_errors'],1)
+        self.assertEqual(result['counts']['unreferenced_evidence'],1)
+        self.assertEqual(result['counts']['evidence_project_mismatch'],1)
+        self.assertTrue(result['requires_attention'])
+        self.assertIn('不证明业务场景完整',result['note'])
+
+    def test_lookup_does_not_silently_drop_missing_fact_ids(self):
+        analysis=dict(schema_version=2,analyzer_version=VERSION,analysis_id='a1',
+            projects=[dict(name='sample',facts=[],relations=[],change_seeds=[])],
+            cross_project_relations=[])
+        review=dict(review_schema_version=4,analysis_id='a1',
+            projects=[dict(name='sample',review_facets=[],navigation_facets=[],
+                           review_units=[dict(id='RU-1',scope='method',
+                           symbol='sample.Service#run()',fact_ids=['F-missing'],
+                           relation_ids=[],facet_ids=[])])])
+        audit=query_tool.audit_material(analysis,review,[])
+        self.assertGreater(audit['counts']['invalid_unit_references'],0)
+        with self.assertRaisesRegex(ValueError,'未知 facts'):
+            query_tool.query_material(analysis,review,[],unit_id='RU-1')
+        indexed=query_tool._unit_index(dict(review['projects'][0]['review_units'][0],
+            _project='sample'),query_tool._indexes(analysis,review,[]))
+        self.assertEqual(indexed['invalid_reference_count'],1)
+
+    def test_review_query_pagination_rejects_wrong_cursor_and_returns_all_records(self):
+        rows=[dict(id='F-{}'.format(n)) for n in range(5)]
+        all_ids=[]
+        cursor=None
+        for _ in range(3):
+            items,page=query_tool._paginate(rows,'a1','facts',2,cursor)
+            all_ids.extend(row['id'] for row in items)
+            if not page['complete']:
+                self.assertTrue(page['next_cursor'])
+            cursor=page['next_cursor']
+        self.assertEqual(all_ids,['F-0','F-1','F-2','F-3','F-4'])
+        self.assertTrue(page['complete'])
+        valid_cursor=query_tool._paginate(rows,'a1','facts',2,None)[1]['next_cursor']
+        with self.assertRaisesRegex(ValueError,'cursor'):
+            query_tool._paginate(rows,'a1','relations',2,valid_cursor)
+        altered=[dict(row,changed=True) if row['id']=='F-2' else row for row in rows]
+        with self.assertRaisesRegex(ValueError,'cursor'):
+            query_tool._paginate(altered,'a1','facts',2,valid_cursor)
+
+    def test_evidence_expansion_validates_snapshot_before_returning_source(self):
+        record=dict(id='E-1',project='sample',side='result',tree='a'*40,
+                    blob='b'*40,path='src/App.java',start_line=2,end_line=2,
+                    snippet='String status = "OK";')
+        idx=dict(evidence={'E-1':record},projects={'sample':{
+            'analysis_clone':'repo','snapshots':{'result':'a'*40}}})
+        with mock.patch.object(query_tool,'verify_evidence',return_value=[]), \
+             mock.patch.object(query_tool,'git_bytes',return_value=
+                 b'class App {\nString status = "OK";\n}\n'):
+            expanded=query_tool._evidence_source({},idx,'E-1',1)
+        self.assertTrue(expanded['snapshot_verified'])
+        self.assertIn('String status',expanded['source']['content'])
+        with mock.patch.object(query_tool,'verify_evidence',return_value=['mismatch']):
+            with self.assertRaisesRegex(ValueError,'固定快照证据校验失败'):
+                query_tool._evidence_source({},idx,'E-1',1)
+
+    def test_preflight_failure_starts_rework_interval_and_resume_accounts_for_it(self):
+        with tempfile.TemporaryDirectory() as td:
+            run=Path(td)/'run';work=run/'.work';work.mkdir(parents=True)
+            state_path=work/'run-state.json'
+            start=time.time()-5
+            state=dict(run_schema_version=delivery.RUN_SCHEMA_VERSION,
+                run_dir=str(run.resolve()),status='waiting_agent',
+                waiting_started_epoch=start,waiting_started_at=delivery._iso(start),
+                waiting_reason='initial_business_review',current_agent_phase='report_edit',
+                current_agent_phase_started_epoch=start,
+                current_agent_phase_started_at=delivery._iso(start),stages={})
+            delivery._write_state(state_path,state)
+            def fail(state_file,current,name,commands,cleanup=()):
+                current['status']='failed'
+                current['failed_stage']=name
+                delivery._write_state(state_file,current)
+                raise RuntimeError('preflight failed')
+            with mock.patch.object(delivery,'_run_stage',side_effect=fail):
+                with self.assertRaisesRegex(RuntimeError,'preflight failed'):
+                    delivery._resume(str(run))
+            after=json.loads(state_path.read_text(encoding='utf-8'))
+            self.assertEqual(after['status'],'waiting_rework')
+            self.assertEqual(after['current_agent_phase'],'rework')
+            self.assertEqual(after['waiting_reason'],'repair_preflight')
+            self.assertGreaterEqual(after['stages']['agent_report_edit']['elapsed_seconds'],4.9)
+            self.assertGreaterEqual(after['stages']['agent_between_steps']['elapsed_seconds'],4.9)
+
+            # 再次 resume 失败同样会先结算上一段 rework，不会漏记失败后的间隔。
+            with mock.patch.object(delivery,'_run_stage',side_effect=fail):
+                with self.assertRaisesRegex(RuntimeError,'preflight failed'):
+                    delivery._resume(str(run))
+            after=json.loads(state_path.read_text(encoding='utf-8'))
+            self.assertIn('agent_rework',after['stages'])
+            total=after['stages']['agent_between_steps']['elapsed_seconds']
+            subphase=sum(after['stages'].get('agent_'+p,{}).get('elapsed_seconds',0)
+                         for p in delivery.AGENT_PHASES)
+            self.assertAlmostEqual(total,subphase,places=2)
+
+    def test_real_preflight_failure_preserves_script_attempt_and_rework(self):
+        with tempfile.TemporaryDirectory() as td:
+            run=Path(td)/'run';work=run/'.work';work.mkdir(parents=True)
+            start=time.time()-0.2
+            state=dict(run_schema_version=delivery.RUN_SCHEMA_VERSION,
+                run_dir=str(run.resolve()),status='waiting_agent',
+                waiting_started_epoch=start,waiting_started_at=delivery._iso(start),
+                waiting_reason='initial_business_review',current_agent_phase='source_review',
+                current_agent_phase_started_epoch=start,
+                current_agent_phase_started_at=delivery._iso(start),stages={})
+            state_path=work/'run-state.json'
+            delivery._write_state(state_path,state)
+            with contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaisesRegex(RuntimeError,'preflight'):
+                    delivery._resume(str(run))
+            after=json.loads(state_path.read_text(encoding='utf-8'))
+            self.assertEqual(after['status'],'waiting_rework')
+            self.assertEqual(after['stages']['preflight']['status'],'failed')
+            self.assertEqual(len(after['stages']['preflight']['attempts']),1)
+            self.assertNotEqual(after['stages']['preflight']['returncode'],0)
+            self.assertEqual(after['current_agent_phase'],'rework')
+            self.assertGreater(after['stages']['agent_between_steps']['elapsed_seconds'],0)
+
+    def test_agent_rework_phase_can_be_reclassified(self):
+        with tempfile.TemporaryDirectory() as td:
+            run=Path(td)/'run';work=run/'.work';work.mkdir(parents=True)
+            state_path=work/'run-state.json'
+            state=dict(run_schema_version=delivery.RUN_SCHEMA_VERSION,
+                run_dir=str(run.resolve()),status='waiting_rework',
+                waiting_started_epoch=time.time(),current_agent_phase='rework',
+                current_agent_phase_started_epoch=time.time(),stages={})
+            delivery._write_state(state_path,state)
+            delivery._switch_agent_phase(str(run),'report_edit')
+            after=json.loads(state_path.read_text(encoding='utf-8'))
+            self.assertEqual(after['current_agent_phase'],'report_edit')
+            self.assertIn('agent_rework',after['stages'])
+
+    def test_agent_total_is_inclusive_not_added_to_subphases(self):
+        state=dict(stages=dict(
+            analyze=dict(elapsed_seconds=5.0,status='completed'),
+            agent_source_review=dict(elapsed_seconds=2.0),
+            agent_between_steps=dict(elapsed_seconds=2.0,status='completed')))
+        buffer=io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            delivery._print_timings(state)
+        out=buffer.getvalue()
+        self.assertIn('SCRIPT_TOTAL: 5.000s',out)
+        self.assertIn('AGENT_TOTAL: 2.000s',out)
+        self.assertIn('TRACKED_TOTAL: 7.000s',out)
 
     def test_agent_subphase_timing_is_recorded_separately(self):
         state={

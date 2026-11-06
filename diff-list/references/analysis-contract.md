@@ -35,18 +35,19 @@ navigation_facets 不能作为范围过滤器。facet 不表示业务需求归�
 
 ## review_query.py
 
-review_query.py 是查证工具，不产生新的业务结论。
+Agent 可以直接调用此脚本，不需要 MCP 服务或持久化查询缓存：
 
-它接受显式 query 或 review_unit_id，并沿已有确定性引用展开：
+- `--overview`：全部 review unit 的分页索引和全局异常计数；
+- `--unit / --query`：按变化单元或关键词获取索引；
+- `--view facts/relations/evidence/db/calls/conditions`：仅显式展开所选类别，分类不代表全部业务影响；
+- `--fact`：完整事实及相关 evidence ID；
+- `--evidence --source-lines N`：校验固定 tree/blob 后返回脱敏源码上下文；
+- `--audit`：原始分析事实相对于 review 的归属差异、unresolved、hard_errors、证据缺失及分析边界；
+- `--audit --view <类别>`：按类别分页读取审计问题明细。
 
-- review unit；
-- review facet；
-- fact；
-- relation；
-- cross-project relation；
-- context evidence。
+分页字段为 `page.total/returned/complete/next_cursor`，游标绑定固定分析身份、视图和排序内容，错误游标应拒绝，不能静默跳过任何记录。
 
-查询未命中的内容仍保留在 analysis/review 原文件中，不代表无关。查询不使用相似度聚类，不自动生成业务组。
+`--audit` 不证明 Agent 已完整理解业务；支持性事实未绑定 unit 可是正常情况，但必须可见并供按需回查。
 
 ## test-cases.json
 
@@ -84,7 +85,7 @@ pending_review 表示尚未被测试用例引用的 review unit，并提供 high
 
 ## run-state.json
 
-当前 run_schema_version=2。
+当前 run_schema_version=3。
 
 除脚本阶段外，单独记录：
 
@@ -93,6 +94,9 @@ pending_review 表示尚未被测试用例引用的 review unit，并提供 high
 - agent_test_design
 - agent_report_edit
 - agent_coverage_review
-- agent_between_steps
+- agent_rework
+- agent_between_steps（包含所有上述 Agent 子阶段，不可重复相加）
 
-这些时间用于识别真实瓶颈，不用于评价业务结论质量。
+preflight 等 resume 阶段失败后记录 `waiting_rework`，从失败时刻到下一次 resume 的 Agent 修复区间计入总耗时。
+
+统计口径：`TRACKED_TOTAL = SCRIPT_TOTAL + agent_between_steps`；子阶段仅用于拆解 `agent_between_steps`，不得再加一次。

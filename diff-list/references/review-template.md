@@ -24,11 +24,13 @@ navigation_facets 是高价值阅读排序，不是分析范围。
 
 Agent 可以优先看 navigation_facets，但必须保证所有 review unit 最终都被业务复核覆盖。不得因为某个 unit 没有 navigation facet 就跳过它。
 
-## 显式查证
+## 按需查证及完整性审计
 
-发现具体字段、方法、配置键、Mapper 或 unit 后，使用 review_query.py 展开对应完整事实、关系和 evidence。
+使用 `review_query.py --overview` 查看所有 unit 与异常计数；使用 `--unit / --query` 获取轻量索引，再使用 `--view facts/relations/evidence/db/calls/conditions` 分页展开。对于关键判断，用 `--fact` 查看事实，`--evidence` 校验 Git 固定快照并读取脱敏源码。
 
-查询结果是索引结果，不是业务结论。未命中材料仍保留在原始 analysis/review 中。
+响应 `page.complete=false` 必须沿 `next_cursor` 继续读取；分类视图不能充当全业务影响范围。
+
+`--audit` 检查 change seed 未归属、主要事实未归属、事实/关系未索引、unresolved、hard_errors 和证据缺失。允许正常未归属支持性事实，但必须解释其影响；`coverage.pending_review=0` 不构成审计通过，也不代表业务完整。
 
 ## 用例绑定与待复核
 

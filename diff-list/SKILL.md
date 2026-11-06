@@ -46,19 +46,15 @@ review_units 是变化点级复核入口；review_facets 保存完整精确结�
 
 facet 不代表同一业务需求，代码关系也不等于业务关系。
 
-## 复核方式
+## Agent 复核顺序与脚本接口
 
-先确认所有 review unit 都被考虑，再按风险决定阅读顺序。navigation_facets 可以帮助优先定位高价值关系，但不得据此跳过其他 unit。
+1. 先用 `review_query.py --analysis <analysis.json> --review <review.json> --overview` 获得全局变化索引，再用 `--audit` 查看结构盲区和 hard_errors；不能只看 navigation_facets。
+2. 针对需要核实的问题使用 `--unit <RU-id>`、`--query <字段/方法/配置键/Mapper>` 获取轻量索引；显式通过 `--view facts/relations/evidence/db/calls/conditions` 查询相关证据。分类视图不代表完整业务范围。
+3. 根据返回的 fact/evidence ID 使用 `--fact <id>` 和 `--evidence <id> --source-lines 12` 核验固定 Git 快照中的脱敏源码，重要结论需要检查 before/after。
+4. 响应 `page.complete=false` 时用 `--cursor <next_cursor>` 继续读取，不得把截取的第一页视为完整；默认 10 条、`--limit` 最大 100。不要主动使用 `--view all` 把大量重复证据一次性送入 Agent 上下文。
+5. 完成业务结论、用例和报告后再次 `--audit`，检查未归属主要事实、未索引事实/关系、未解析依赖、证据缺失和分析硬错误。`coverage.pending_review=0` 不能代替这一步。
 
-当已经发现具体字段、方法、配置、Mapper 或 unit 需要深查时，优先调用 review_query.py：
-
-    py -3 .\scripts\review_query.py --analysis <analysis.json> --review <review.json> --query <关键词>
-
-或：
-
-    py -3 .\scripts\review_query.py --analysis <analysis.json> --review <review.json> --unit <RU-id>
-
-查询只展开显式命中和确定性引用，不做业务相似度聚类。未出现在查询结果里的材料不表示无关。
+这三层只是查询深度，不引入新中间产物、不归纳业务，也不替 Agent 判断遗漏风险是否可接受。
 
 ## test-cases.json
 
@@ -106,7 +102,7 @@ pending_review 是遗漏复核清单，不是覆盖率门槛，也不证明业�
 
 ## Agent 子阶段计时
 
-run_schema_version=2。
+run_schema_version=3。
 
 初次进入 Agent 阶段自动开始 source_review。工作重点变化时切换：
 
@@ -114,9 +110,9 @@ run_schema_version=2。
     py -3 .\scripts\run_delivery.py --run-dir <run> --mark-agent-phase test_design
     py -3 .\scripts\run_delivery.py --run-dir <run> --mark-agent-phase report_edit
 
-coverage 暂停自动记录 coverage_review。
+coverage 暂停自动记录 coverage_review；resume 的 preflight / coverage / Excel / report / finalize 失败后自动进入 `waiting_rework`，修复期间计入 `agent_rework`，下次 `--resume` 先结算此区间。可用 `--mark-agent-phase report_edit` 等细分修复工作。
 
-run-state.json 分别记录 source_review、business_reasoning、test_design、report_edit、coverage_review 和 agent_between_steps 总耗时，用真实数据决定下一轮优化方向。
+`agent_between_steps` 是 source_review、business_reasoning、test_design、report_edit、coverage_review、rework 子阶段的**合计值**，不能与这些子阶段再次相加。读取计时只使用 `TRACKED_TOTAL = SCRIPT_TOTAL + AGENT_TOTAL`。失败脚本的尝试次数和用时保留在对应 stage.attempts。
 
 ## 质量约束
 
