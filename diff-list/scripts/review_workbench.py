@@ -177,8 +177,10 @@ def fast10_view(analysis):
             review_summary=dict(
                 change_seed_count=len(change_seeds),
                 review_unit_count=len(units),
+                source_fact_count=len(source['facts']),
                 selected_fact_count=len(fact_catalog),
                 project_fact_count=len(project_facts),
+                source_relation_count=len(source['relations']),
                 selected_relation_count=len(relation_catalog),
                 selected_evidence_count=len(evidence_ids)),
             review_units=units,
@@ -218,6 +220,13 @@ def main(argv=None):
     try:
         analysis=json.loads(Path(args.analysis).read_text(encoding='utf-8-sig'))
         value=fast10_view(analysis)
+        paths=[Path(args.output)]
+        paths.extend(Path(value) for value in (args.cases_template,args.report_template) if value)
+        resolved=[path.resolve() for path in paths]
+        if len(set(resolved))!=len(resolved):
+            raise ValueError('review/cases/report outputs must use different files')
+        if any(path.exists() for path in paths):
+            raise ValueError('review/cases/report output already exists')
         target=Path(args.output)
         target.parent.mkdir(parents=True,exist_ok=True)
         with target.open('x',encoding='utf-8',newline='\n') as out:
