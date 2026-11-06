@@ -125,7 +125,7 @@ Agent 在分析开始和交付前分别执行：
 
     py -3 .\scripts\review_query.py --analysis $a --review $r --audit
 
-审计报告包含：change seed 是否有 unit、未归属主要变化事实、未索引支持性事实/关系、unresolved、证据缺失、hard_errors、分析限制、跨项目来源缺失等。按类别翻页查看：
+审计报告包含：change seed 是否有 unit、未归属主要变化事实、未索引支持性事实/关系、unresolved、缺失或未引用的证据、跨项目证据归属不一致、hard_errors、分析限制及跨项目来源缺失等。按类别翻页查看：
 
     py -3 .\scripts\review_query.py --analysis $a --review $r --audit --view unassigned_primary_facts
 
@@ -133,7 +133,7 @@ Agent 在分析开始和交付前分别执行：
 
 ## Agent 子阶段耗时
 
-run_schema_version=2。
+run_schema_version=3。
 
 首次进入 Agent 阶段时自动从 source_review 开始计时。Agent 在工作重心变化时主动切换：
 
