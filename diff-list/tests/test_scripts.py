@@ -26,6 +26,24 @@ def module(name):
 
 
 class DiffListTest(unittest.TestCase):
+    def test_source_index_jdk_tools_discovery(self):
+        source_index=module('source_index')
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td)
+            bin_dir=root/'bin';bin_dir.mkdir()
+            suffix='.exe' if os.name=='nt' else ''
+            javac=bin_dir/('javac'+suffix)
+            java=bin_dir/('java'+suffix)
+            javac.touch();java.touch()
+            with mock.patch.object(source_index.shutil,'which',return_value=str(javac)):
+                self.assertEqual(source_index.jdk_tools(),(str(javac.resolve()),str(java),None))
+                lib=root/'lib';lib.mkdir()
+                tools=lib/'tools.jar';tools.touch()
+                self.assertEqual(source_index.jdk_tools(),(str(javac.resolve()),str(java),str(tools)))
+            with mock.patch.object(source_index.shutil,'which',return_value=None):
+                with self.assertRaisesRegex(ValueError,'javac not found'):
+                    source_index.jdk_tools()
+
     def test_template_heading_only(self):
         template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
         self.assertTrue(all(not line.strip() or line.startswith('# ' ) or line.startswith('## ')
