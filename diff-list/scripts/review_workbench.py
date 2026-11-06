@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""从 analysis.json 生成按变化点聚合的一层快审材料。"""
+"""从 analysis.json 生成按变化点聚合的一层复核材料。"""
 import argparse
 import json
 import sys
 from pathlib import Path
 
 from analysis_engine import VERSION
+from source_index import stable
 
 
 def normal_flow_name(symbol):
@@ -34,20 +35,14 @@ def fact_symbols(fact):
         values=data.get(key) or []
         if isinstance(values,list):
             for value in values:
-                if isinstance(value,dict):
-                    add(value.get('symbol'))
-                else:
-                    add(value)
+                add(value.get('symbol') if isinstance(value,dict) else value)
     for side in ('before','after'):
         value=data.get(side)
         if not isinstance(value,dict):
             continue
         add(value.get('symbol'))
         for consumer in value.get('consumers') or []:
-            if isinstance(consumer,dict):
-                add(consumer.get('symbol'))
-            else:
-                add(consumer)
+            add(consumer.get('symbol') if isinstance(consumer,dict) else consumer)
     return result
 
 
@@ -92,7 +87,6 @@ def _preview_value(value,depth=0):
 
 
 def fact_preview(fact):
-    """快审只保留事实关键字段；完整 data 在 analysis.json 中按 fact id 回查。"""
     return dict(id=fact['id'],kind=fact.get('kind'),classification=fact.get('classification'),
                 data=_preview_value(fact.get('data') or {}),
                 evidence_ids=sorted(fact.get('evidence_ids') or []))
@@ -106,6 +100,98 @@ def relation_preview(relation):
                 targets=relation.get('targets') or [],status=relation.get('status'),
                 reason=relation.get('reason'),receiver_type=relation.get('receiver_type'),
                 site=compact_site,evidence_ids=sorted(relation.get('evidence_ids') or []))
+
+
+def _data_keys(data):
+    result=set()
+    if not isinstance(data,dict):
+        return result
+    key=data.get('key')
+    if isinstance(key,str) and key:
+        result.add('config:'+key)
+    for side in ('before','after'):
+        value=data.get(side)
+        if isinstance(value,dict):
+            nested=value.get('key')
+            if isinstance(nested,str) and nested:
+                result.add('config:'+nested)
+    owner,field=data.get('owner'),data.get('field')
+    if isinstance(owner,str) and isinstance(field,str):
+        result.add('field:'+owner+'#'+field)
+    receiver_type=data.get('receiver_type')
+    if isinstance(receiver_type,str) and isinstance(field,str):
+        result.add('field:'+receiver_type+'#'+field)
+    namespace=data.get('namespace')
+    name=data.get('name') or data.get('statement')
+    if isinstance(namespace,str) and isinstance(name,str):
+        result.add('mapper:'+namespace+'#'+name)
+    return result
+
+
+def unit_anchors(unit,facts_by_id,relations_by_id):
+    """只使用确定性源码关系生成机械关联键，不判断业务语义。"""
+    anchors=set()
+    symbol=unit.get('symbol')
+    if symbol:
+        anchors.add('owner:'+symbol.split('#',1)[0])
+    for related in unit.get('related_symbols') or []:
+        anchors.add('related:'+related)
+    for fact_id in unit.get('fact_ids') or []:
+        fact=facts_by_id.get(fact_id)
+        if fact:
+            anchors.update(_data_keys(fact.get('data') or {}))
+    for relation_id in unit.get('relation_ids') or []:
+        relation=relations_by_id.get(relation_id) or {}
+        for target in relation.get('targets') or []:
+            anchors.add('call:'+target)
+        receiver=relation.get('receiver_type')
+        name=(relation.get('site') or {}).get('name')
+        if isinstance(receiver,str) and receiver and isinstance(name,str) and name:
+            anchors.add('call:'+receiver+'#'+name)
+    return anchors
+
+
+def build_groups(project,units,facts_by_id,relations_by_id):
+    """按共享类、直接依赖、配置、Mapper、字段等确定性锚点做连通分组。"""
+    if not units:
+        return []
+    anchors={unit['id']:unit_anchors(unit,facts_by_id,relations_by_id) for unit in units}
+    parent={unit['id']:unit['id'] for unit in units}
+    def find(value):
+        while parent[value]!=value:
+            parent[value]=parent[parent[value]]
+            value=parent[value]
+        return value
+    def union(left,right):
+        a,b=find(left),find(right)
+        if a!=b:
+            parent[max(a,b)]=min(a,b)
+    for index,left in enumerate(units):
+        for right in units[index+1:]:
+            if anchors[left['id']] & anchors[right['id']]:
+                union(left['id'],right['id'])
+    components={}
+    for unit in units:
+        components.setdefault(find(unit['id']),[]).append(unit)
+    groups=[]
+    for members in sorted(components.values(),key=lambda rows:rows[0]['id']):
+        unit_ids=sorted(row['id'] for row in members)
+        shared=set()
+        if len(members)>1:
+            counts={}
+            for row in members:
+                for anchor in anchors[row['id']]:
+                    counts[anchor]=counts.get(anchor,0)+1
+            shared={anchor for anchor,count in counts.items() if count>1}
+        group_id='RG-'+stable(project,unit_ids)[:12]
+        groups.append(dict(
+            id=group_id,
+            unit_ids=unit_ids,
+            unit_count=len(unit_ids),
+            symbols=sorted(row['symbol'] for row in members if row.get('symbol')),
+            shared_anchors=sorted(shared)[:20],
+            note='仅表示源码结构或直接依赖相关，业务归属仍由 Agent 判断。'))
+    return groups
 
 
 def build_review(analysis):
@@ -132,6 +218,7 @@ def build_review(analysis):
         symbols_by_fact={fact['id']:fact_symbols(fact) for fact in facts}
         change_seeds=sorted(set(source['change_seeds']))
         relations=list(source['relations'])
+        relations_by_id={relation['id']:relation for relation in relations if relation.get('id')}
 
         units=[]
         selected_fact_ids=set()
@@ -146,45 +233,51 @@ def build_review(analysis):
                 local_symbols.update(relation.get('targets') or [])
                 if relation.get('id'):
                     selected_relations[relation['id']]=relation
-            unit_facts=[fact for fact in facts
-                        if symbols_by_fact[fact['id']] & local_symbols]
+            unit_facts=[fact for fact in facts if symbols_by_fact[fact['id']] & local_symbols]
             unit_fact_ids=sorted(fact['id'] for fact in unit_facts)
             selected_fact_ids.update(unit_fact_ids)
-            evidence_ids=sorted(
-                {identifier for fact in unit_facts for identifier in fact.get('evidence_ids',[])}
-                | {identifier for relation in touching for identifier in relation.get('evidence_ids',[])})
             units.append(dict(
+                id='RU-'+stable(source['name'],symbol)[:12],
+                scope='method',
                 symbol=symbol,
                 flow=normal_flow_name(symbol),
                 related_symbols=sorted(local_symbols-{symbol}),
                 fact_groups=fact_group_summary(unit_facts),
                 fact_ids=unit_fact_ids,
-                relation_ids=sorted(relation['id'] for relation in touching if relation.get('id')),
-                evidence_ids=evidence_ids))
+                relation_ids=sorted(relation['id'] for relation in touching if relation.get('id'))))
 
         project_facts=[fact for fact in facts
                        if fact.get('kind') in primary_kinds and not symbols_by_fact[fact['id']]]
-        selected_fact_ids.update(fact['id'] for fact in project_facts)
+        if project_facts:
+            project_fact_ids=sorted(fact['id'] for fact in project_facts)
+            units.append(dict(
+                id='RU-'+stable(source['name'],'project',project_fact_ids)[:12],
+                scope='project',
+                symbol=None,
+                flow='项目级变化',
+                related_symbols=[],
+                fact_groups=fact_group_summary(project_facts),
+                fact_ids=project_fact_ids,
+                relation_ids=[]))
+            selected_fact_ids.update(project_fact_ids)
+
         fact_catalog=[fact_preview(facts_by_id[identifier]) for identifier in sorted(selected_fact_ids)]
         relation_catalog=[relation_preview(selected_relations[identifier]) for identifier in sorted(selected_relations)]
         selected_relation_ids.update(selected_relations)
-        evidence_ids=sorted(
-            {identifier for fact in fact_catalog for identifier in fact.get('evidence_ids',[])}
-            | {identifier for relation in relation_catalog for identifier in relation.get('evidence_ids',[])})
+        groups=build_groups(source['name'],sorted(units,key=lambda row:row['id']),facts_by_id,relations_by_id)
 
         projects.append(dict(
             name=source['name'],
             review_summary=dict(
                 change_seed_count=len(change_seeds),
                 review_unit_count=len(units),
+                review_group_count=len(groups),
                 source_fact_count=len(source['facts']),
                 selected_fact_count=len(fact_catalog),
-                project_fact_count=len(project_facts),
                 source_relation_count=len(source['relations']),
-                selected_relation_count=len(relation_catalog),
-                selected_evidence_count=len(evidence_ids)),
-            review_units=units,
-            project_fact_ids=sorted(fact['id'] for fact in project_facts),
+                selected_relation_count=len(relation_catalog)),
+            review_groups=groups,
+            review_units=sorted(units,key=lambda row:row['id']),
             fact_catalog=fact_catalog,
             relation_catalog=relation_catalog,
             hard_errors=source['hard_errors'],
@@ -195,10 +288,10 @@ def build_review(analysis):
            if row.get('source_relation') in selected_relation_ids]
     return dict(
         analysis_id=analysis['analysis_id'],
-        review_schema_version=1,
+        review_schema_version=2,
         projects=projects,
         cross_project_relations=cross,
-        note='按变化方法聚合最终净变化和一层直接关系；完整事实仍保留在 analysis.json。'
+        note='review_groups 仅做源码结构聚合；业务结论由 Agent 基于 review_units 判断。'
     )
 
 
@@ -238,7 +331,7 @@ def main(argv=None):
         if args.report_template:
             from generate_report import empty_report_data
             write_json_template(args.report_template,empty_report_data())
-        print('已生成按变化点聚合的快审材料。')
+        print('已生成聚合复核材料及输入骨架。')
         return 0
     except (ValueError,OSError,KeyError,TypeError) as exc:
         print('ERROR: '+str(exc),file=sys.stderr)
