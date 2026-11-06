@@ -2,9 +2,9 @@
 """Agent 按需查证入口：先索引，再分页展开事实，关键结论回查固定源码。"""
 import argparse
 import base64
+import binascii
 import hashlib
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -71,6 +71,8 @@ def _indexes(analysis,review,context):
         raise ValueError('analysis schema/analyzer version mismatch')
     if review.get('review_schema_version')!=4 or review.get('analysis_id')!=analysis.get('analysis_id'):
         raise ValueError('review schema 或 analysis_id 不匹配')
+    if not analysis.get('projects'):
+        raise ValueError('analysis missing projects')
     facts={}
     relations={}
     units={}
@@ -213,7 +215,7 @@ def _paginate(rows,analysis_id,scope,limit,cursor):
             raw=base64.urlsafe_b64decode(cursor.encode('ascii')).decode('ascii')
             number,digest=raw.split(':',1)
             start=int(number)
-        except (ValueError,UnicodeError,TypeError) as exc:
+        except (ValueError,UnicodeError,TypeError,binascii.Error) as exc:
             raise ValueError('invalid cursor: '+str(exc))
         if start<0 or start>len(rows) or digest!=signature:
             raise ValueError('cursor 与当前分析范围/视图/内容不匹配')
