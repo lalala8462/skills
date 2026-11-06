@@ -269,6 +269,29 @@ class DeliveryFlowTest(unittest.TestCase):
                          for p in delivery.AGENT_PHASES)
             self.assertAlmostEqual(total,subphase,places=2)
 
+    def test_real_preflight_failure_preserves_script_attempt_and_rework(self):
+        with tempfile.TemporaryDirectory() as td:
+            run=Path(td)/'run';work=run/'.work';work.mkdir(parents=True)
+            start=time.time()-0.2
+            state=dict(run_schema_version=delivery.RUN_SCHEMA_VERSION,
+                run_dir=str(run.resolve()),status='waiting_agent',
+                waiting_started_epoch=start,waiting_started_at=delivery._iso(start),
+                waiting_reason='initial_business_review',current_agent_phase='source_review',
+                current_agent_phase_started_epoch=start,
+                current_agent_phase_started_at=delivery._iso(start),stages={})
+            state_path=work/'run-state.json'
+            delivery._write_state(state_path,state)
+            with contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaisesRegex(RuntimeError,'preflight'):
+                    delivery._resume(str(run))
+            after=json.loads(state_path.read_text(encoding='utf-8'))
+            self.assertEqual(after['status'],'waiting_rework')
+            self.assertEqual(after['stages']['preflight']['status'],'failed')
+            self.assertEqual(len(after['stages']['preflight']['attempts']),1)
+            self.assertNotEqual(after['stages']['preflight']['returncode'],0)
+            self.assertEqual(after['current_agent_phase'],'rework')
+            self.assertGreater(after['stages']['agent_between_steps']['elapsed_seconds'],0)
+
     def test_agent_rework_phase_can_be_reclassified(self):
         with tempfile.TemporaryDirectory() as td:
             run=Path(td)/'run';work=run/'.work';work.mkdir(parents=True)
