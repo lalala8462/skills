@@ -9,11 +9,13 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from query_metrics import summarize_queries
+
 
 SCRIPT_DIR=Path(__file__).resolve().parent
 STATE_NAME='run-state.json'
-RUN_SCHEMA_VERSION=3
-AGENT_PHASES=('source_review','business_reasoning','test_design','report_edit','coverage_review','rework')
+RUN_SCHEMA_VERSION=4
+AGENT_PHASES=('source_review','analysis_authoring','rework')
 WAIT_STATUSES=('waiting_agent','waiting_coverage_review','waiting_rework')
 
 
@@ -25,6 +27,7 @@ def _iso(timestamp=None):
 def _write_state(path,state):
     path=Path(path)
     path.parent.mkdir(parents=True,exist_ok=True)
+    state['query_stats']=summarize_queries(path.parent)
     temporary=path.with_name(path.name+'.tmp')
     temporary.write_text(json.dumps(state,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
     os.replace(str(temporary),str(path))
@@ -152,8 +155,12 @@ def _switch_agent_phase(run_dir_value,phase):
         raise ValueError('只有 Agent 等待阶段可以切换计时子阶段')
     if phase not in AGENT_PHASES:
         raise ValueError('未知 Agent 阶段: '+str(phase))
-    if state.get('status')=='waiting_coverage_review' and phase!='coverage_review':
-        raise ValueError('coverage 待复核阶段只能记录 coverage_review')
+    if state.get('status')=='waiting_coverage_review' and phase!='analysis_authoring':
+        raise ValueError('coverage 待复核阶段只能记录 analysis_authoring')
+    if state.get('status')=='waiting_rework' and phase!='rework':
+        raise ValueError('失败修复阶段只能记录 rework')
+    if phase=='rework' and state.get('status')!='waiting_rework':
+        raise ValueError('rework 由失败恢复流程自动开始')
     if state.get('current_agent_phase')==phase:
         print('AGENT_PHASE: '+phase)
         return 0
@@ -196,6 +203,11 @@ def _print_timings(state):
     print('TRACKED_TOTAL: {:.3f}s (SCRIPT_TOTAL + AGENT_TOTAL)'.format(script_total+total))
     if abs(total-subtotal)>0.02:
         print('TIMING_WARNING: Agent 子阶段与总计不一致，差异 {:.3f}s'.format(total-subtotal))
+    queries=state.get('query_stats') or {}
+    print('QUERY_STATS: calls={} repeated={} output_bytes={} stdout_bytes={} returned_items={} errors={}'.format(
+        queries.get('calls',0),queries.get('repeated_calls',0),
+        queries.get('returned_bytes',0),queries.get('stdout_bytes',0),
+        queries.get('returned_items',0),queries.get('failures',0)))
 
 
 
@@ -281,7 +293,7 @@ def _prepare(args):
         sys.executable,SCRIPT_DIR/'review_query.py',analysis,review))
     print('QUERY_EXAMPLE: {} -B {} --analysis {} --review {} --query <关键词>'.format(
         sys.executable,SCRIPT_DIR/'review_query.py',analysis,review))
-    print('PHASE: {} -B {} --run-dir {} --mark-agent-phase business_reasoning'.format(
+    print('PHASE: {} -B {} --run-dir {} --mark-agent-phase analysis_authoring'.format(
         sys.executable,SCRIPT_DIR/'run_delivery.py',run_dir))
     print('RESUME: {} -B {} --resume {}'.format(sys.executable,SCRIPT_DIR/'run_delivery.py',run_dir))
     _print_timings(state)
@@ -365,7 +377,7 @@ def _resume(run_dir_value):
         pending=coverage_data.get('pending_review') or []
         if pending:
             state=json.loads(state_path.read_text(encoding='utf-8-sig'))
-            _begin_agent_wait(state_path,state,'waiting_coverage_review','coverage_pending_review','coverage_review')
+            _begin_agent_wait(state_path,state,'waiting_coverage_review','coverage_pending_review','analysis_authoring')
             print('COVERAGE_REVIEW: {} pending unit(s)'.format(len(pending)))
             print('COVERAGE: '+str(coverage))
             print('PENDING: '+','.join(row.get('unit_id','') for row in pending))
