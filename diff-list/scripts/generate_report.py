@@ -102,22 +102,22 @@ def test_summary(cases,excel_name):
 
 def _render(template,bodies):
     headings=_validate_template(template)
-    title=headings[0]
-    output=[]
-    for line in template.splitlines():
-        stripped=line.strip()
-        output.append(line)
-        if stripped==title:
-            output.extend(['',DRAFT_MARKER,DRAFT_STATUS,''])
-            continue
-        body=bodies.get(stripped)
-        if body is not None:
-            output.extend(['',body.strip(),''])
+    output=[headings[0],'',DRAFT_MARKER,DRAFT_STATUS,'']
+    for heading in headings[1:]:
+        output.extend(['',heading,'',bodies.get(heading,'').strip()])
     return '\n'.join(output).rstrip()+'\n'
 
 
 def initial_report(template,analysis):
+    headings=_validate_template(template)
+    defaults=sections(template,headings)
     bodies={heading:AGENT_PLACEHOLDER for heading in AGENT_HEADINGS}
+    # 既有功能影响是模板必有填写项；不用预填“无”来替代 Agent 的判断。
+    special='## 4. 特殊逻辑与测试关注点'
+    special_template=defaults.get(special,'')
+    if '既有功能影响' not in special_template or AGENT_PLACEHOLDER not in special_template:
+        raise ValueError('report template must prefill 既有功能影响 with Agent placeholder')
+    bodies[special]=special_template
     bodies.update({
         '## 1. 分析范围':scope_section(analysis),
         '### 2.4 配置文件调整':configuration_section(analysis),
