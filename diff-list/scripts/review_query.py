@@ -279,6 +279,11 @@ def _audit_rows(analysis,indexes):
             if missing:
                 result['invalid_unit_references'].append(dict(unit_id=identifier,
                     type=key,missing_ids=missing))
+            foreign=sorted(ref for ref in set(row.get(key) or [])
+                           if ref in collection and collection[ref]['_project']!=row['_project'])
+            if foreign:
+                result['invalid_unit_references'].append(dict(unit_id=identifier,
+                    type=key,foreign_project_ids=foreign))
     for project in analysis.get('projects',[]):
         name=project['name']
         for message in project.get('hard_errors',[]):
