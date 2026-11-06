@@ -17,7 +17,7 @@ def analysis():
 
 
 def review():
-    return dict(analysis_id='analysis-1',review_schema_version=3,projects=[dict(
+    return dict(analysis_id='analysis-1',review_schema_version=4,projects=[dict(
         name='sample',
         fact_catalog=[
             dict(id='fact-1',kind='method_change',evidence_ids=['evidence-1']),
@@ -25,11 +25,14 @@ def review():
         ],
         review_facets=[dict(id='RF-1',type='owner',anchor='sample.Flow',
                             unit_ids=['RU-1','RU-2'],unit_count=2)],
+        navigation_facets=[dict(id='RF-1',type='owner',anchor='sample.Flow',
+                                unit_ids=['RU-1','RU-2'],unit_count=2,
+                                navigation_priority=20,navigation_reason='同一变化类')],
         review_units=[
             dict(id='RU-1',scope='method',symbol='sample.Flow#run()',
                  change_summary=[dict(kind='method_change',fact_id='fact-1',details={'change':'modified'})],
                  direct_fact_ids=['fact-1'],context_fact_ids=[],
-                 fact_ids=['fact-1'],relation_ids=[],related_symbols=[],facet_ids=['RF-1']),
+                 fact_ids=['fact-1'],relation_ids=[],related_symbols=[],facet_ids=['RF-1'],navigation_facet_ids=['RF-1']),
             dict(id='RU-2',scope='method',symbol='sample.Flow#other()',
                  change_summary=[dict(kind='method_change',fact_id='fact-2',details={'change':'modified'})],
                  direct_fact_ids=['fact-2'],context_fact_ids=[],
@@ -68,7 +71,7 @@ class CaseContractTest(unittest.TestCase):
 
     def test_old_review_schema_is_rejected(self):
         old=copy.deepcopy(review());old['review_schema_version']=2
-        with self.assertRaisesRegex(ValueError,'review_schema_version=3'):
+        with self.assertRaisesRegex(ValueError,'review_schema_version=4'):
             validate_cases(cases(),analysis(),old)
 
     def test_coverage_matrix_reports_uncovered_units_without_failing_cases(self):
@@ -78,7 +81,10 @@ class CaseContractTest(unittest.TestCase):
         self.assertEqual(matrix['uncovered_unit_ids'],['RU-2'])
         self.assertEqual(matrix['summary']['partially_covered_facet_count'],1)
         self.assertEqual(matrix['partially_covered_facet_ids'],['RF-1'])
-        self.assertIn('不证明',matrix['note'])
+        self.assertEqual(matrix['summary']['pending_review_count'],1)
+        self.assertEqual(matrix['pending_review'][0]['unit_id'],'RU-2')
+        self.assertEqual(matrix['pending_review'][0]['high_value_facets'][0]['facet_id'],'RF-1')
+        self.assertIn('待复核',matrix['note'])
 
     def test_review_unit_direct_context_contract_is_strict(self):
         broken=copy.deepcopy(review())
@@ -88,8 +94,8 @@ class CaseContractTest(unittest.TestCase):
 
     def test_coverage_matrix_has_current_schema_identity(self):
         matrix=coverage_matrix(cases(),analysis(),review())
-        self.assertEqual(matrix['coverage_schema_version'],1)
-        self.assertEqual(matrix['review_schema_version'],3)
+        self.assertEqual(matrix['coverage_schema_version'],2)
+        self.assertEqual(matrix['review_schema_version'],4)
         self.assertEqual(matrix['analysis_id'],'analysis-1')
 
     def test_unknown_review_unit_is_rejected(self):
