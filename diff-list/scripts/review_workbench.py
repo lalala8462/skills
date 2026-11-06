@@ -392,7 +392,7 @@ def build_review(analysis):
         review_schema_version=4,
         projects=projects,
         cross_project_relations=cross,
-        note='review_facets 保留完整精确结构关系；navigation_facets 仅作为 Agent 首轮高价值阅读入口。change_summary 只压缩直接事实，完整事实始终保留。业务结论由 Agent 判断。'
+        note='review_facets 保留完整精确结构关系；navigation_facets 只调整阅读顺序，不定义或过滤复核范围。change_summary 只压缩直接事实，完整事实始终保留。业务结论由 Agent 判断。'
     )
 
 
