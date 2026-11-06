@@ -310,14 +310,21 @@ def audit_material(analysis,review,context):
     indexes=_indexes(analysis,review,context)
     groups=_audit_rows(analysis,indexes)
     counts={key:len(rows) for key,rows in groups.items()}
+    attention_kinds={
+        'missing_seeds','unassigned_primary_facts','unresolved_relations',
+        'missing_evidence','unreferenced_evidence','evidence_project_mismatch',
+        'hard_errors','invalid_unit_references','cross_source_missing'
+    }
     return dict(analysis_id=analysis['analysis_id'],
         scope=dict(project_count=len(indexes['projects']),unit_count=len(indexes['units']),
                    fact_count=len(indexes['facts']),relation_count=len(indexes['relations']),
                    evidence_count=len(indexes['evidence']),
                    limits=analysis.get('limits') or {}),
-        counts=counts,requires_attention=any(counts.values()),
+        counts=counts,requires_attention=any(counts[key] for key in attention_kinds),
+        informational_only_views=['unindexed_facts','unindexed_relations'],
         available_views=list(AUDIT_VIEWS),
-        note=('未被 review_unit 引用的支持性事实/关系可能属于预期范围，但必须允许 Agent 回查；'
+        note=('未索引的支持性事实/关系属于可回查的信息提示，不直接等于业务遗漏；'
+              '未归属主要事实、未解析关系与证据异常需要 Agent 重点核查。'
               '审计只验证结构/可见边界，不证明业务场景完整。'))
 
 
