@@ -94,6 +94,9 @@ pending_review 表示尚未被测试用例引用的 review unit，并提供 high
 - agent_test_design
 - agent_report_edit
 - agent_coverage_review
-- agent_between_steps
+- agent_rework
+- agent_between_steps（包含所有上述 Agent 子阶段，不可重复相加）
 
-这些时间用于识别真实瓶颈，不用于评价业务结论质量。
+preflight 等 resume 阶段失败后记录 `waiting_rework`，从失败时刻到下一次 resume 的 Agent 修复区间计入总耗时。
+
+统计口径：`TRACKED_TOTAL = SCRIPT_TOTAL + agent_between_steps`；子阶段仅用于拆解 `agent_between_steps`，不得再加一次。
