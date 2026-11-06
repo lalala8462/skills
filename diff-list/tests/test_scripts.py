@@ -118,8 +118,8 @@ class DiffListTest(unittest.TestCase):
         case_data={'purpose_cases':{'acceptance':[{}],'core_regression':[],'related_regression':[],'boundary':[]}}
         refreshed=generator.refresh_report(draft,template,analysis,case_data,'webapi-cases.xlsx')
         self.assertIn('Excel：[webapi-cases.xlsx](webapi-cases.xlsx)',refreshed)
-        self.assertIn('修改支付入口。',refreshed)
-        self.assertIn('既有功能影响：无',refreshed)
+        for value in replacements.values():
+            self.assertIn(value,refreshed)
         self.assertIn('未执行构建、单元测试、数据库验证或环境联调',refreshed)
 
         finalized=refreshed.replace(generator.DRAFT_MARKER+'\n'+generator.DRAFT_STATUS+'\n','',1)
