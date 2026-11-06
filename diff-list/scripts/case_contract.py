@@ -44,9 +44,26 @@ def review_unit_index(review):
             if identifier in index:
                 raise ValueError('duplicate review unit: '+identifier)
             fact_ids=_strings(unit.get('fact_ids'),'review_unit.fact_ids',True)
+            direct_fact_ids=_strings(unit.get('direct_fact_ids'),'review_unit.direct_fact_ids')
+            context_fact_ids=_strings(unit.get('context_fact_ids'),'review_unit.context_fact_ids')
+            if set(direct_fact_ids) & set(context_fact_ids):
+                raise ValueError('review unit direct/context facts overlap: '+identifier)
+            if set(direct_fact_ids) | set(context_fact_ids) != set(fact_ids):
+                raise ValueError('review unit direct/context facts do not match fact_ids: '+identifier)
             if not set(fact_ids)<=catalog:
                 raise ValueError('review unit references facts outside fact_catalog: '+identifier)
-            index[identifier]=dict(project=project.get('name'),unit=unit,fact_ids=fact_ids)
+            summary=unit.get('change_summary')
+            if not isinstance(summary,list):
+                raise ValueError('review unit change_summary must be an array: '+identifier)
+            summary_fact_ids=set()
+            for row in summary:
+                if not isinstance(row,dict) or not isinstance(row.get('fact_id'),str):
+                    raise ValueError('review unit change_summary item is invalid: '+identifier)
+                summary_fact_ids.add(row['fact_id'])
+            if not summary_fact_ids<=set(direct_fact_ids):
+                raise ValueError('review unit change_summary references non-direct facts: '+identifier)
+            index[identifier]=dict(project=project.get('name'),unit=unit,fact_ids=fact_ids,
+                                   direct_fact_ids=direct_fact_ids,context_fact_ids=context_fact_ids)
     if not index:
         raise ValueError('review contains no review units')
     return index
