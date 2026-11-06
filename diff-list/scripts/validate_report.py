@@ -9,7 +9,6 @@ import tempfile
 from pathlib import Path, PureWindowsPath
 
 HEAD=re.compile(r'^#{1,6} .+$',re.M)
-FENCE=re.compile(r'^```([^\n]*)\n(.*?)^```\s*$',re.M|re.S)
 
 def heading_positions(text):
     """Find Markdown headings outside fenced code blocks, preserving source lines."""
