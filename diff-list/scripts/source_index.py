@@ -1,15 +1,28 @@
 """指定 Git 树上的轻量源码索引，不检出或构建目标项目。"""
 import hashlib
 import json
+import os
 import re
+import shutil
 import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from logic_candidates import jdk_tools
 
 DEFAULT_LIMITS = dict(files=10000, file_bytes=1048576, total_bytes=134217728,
                       depth=1, methods=100, context_bytes=8388608)
+
+
+def jdk_tools():
+    javac = shutil.which('javac')
+    if not javac:
+        raise ValueError('JDK compiler unavailable: javac not found on PATH')
+    javac = Path(javac).resolve()
+    java = javac.with_name('java.exe' if os.name == 'nt' else 'java')
+    if not java.is_file():
+        raise ValueError('Java runtime not found beside javac: ' + str(java))
+    tools_jar = javac.parent.parent / 'lib' / 'tools.jar'
+    return str(javac), str(java), str(tools_jar) if tools_jar.is_file() else None
 
 
 def source_lines(text):
