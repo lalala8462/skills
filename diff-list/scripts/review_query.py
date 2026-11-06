@@ -31,6 +31,19 @@ NOTE=('结果基于确定性索引或显式匹配；分类视图不代表完整�
       '未命中的事实、关系及源码仍保留在 analysis.json / context.jsonl。')
 
 
+def _is_direct_change_fact(row):
+    if row.get('kind')=='configuration':
+        # 配置读取被纳入分析，并不代表配置值发生变化。
+        return (row.get('data') or {}).get('change') in ('added','removed')
+    return row.get('kind') in PRIMARY_KINDS
+
+
+def _relation_tier(row,seeds,project):
+    touched=((project,row.get('source')) in seeds or any(
+        (project,symbol) in seeds for symbol in row.get('targets') or []))
+    return 'change_touched_boundary' if touched else 'supporting_context'
+
+
 def _contains(value,needle):
     if isinstance(value,str):
         return needle in value.casefold()
@@ -268,9 +281,11 @@ def _audit_rows(analysis,indexes):
                              for name,symbol in sorted(seeds-indexed)]
     for identifier,row in sorted(facts.items()):
         if identifier not in assigned_facts:
-            item=dict(id=identifier,project=row['_project'],kind=row.get('kind'))
+            direct=_is_direct_change_fact(row)
+            item=dict(id=identifier,project=row['_project'],kind=row.get('kind'),
+                      scope_tier='direct_change' if direct else 'supporting_context')
             result['unindexed_facts'].append(item)
-            if row.get('kind') in PRIMARY_KINDS:
+            if direct:
                 result['unassigned_primary_facts'].append(item)
     for identifier,row in sorted(relations.items()):
         if identifier not in assigned_relations:
@@ -278,8 +293,12 @@ def _audit_rows(analysis,indexes):
                 id=identifier,project=row['_project'],source=row.get('source')))
         if row.get('status')=='unresolved':
             result['unresolved_relations'].append(dict(id=identifier,project=row['_project'],
-                source=row.get('source'),reason=row.get('reason')))
+                source=row.get('source'),reason=row.get('reason'),
+                scope_tier=_relation_tier(row,seeds,row['_project'])))
     referenced_evidence=set()
+    # 按接近最终净变化的程度排序，但绝不丢弃背景 unresolved。
+    result['unresolved_relations'].sort(key=lambda item:(
+        item['scope_tier']!='change_touched_boundary',item['project'],item['id']))
     for key,collection in (('fact',facts),('relation',relations)):
         for identifier,row in sorted(collection.items()):
             evidence_ids=set(row.get('evidence_ids') or [])
@@ -324,6 +343,16 @@ def audit_material(analysis,review,context):
     indexes=_indexes(analysis,review,context)
     groups=_audit_rows(analysis,indexes)
     counts={key:len(rows) for key,rows in groups.items()}
+    tiers={
+        'direct_change_unassigned':counts['unassigned_primary_facts'],
+        'change_touched_unresolved':sum(
+            row['scope_tier']=='change_touched_boundary' for row in groups['unresolved_relations']),
+        'supporting_unresolved':sum(
+            row['scope_tier']=='supporting_context' for row in groups['unresolved_relations']),
+        'supporting_unindexed':sum(
+            row['scope_tier']=='supporting_context' for row in groups['unindexed_facts']),
+        'unreferenced_evidence':counts['unreferenced_evidence']
+    }
     attention_kinds={
         'missing_seeds','unassigned_primary_facts','unresolved_relations',
         'missing_evidence','evidence_project_mismatch',
@@ -334,11 +363,13 @@ def audit_material(analysis,review,context):
                    fact_count=len(indexes['facts']),relation_count=len(indexes['relations']),
                    evidence_count=len(indexes['evidence']),
                    limits=analysis.get('limits') or {}),
-        counts=counts,requires_attention=any(counts[key] for key in attention_kinds),
+        counts=counts,scope_tiers=tiers,
+        requires_attention=any(counts[key] for key in attention_kinds),
         informational_only_views=['unindexed_facts','unindexed_relations','unreferenced_evidence'],
         available_views=list(AUDIT_VIEWS),
-        note=('未索引的支持性事实/关系属于可回查的信息提示，不直接等于业务遗漏；'
-              '未归属主要事实、未解析关系与证据异常需要 Agent 重点核查。'
+        note=('直接变化和触及变更方法的未解析关系优先展示；'
+              '配置读取未改变时属于背景，不计为未归属的主要变化。'
+              '背景 unresolved 与全部事实仍可分页回查；'
               '审计只验证结构/可见边界，不证明业务场景完整。'))
 
 
