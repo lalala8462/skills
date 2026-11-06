@@ -464,10 +464,11 @@ class Handler {
         self.assertIn('Limit#allowed(int)',field['data']['consumers'])
         self.assertGreater(project['stats']['result']['selected_methods'],0)
 
-    def test_tampered_referenced_source_is_rejected(self):
+    def test_tampered_resolved_source_is_rejected(self):
+        from case_contract import resolve_case_sources
         data,review=self.direct_cases()
         context=copy.deepcopy(self.context)
-        referenced=data['purpose_cases']['acceptance'][0]['evidence_ids'][0]
+        referenced=resolve_case_sources(data,self.analysis,review)['DIRECT-001']['evidence_ids'][0]
         row=next(item for item in context if item['id']==referenced)
         row['snippet']='bad'
         errors,_=validate(self.analysis,context,review,data)
