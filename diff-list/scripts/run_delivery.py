@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""统一编排 diff-list 交付流程，并记录各阶段真实耗时。"""
+"""统一编排 diff-list 交付流程，并记录脚本与 Agent 子阶段真实耗时。"""
 import argparse
 import json
 import os
@@ -12,6 +12,8 @@ from pathlib import Path
 
 SCRIPT_DIR=Path(__file__).resolve().parent
 STATE_NAME='run-state.json'
+RUN_SCHEMA_VERSION=2
+AGENT_PHASES=('source_review','business_reasoning','test_design','report_edit','coverage_review')
 
 
 def _iso(timestamp=None):
@@ -33,6 +35,8 @@ def _read_state(run_dir):
     if not state_path.is_file():
         raise ValueError('run 目录缺少 .work/{}'.format(STATE_NAME))
     state=json.loads(state_path.read_text(encoding='utf-8-sig'))
+    if state.get('run_schema_version')!=RUN_SCHEMA_VERSION:
+        raise ValueError('不支持旧 run-state；请重新执行当前版本流程')
     if state.get('run_dir')!=str(run_dir):
         raise ValueError('run-state.json 与当前 run 目录不匹配')
     return run_dir,state_path,state
@@ -98,13 +102,28 @@ def _run_stage(state_path,state,name,commands,cleanup=()):
         raise RuntimeError('{} 阶段失败，returncode={}'.format(name,returncode))
 
 
-def _begin_agent_wait(state_path,state,status,reason):
+def _begin_agent_wait(state_path,state,status,reason,phase):
+    if phase not in AGENT_PHASES:
+        raise ValueError('未知 Agent 阶段: '+str(phase))
     waiting=time.time()
     state['status']=status
     state['waiting_started_at']=_iso(waiting)
     state['waiting_started_epoch']=waiting
     state['waiting_reason']=reason
+    state['current_agent_phase']=phase
+    state['current_agent_phase_started_at']=_iso(waiting)
+    state['current_agent_phase_started_epoch']=waiting
     _write_state(state_path,state)
+
+
+def _close_current_agent_phase(state,ended):
+    phase=state.get('current_agent_phase')
+    started=state.get('current_agent_phase_started_epoch')
+    if phase in AGENT_PHASES and isinstance(started,(int,float)):
+        _record_stage_attempt(state,'agent_'+phase,started,ended,'completed',0)
+    state.pop('current_agent_phase',None)
+    state.pop('current_agent_phase_started_at',None)
+    state.pop('current_agent_phase_started_epoch',None)
 
 
 def _record_agent_interval(state_path,state):
@@ -112,6 +131,7 @@ def _record_agent_interval(state_path,state):
     if not isinstance(started,(int,float)):
         return
     ended=time.time()
+    _close_current_agent_phase(state,ended)
     row=state.setdefault('stages',{}).get('agent_between_steps') or dict(
         started_at=_iso(started),elapsed_seconds=0.0,status='completed',returncode=0,segments=[])
     elapsed=max(0.0,ended-started)
@@ -131,14 +151,39 @@ def _record_agent_interval(state_path,state):
     _write_state(state_path,state)
 
 
+def _switch_agent_phase(run_dir_value,phase):
+    run_dir,state_path,state=_read_state(run_dir_value)
+    if state.get('status') not in ('waiting_agent','waiting_coverage_review'):
+        raise ValueError('只有 Agent 等待阶段可以切换计时子阶段')
+    if phase not in AGENT_PHASES:
+        raise ValueError('未知 Agent 阶段: '+str(phase))
+    if state.get('status')=='waiting_coverage_review' and phase!='coverage_review':
+        raise ValueError('coverage 待复核阶段只能记录 coverage_review')
+    if state.get('current_agent_phase')==phase:
+        print('AGENT_PHASE: '+phase)
+        return 0
+    now=time.time()
+    _close_current_agent_phase(state,now)
+    state['current_agent_phase']=phase
+    state['current_agent_phase_started_at']=_iso(now)
+    state['current_agent_phase_started_epoch']=now
+    _write_state(state_path,state)
+    print('RUN_DIR: '+str(run_dir))
+    print('AGENT_PHASE: '+phase)
+    return 0
+
+
 def _print_timings(state):
-    order=('analyze','review_workbench','agent_between_steps','preflight',
-           'coverage','excel','report','finalize')
+    order=(
+        'analyze','review_workbench','report_init',
+        'agent_source_review','agent_business_reasoning','agent_test_design',
+        'agent_report_edit','agent_coverage_review','agent_between_steps',
+        'preflight','coverage','excel','report','finalize')
     for name in order:
         row=(state.get('stages') or {}).get(name)
         if not row:
             continue
-        print('{:<20} {:>9.3f}s  {}'.format(name,float(row.get('elapsed_seconds',0)),row.get('status','')))
+        print('{:<26} {:>9.3f}s  {}'.format(name,float(row.get('elapsed_seconds',0)),row.get('status','')))
 
 
 def _new_run_dir(root):
@@ -161,7 +206,7 @@ def _prepare(args):
     work.mkdir()
     state_path=work/STATE_NAME
     state=dict(
-        run_schema_version=1,
+        run_schema_version=RUN_SCHEMA_VERSION,
         run_dir=str(run_dir),
         created_at=_iso(),
         status='preparing',
@@ -195,28 +240,39 @@ def _prepare(args):
     _write_state(state_path,state)
     _run_stage(state_path,state,'analyze',[command])
 
+    analysis=analysis_dir/'analysis.json'
     review=work/'review.json'
     cases=work/'test-cases.json'
-    report_data=work/'report-data.json'
+    report=work/'report.md'
     review_command=[
         sys.executable,'-B',str(SCRIPT_DIR/'review_workbench.py'),
-        '--analysis',str(analysis_dir/'analysis.json'),
+        '--analysis',str(analysis),
         '--output',str(review),
-        '--cases-template',str(cases),
-        '--report-template',str(report_data)]
+        '--cases-template',str(cases)]
     _run_stage(state_path,state,'review_workbench',[review_command])
+
+    report_init=[
+        sys.executable,'-B',str(SCRIPT_DIR/'generate_report.py'),
+        '--init','--analysis',str(analysis),'--report',str(report)]
+    _run_stage(state_path,state,'report_init',[report_init])
+
     state.pop('failed_stage',None)
-    _begin_agent_wait(state_path,state,'waiting_agent','initial_business_review')
+    _begin_agent_wait(state_path,state,'waiting_agent','initial_business_review','source_review')
     print('RUN_DIR: '+str(run_dir))
     print('AGENT_INPUT: '+str(cases))
-    print('AGENT_INPUT: '+str(report_data))
+    print('AGENT_INPUT: '+str(report))
     print('REVIEW: '+str(review))
+    print('QUERY_EXAMPLE: {} -B {} --analysis {} --review {} --query <关键词>'.format(
+        sys.executable,SCRIPT_DIR/'review_query.py',analysis,review))
+    print('PHASE: {} -B {} --run-dir {} --mark-agent-phase business_reasoning'.format(
+        sys.executable,SCRIPT_DIR/'run_delivery.py',run_dir))
     print('RESUME: {} -B {} --resume {}'.format(sys.executable,SCRIPT_DIR/'run_delivery.py',run_dir))
     _print_timings(state)
     return 0
 
 
-def _finalize_stage(state_path,state,run_dir,work,analysis,review,cases,report_data):
+def _finalize_stage(state_path,state,run_dir,analysis,review,cases):
+    work=run_dir/'.work'
     coverage=work/'coverage.json'
     excel=work/'test-cases.xlsx'
     report=work/'report.md'
@@ -270,7 +326,6 @@ def _resume(run_dir_value):
     analysis=work/'analysis'/'analysis.json'
     review=work/'review.json'
     cases=work/'test-cases.json'
-    report_data=work/'report-data.json'
     coverage=work/'coverage.json'
     excel=work/'test-cases.xlsx'
     report=work/'report.md'
@@ -278,7 +333,7 @@ def _resume(run_dir_value):
     preflight=[
         sys.executable,'-B',str(SCRIPT_DIR/'delivery_preflight.py'),
         '--analysis',str(analysis),'--review',str(review),
-        '--cases',str(cases),'--report-data',str(report_data)]
+        '--cases',str(cases),'--report',str(report)]
     _run_stage(state_path,state,'preflight',[preflight])
 
     coverage_command=[
@@ -290,11 +345,11 @@ def _resume(run_dir_value):
     pending=coverage_data.get('pending_review') or []
     if pending:
         state=json.loads(state_path.read_text(encoding='utf-8-sig'))
-        _begin_agent_wait(state_path,state,'waiting_coverage_review','coverage_pending_review')
+        _begin_agent_wait(state_path,state,'waiting_coverage_review','coverage_pending_review','coverage_review')
         print('COVERAGE_REVIEW: {} pending unit(s)'.format(len(pending)))
         print('COVERAGE: '+str(coverage))
         print('PENDING: '+','.join(row.get('unit_id','') for row in pending))
-        print('说明：已有场景已隐含覆盖时，把对应 review_unit_id 加到该用例；否则补充新用例。')
+        print('说明：已有场景确实覆盖时，把对应 review_unit_id 加到该用例；否则补充新用例。')
         print('RESUME: {} -B {} --resume {}'.format(sys.executable,SCRIPT_DIR/'run_delivery.py',run_dir))
         state=json.loads(state_path.read_text(encoding='utf-8-sig'))
         _print_timings(state)
@@ -308,11 +363,11 @@ def _resume(run_dir_value):
 
     report_command=[
         sys.executable,'-B',str(SCRIPT_DIR/'generate_report.py'),
-        '--data',str(report_data),'--analysis',str(analysis),'--review',str(review),
-        '--cases',str(cases),'--excel',str(excel),'--output',str(report)]
-    _run_stage(state_path,state,'report',[report_command],cleanup=(report,))
+        '--refresh','--analysis',str(analysis),'--cases',str(cases),
+        '--excel',str(excel),'--report',str(report)]
+    _run_stage(state_path,state,'report',[report_command])
 
-    _finalize_stage(state_path,state,run_dir,work,analysis,review,cases,report_data)
+    _finalize_stage(state_path,state,run_dir,analysis,review,cases)
     state=json.loads(state_path.read_text(encoding='utf-8-sig'))
     _print_timings(state)
     print('DELIVERY: '+str(run_dir))
@@ -332,8 +387,19 @@ def main(argv=None):
     parser.add_argument('--rules')
     parser.add_argument('--runs-root',default='runs')
     parser.add_argument('--resume',help='继续指定 run 目录，完成预检、coverage、Excel、report 和 finalize')
+    parser.add_argument('--run-dir',help='配合 --mark-agent-phase 指定当前 run 目录')
+    parser.add_argument('--mark-agent-phase',choices=AGENT_PHASES,
+                        help='切换 Agent 子阶段计时，不触发分析或交付')
     args=parser.parse_args(argv)
     try:
+        if args.mark_agent_phase:
+            if not args.run_dir:
+                raise ValueError('--mark-agent-phase 必须同时提供 --run-dir')
+            if any((args.repo,args.rev,args.base,args.head,args.manifest,args.rules,args.resume)):
+                raise ValueError('--mark-agent-phase 不能与分析或 resume 参数同时使用')
+            return _switch_agent_phase(args.run_dir,args.mark_agent_phase)
+        if args.run_dir:
+            raise ValueError('--run-dir 只能与 --mark-agent-phase 一起使用')
         if args.resume:
             if any((args.repo,args.rev,args.base,args.head,args.manifest,args.rules)):
                 raise ValueError('--resume 不能再提供分析范围参数')
