@@ -248,6 +248,8 @@ def build_review(analysis):
                 if relation.get('id'):
                     selected_relations[relation['id']]=relation
             unit_facts=[fact for fact in facts if symbols_by_fact[fact['id']] & local_symbols]
+            direct_facts=[fact for fact in unit_facts if symbol in symbols_by_fact[fact['id']]]
+            context_facts=[fact for fact in unit_facts if fact not in direct_facts]
             unit_fact_ids=sorted(fact['id'] for fact in unit_facts)
             selected_fact_ids.update(unit_fact_ids)
             units.append(dict(
@@ -256,6 +258,9 @@ def build_review(analysis):
                 symbol=symbol,
                 flow=normal_flow_name(symbol),
                 related_symbols=sorted(local_symbols-{symbol}),
+                change_summary=summarize_facts(direct_facts),
+                direct_fact_groups=fact_group_summary(direct_facts),
+                context_fact_groups=fact_group_summary(context_facts),
                 fact_groups=fact_group_summary(unit_facts),
                 fact_ids=unit_fact_ids,
                 relation_ids=sorted(relation['id'] for relation in touching if relation.get('id'))))
@@ -270,6 +275,9 @@ def build_review(analysis):
                 symbol=None,
                 flow='项目级变化',
                 related_symbols=[],
+                change_summary=summarize_facts(project_facts),
+                direct_fact_groups=fact_group_summary(project_facts),
+                context_fact_groups={},
                 fact_groups=fact_group_summary(project_facts),
                 fact_ids=project_unit_fact_ids,
                 relation_ids=[]))
@@ -278,20 +286,25 @@ def build_review(analysis):
         fact_catalog=[fact_preview(facts_by_id[identifier]) for identifier in sorted(selected_fact_ids)]
         relation_catalog=[relation_preview(selected_relations[identifier]) for identifier in sorted(selected_relations)]
         selected_relation_ids.update(selected_relations)
-        groups=build_groups(source['name'],sorted(units,key=lambda row:row['id']),facts_by_id,relations_by_id)
+        units=sorted(units,key=lambda row:row['id'])
+        facets=build_facets(source['name'],units,facts_by_id,relations_by_id)
+        faceted={unit_id for facet in facets for unit_id in facet['unit_ids']}
 
         projects.append(dict(
             name=source['name'],
             review_summary=dict(
                 change_seed_count=len(change_seeds),
                 review_unit_count=len(units),
-                review_group_count=len(groups),
+                review_facet_count=len(facets),
+                faceted_unit_count=len(faceted),
+                unfaceted_unit_count=len(units)-len(faceted),
+                max_facet_size=max([facet['unit_count'] for facet in facets] or [0]),
                 source_fact_count=len(source['facts']),
                 selected_fact_count=len(fact_catalog),
                 source_relation_count=len(source['relations']),
                 selected_relation_count=len(relation_catalog)),
-            review_groups=groups,
-            review_units=sorted(units,key=lambda row:row['id']),
+            review_facets=facets,
+            review_units=units,
             fact_catalog=fact_catalog,
             relation_catalog=relation_catalog,
             hard_errors=source['hard_errors'],
@@ -302,10 +315,10 @@ def build_review(analysis):
            if row.get('source_relation') in selected_relation_ids]
     return dict(
         analysis_id=analysis['analysis_id'],
-        review_schema_version=2,
+        review_schema_version=3,
         projects=projects,
         cross_project_relations=cross,
-        note='review_groups 仅做源码结构聚合；业务结论由 Agent 基于 review_units 判断。'
+        note='review_facets 只表示共享单一精确结构锚点；change_summary 只压缩直接事实，完整事实仍保留。业务结论由 Agent 判断。'
     )
 
 
