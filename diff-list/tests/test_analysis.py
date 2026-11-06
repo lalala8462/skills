@@ -207,6 +207,15 @@ class Handler {
             self.assertEqual(a[key],b[key],key)
         self.assertEqual(self.context,context)
 
+    def test_default_rules_do_not_assume_project_specific_configuration(self):
+        rules,limits=analyze.load_rules()
+        self.assertEqual(rules['config_scopes'],{})
+        self.assertEqual(rules['relation_review_tokens'],[])
+        self.assertNotIn('ParamKey',rules['config_annotations'])
+        self.assertEqual(rules['config_annotations'],
+                         ['Value','ConfigurationProperties'])
+        self.assertGreater(limits['files'],0)
+
     def test_limits_and_unknown_annotations_are_visible(self):
         result,_=self.analyze([self.after],limits={'methods':1})
         generic,_=self.analyze([self.after],rules=False)
@@ -742,12 +751,22 @@ class Task implements Runnable{@Override public void run(){System.out.println("p
         self.assertEqual(len(callbacks),2)
         self.assertTrue(all(e['status']=='convention_inferred' for e in callbacks))
 
+    def test_generic_custom_token_only_applies_when_explicitly_supplied(self):
+        graph=self.graph({'scope':'''package demo;
+class ExampleAdapter {String getValue(){return "a";}}
+class Consumer {ExampleAdapter adapter;
+ void run(){String value=adapter.getValue();}
+}'''})
+        edge=next(e for e in graph.edges if e['site']['name']=='getValue')
+        self.assertFalse(relation_affects_review_scope(edge,graph))
+        self.assertTrue(relation_affects_review_scope(edge,graph,('ExampleAdapter',)))
+
     def test_unresolved_relation_scope_keeps_database_effects_and_drops_plain_accessors(self):
         graph=self.graph({'scope':'''package p;
 class Helper {String getValue(){return "value";}String convert(String value){return value;}}
 interface Reply {void setPayload(String value);}
 class StoreDao {void update(String value){} String getById(String id){return id;}}
-class Flow {Helper helper;StoreDao store;Reply reply;void run(String value){String ignored=helper.getValue();store.getById(value);helper.convert("NoticeReq refund uniqueControlApi");store.update(value);}String response(){return helper.getValue();}String helperResult(){return helper.convert("value");}void setResponse(){reply.setPayload("value");}}
+class Flow {Helper helper;StoreDao store;Reply reply;void run(String value){String ignored=helper.getValue();store.getById(value);helper.convert("NoticeReq refund ExampleSpecialAdapter");store.update(value);}String response(){return helper.getValue();}String helperResult(){return helper.convert("value");}void setResponse(){reply.setPayload("value");}}
 class RefundService {Helper helper;String refundStatus(){return helper.getValue();}}
 @RestController class RefundController {Helper helper;@PostMapping String handle(){return helper.convert("value");}}
 '''})
@@ -764,7 +783,7 @@ class RefundService {Helper helper;String refundStatus(){return helper.getValue(
         self.assertTrue(relation_affects_review_scope(update,graph))
         self.assertTrue(relation_affects_review_scope(database_read,graph))
         self.assertFalse(relation_affects_review_scope(response_setter,graph))
-        self.assertFalse(relation_affects_review_scope(convert,graph,('uniqueControlApi','NoticeReq')))
+        self.assertFalse(relation_affects_review_scope(convert,graph,('ExampleSpecialAdapter','NoticeReq')))
         self.assertFalse(relation_affects_review_scope(returned,graph))
         self.assertFalse(relation_affects_review_scope(plain_return,graph))
         self.assertTrue(relation_affects_review_scope(endpoint_return,graph))

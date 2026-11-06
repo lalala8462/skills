@@ -18,7 +18,7 @@
 
 ## 推荐执行方式
 
-环境：Windows PowerShell、Git、Python 3.8+、JDK 8+。来源仓库只读，分析在独立 clone 中完成。
+环境：Windows PowerShell、Git、Python 3.8+、JDK 8+。来源仓库只读，分析在独立 clone 中完成。**Skill 不内置任何业务项目的专用规则文件**，直接使用通用默认规则分析；`--rules` 只用于用户明确指定的自定义通用扩展，不是运行前需要寻找或补齐的依赖。
 
 首次执行：
 
