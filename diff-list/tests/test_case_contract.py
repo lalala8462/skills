@@ -27,8 +27,12 @@ def review():
                             unit_ids=['RU-1','RU-2'],unit_count=2)],
         review_units=[
             dict(id='RU-1',scope='method',symbol='sample.Flow#run()',
+                 change_summary=[dict(kind='method_change',fact_id='fact-1',details={'change':'modified'})],
+                 direct_fact_ids=['fact-1'],context_fact_ids=[],
                  fact_ids=['fact-1'],relation_ids=[],related_symbols=[],facet_ids=['RF-1']),
             dict(id='RU-2',scope='method',symbol='sample.Flow#other()',
+                 change_summary=[dict(kind='method_change',fact_id='fact-2',details={'change':'modified'})],
+                 direct_fact_ids=['fact-2'],context_fact_ids=[],
                  fact_ids=['fact-2'],relation_ids=[],related_symbols=[],facet_ids=['RF-1'])
         ])])
 
