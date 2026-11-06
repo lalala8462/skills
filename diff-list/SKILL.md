@@ -49,10 +49,10 @@ facet 不代表同一业务需求，代码关系也不等于业务关系。
 ## Agent 复核顺序与脚本接口
 
 1. 先用 `review_query.py --analysis <analysis.json> --review <review.json> --overview` 获得全局变化索引，再用 `--audit` 查看结构盲区和 hard_errors；不能只看 navigation_facets。
-2. 针对需要核实的问题使用 `--unit <RU-id>`、`--query <字段/方法/配置键/Mapper>` 获取轻量索引；显式通过 `--view facts/relations/evidence/db/calls/conditions` 查询相关证据。分类视图不代表完整业务范围。
+2. 针对需要核实的问题使用 `--unit <RU-id>`、`--query <字段/方法/配置键/Mapper>` 获取轻量索引；unit 索引给出 `direct_fact_ids/direct_evidence_ids` 方便直接回查；显式通过 `--view facts/relations/evidence/db/calls/conditions` 查询相关证据。`--query <关键词> --view facts --matched-only` 只返回精确命中事实；不带该参数仍返回关联单元背景。分类视图不代表完整业务范围。
 3. 根据返回的 fact/evidence ID 使用 `--fact <id>` 和 `--evidence <id> --source-lines 12` 核验固定 Git 快照中的脱敏源码，重要结论需要检查 before/after。
 4. 响应 `page.complete=false` 时用 `--cursor <next_cursor>` 继续读取，不得把截取的第一页视为完整；默认 10 条、`--limit` 最大 100。不要主动使用 `--view all` 把大量重复证据一次性送入 Agent 上下文。
-5. 完成业务结论、用例和报告后再次 `--audit`，检查未归属主要事实、未索引事实/关系、未解析依赖、证据缺失和分析硬错误。`coverage.pending_review=0` 不能代替这一步。
+5. 完成业务结论、用例和报告后再次 `--audit`，检查未归属主要事实、未索引事实/关系、未解析依赖、证据缺失和分析硬错误。`coverage.pending_review=0` 不能代替这一步。Audit 优先看直接变化和触及变更方法的未解析关系；背景事实仍可查，不能直接判定为业务无关。
 
 这三层只是查询深度，不引入新中间产物、不归纳业务，也不替 Agent 判断遗漏风险是否可接受。
 
@@ -94,13 +94,13 @@ Agent 直接填写：
 - Excel 文件名与四类用例数量
 - 静态验证说明
 
-resume 时脚本只刷新机器维护章节，Agent 业务章节必须原样保留。
+resume 时脚本只刷新机器维护章节，Agent 业务章节必须原样保留。草稿标记和未完成状态由脚本管理；缺失时自动恢复，不要求 Agent 手工保留。
 
 ## coverage.json
 
-当前 coverage_schema_version=2。
+当前 coverage_schema_version=3。
 
-pending_review 是遗漏复核清单，不是覆盖率门槛，也不证明业务语义或分支覆盖。candidate_case_ids 只是帮助判断已有场景是否可能复用，最终仍由 Agent 决定。
+`referenced_unit_count/referenced_facet_count` 只统计用例引用，不能称为实际测试覆盖率。pending_review 是未引用复核清单，不证明业务语义或分支覆盖。candidate_case_ids 只是帮助判断已有场景是否可能复用，最终仍由 Agent 决定。
 
 ## Agent 时间与查询统计
 
