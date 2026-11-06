@@ -129,13 +129,14 @@ fact ID 由项目、kind、data 和 evidence_ids 稳定计算。
 
 ## review.json
 
-- `review_schema_version=3`
+- `review_schema_version=4`
 - `review_units`：变化方法或项目级变化的最小复核单元
-- `review_facets`：按单一精确锚点生成的可重叠复核导航
+- `review_facets`：按单一精确锚点生成的完整结构关系
+- `navigation_facets`：从完整 facet 中筛出的高价值首轮导航
 - `fact_catalog`：本轮复核所需 fact 的关键字段预览
 - `relation_catalog`：本轮复核所需直接关系预览
 
-`change_summary` 只摘要直接事实，完整 fact/evidence 不删除。`review_facets` 不做传递合并，只用于减少重复阅读，不表示业务需求归属。
+`change_summary` 只摘要直接事实，完整 fact/evidence 不删除。`review_facets` 不做传递合并，保留完整结构关系；`navigation_facets` 只降低首轮阅读噪声，不改变分析范围，也不表示业务需求归属。
 
 ## test-cases.json
 
@@ -162,10 +163,13 @@ fact ID 由项目、kind、data 和 evidence_ids 稳定计算。
 
 ## coverage.json
 
-由 `validate_analysis.py --coverage-output` 生成 `coverage_schema_version=1` 的结构覆盖矩阵：
+由统一交付流程生成 `coverage_schema_version=2` 的待复核材料：
 
 - unit 是否被用例引用；
-- 每个 facet 的已覆盖/未覆盖 unit；
-- 完全覆盖、部分覆盖、完全未覆盖 facet 数量。
+- `pending_review`：尚未被用例引用、需要 Agent 判断的变化单元；
+- `high_value_facets`：该 unit 所属的高价值首轮导航；
+- `candidate_case_ids`：与该 unit 共享高价值 facet 的现有候选用例；
+- `related_covered_unit_ids`：候选用例已经覆盖的相邻变化单元；
+- 完整 facet 的已覆盖/未覆盖结构关系仍保留用于回查。
 
-该矩阵不作为强制通过门槛，也不证明分支覆盖、业务语义或预期结果正确。
+`pending_review` 是待复核清单，不是覆盖率门槛。已有业务场景确实覆盖某变化点时，应把对应 `review_unit_id` 绑定到已有用例；否则补充必要测试。不得为了数字清零制造重复用例，也不能据此证明分支覆盖、业务语义或预期结果正确。
