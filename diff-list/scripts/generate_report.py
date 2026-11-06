@@ -2,10 +2,8 @@
 """Render a report candidate from Agent business conclusions plus deterministic analysis data."""
 import argparse
 import json
-import os
 import re
 import sys
-import tempfile
 from pathlib import Path
 
 REPORT_FIELDS=('requirements','ddl','dml','flow','mermaid','special_rules','existing_impact')
@@ -164,8 +162,6 @@ def main(argv=None):
     parser.add_argument('--excel',help='已生成的独立 Excel 路径；报告内只写文件名')
     parser.add_argument('--template',default=str(Path(__file__).resolve().parents[1]/'assets'/'diff-list-template.md'))
     parser.add_argument('--output',required=True,help='新建报告候选路径；不得指向已交付报告')
-    parser.add_argument('--replace-draft',action='store_true',
-                        help='只重写带 diff-list 草稿标记的候选报告')
     args=parser.parse_args(argv)
     try:
         data=json.loads(Path(args.data).read_text(encoding='utf-8-sig'))
@@ -188,21 +184,8 @@ def main(argv=None):
             raise ValueError('report preflight failed: '+'; '.join(errors[:12]))
         output=Path(args.output)
         output.parent.mkdir(parents=True,exist_ok=True)
-        if output.exists():
-            if not args.replace_draft:
-                raise ValueError('output already exists; use --replace-draft only for an internal draft candidate')
-            old=output.read_text(encoding='utf-8-sig')
-            if old.count('<!-- diff-list-status: draft -->')!=1 or old.count('报告状态：未完成')!=1:
-                raise ValueError('--replace-draft refuses to overwrite a non-draft file')
-            handle=tempfile.NamedTemporaryFile(mode='w',encoding='utf-8',newline='\n',
-                prefix=output.name+'.',suffix='.tmp',dir=str(output.parent),delete=False)
-            temporary=Path(handle.name)
-            with handle:
-                handle.write(rendered)
-            os.replace(str(temporary),str(output))
-        else:
-            with output.open('x',encoding='utf-8',newline='\n') as stream:
-                stream.write(rendered)
+        with output.open('x',encoding='utf-8',newline='\n') as stream:
+            stream.write(rendered)
         print('CANDIDATE: {} cases={} output={}'.format(total,counts,output.resolve()))
         return 0
     except (OSError,UnicodeError,ValueError,KeyError,TypeError,IndexError) as exc:
