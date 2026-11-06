@@ -3,7 +3,7 @@
 PURPOSES=('acceptance','core_regression','related_regression','boundary')
 PURPOSE_NAMES=('需求验收','既有核心流程回归','关联回归','业务规则与边界验证')
 SCHEMA_VERSION=4
-REVIEW_SCHEMA_VERSION=2
+REVIEW_SCHEMA_VERSION=3
 
 
 def empty_cases(analysis_id):
@@ -121,3 +121,89 @@ def resolve_case_sources(data,analysis,review):
                 raise ValueError('case review units have no source evidence: '+case['case_id'])
             result[case['case_id']]=dict(fact_ids=fact_ids,evidence_ids=evidence_ids)
     return result
+
+
+def review_facet_index(review):
+    """校验并索引当前 review_facets。"""
+    units=review_unit_index(review)
+    facets={}
+    for project in review.get('projects') or []:
+        for facet in project.get('review_facets') or []:
+            if not isinstance(facet,dict):
+                raise ValueError('review facet must be an object')
+            identifier=_text(facet.get('id'),'review_facet.id')
+            if identifier in facets:
+                raise ValueError('duplicate review facet: '+identifier)
+            unit_ids=_strings(facet.get('unit_ids'),'review_facet.unit_ids',True)
+            unknown=[unit_id for unit_id in unit_ids if unit_id not in units]
+            if unknown:
+                raise ValueError('review facet references unknown unit: '+unknown[0])
+            facets[identifier]=dict(
+                project=project.get('name'),
+                type=_text(facet.get('type'),'review_facet.type'),
+                anchor=_text(facet.get('anchor'),'review_facet.anchor'),
+                unit_ids=unit_ids)
+    return facets
+
+
+def coverage_matrix(data,analysis,review):
+    """输出结构覆盖矩阵；只提示未引用范围，不证明业务覆盖充分。"""
+    validate_cases(data,analysis,review)
+    units=review_unit_index(review)
+    facets=review_facet_index(review)
+    cases_by_unit={unit_id:[] for unit_id in units}
+    purposes_by_unit={unit_id:set() for unit_id in units}
+    for purpose in PURPOSES:
+        for case in data['purpose_cases'][purpose]:
+            case_id=case['case_id']
+            for unit_id in case['review_unit_ids']:
+                cases_by_unit[unit_id].append(case_id)
+                purposes_by_unit[unit_id].add(purpose)
+
+    unit_rows=[]
+    for unit_id,row in sorted(units.items()):
+        unit=row['unit']
+        case_ids=sorted(set(cases_by_unit[unit_id]))
+        unit_rows.append(dict(
+            unit_id=unit_id,
+            project=row['project'],
+            scope=unit.get('scope'),
+            symbol=unit.get('symbol'),
+            covered=bool(case_ids),
+            case_ids=case_ids,
+            purposes=sorted(purposes_by_unit[unit_id])))
+
+    facet_rows=[]
+    for facet_id,facet in sorted(facets.items()):
+        covered_units=[unit_id for unit_id in facet['unit_ids'] if cases_by_unit[unit_id]]
+        uncovered_units=[unit_id for unit_id in facet['unit_ids'] if not cases_by_unit[unit_id]]
+        case_ids=sorted({case_id for unit_id in facet['unit_ids'] for case_id in cases_by_unit[unit_id]})
+        facet_rows.append(dict(
+            facet_id=facet_id,
+            project=facet['project'],
+            type=facet['type'],
+            anchor=facet['anchor'],
+            unit_ids=facet['unit_ids'],
+            covered_unit_ids=covered_units,
+            uncovered_unit_ids=uncovered_units,
+            case_ids=case_ids))
+
+    uncovered=[row['unit_id'] for row in unit_rows if not row['covered']]
+    partially=[row['facet_id'] for row in facet_rows if row['covered_unit_ids'] and row['uncovered_unit_ids']]
+    uncovered_facets=[row['facet_id'] for row in facet_rows if not row['covered_unit_ids']]
+    fully=[row['facet_id'] for row in facet_rows if row['covered_unit_ids'] and not row['uncovered_unit_ids']]
+    return dict(
+        summary=dict(
+            unit_count=len(unit_rows),
+            covered_unit_count=len(unit_rows)-len(uncovered),
+            uncovered_unit_count=len(uncovered),
+            facet_count=len(facet_rows),
+            fully_covered_facet_count=len(fully),
+            partially_covered_facet_count=len(partially),
+            uncovered_facet_count=len(uncovered_facets)),
+        uncovered_unit_ids=uncovered,
+        partially_covered_facet_ids=partially,
+        uncovered_facet_ids=uncovered_facets,
+        unit_coverage=unit_rows,
+        facet_coverage=facet_rows,
+        note='该矩阵只检查 review unit 是否被测试用例结构引用，不证明分支、业务规则或预期结果正确。')
