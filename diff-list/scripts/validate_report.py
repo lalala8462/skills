@@ -55,211 +55,19 @@ def fenced_blocks(text):
 
 
 def existing_impact_error(special):
-    """检查既有功能影响必须有独立且非空的结论，不因模板标题而误通过。"""
+    """特殊逻辑非“无”时，既有功能影响必须有实际可见的结论。"""
     special=(special or '').strip()
     if special=='无':
         return None
-    lines=re.findall(r'(?m)^\\s*(?:[-*]\\s+)?(?:\\*\\*)?既有功能影响\\s*[:：](?:\\*\\*)?[^\\S\\r\\n]*(.*)
-    expected=[]
-    for project in analysis.get('projects',[]):
-        name=project.get('name')
-        git_data=project.get('git') or {}
-        for item in git_data.get('selection',[]):
-            sha=item.get('head') if item.get('type')=='range' else item.get('sha')
-            if name and isinstance(sha,str) and re.fullmatch(r'[0-9a-fA-F]{40}',sha):
-                expected.append('{}={}'.format(name,sha))
-    return list(dict.fromkeys(expected))
-
-
-def validate(text,template,expected):
-    errors=[]; warnings=[]
-    if '<!-- diff-list-status: draft -->' in text or '报告状态：未完成' in text:
-        errors.append('报告标记为未完成，不能通过正式交付校验')
-    want=[title for _, title in heading_positions(template)]
-    got=[title for _, title in heading_positions(text)]
-    if got!=want:
-        errors.append('标题及顺序与模板不一致')
-    body=sections(text,got)
-    for h in want[1:]:
-        # Parent headings may legitimately contain only nested subsections.
-        pos = want.index(h)
-        level = len(h.split(' ', 1)[0])
-        if pos + 1 < len(want) and len(want[pos+1].split(' ', 1)[0]) > level:
-            continue
-        if not body.get(h,'').strip():
-            errors.append('章节为空: '+h)
-    scope=body.get('## 1. 分析范围','')
-    if not re.search(r'\b[0-9a-fA-F]{40}\b',scope):
-        errors.append('分析范围缺少完整 40 位 Git SHA')
-    for pair in expected:
-        if '=' not in pair:
-            errors.append('项目/SHA 映射格式必须为 项目名=40位SHA: '+pair)
-            continue
-        name,sha=pair.split('=',1)
-        if not name.strip() or not re.fullmatch(r'[0-9a-fA-F]{40}',sha):
-            errors.append('项目/SHA 映射需要非空项目名及40位SHA: '+pair)
-            continue
-        # Require a single project/SHA mapping in the same logical line/table row.
-        # Global substring presence could falsely bind A's SHA to project B.
-        matching = []
-        for line in scope.splitlines():
-            textline = line.replace('`','')
-            shas = re.findall(r'\b[0-9a-fA-F]{40}\b', textline)
-            project = re.search(r'(?<![\w-])'+re.escape(name)+r'(?![\w-])',textline)
-            if project and len(shas) == 1 and shas[0].lower() == sha.lower():
-                matching.append(line)
-        if not matching:
-            errors.append('分析范围缺少同一行的项目与修订对应关系: '+pair)
-
-    for h in ('### 2.1 需求改动','### 2.2 表字段 DDL 修改',
-              '### 2.3 表配置 DML 准备清单','### 2.4 配置文件调整'):
-        if not body.get(h,''):
-            errors.append('四类改动结论缺失: '+h)
-    if '是否必须新增数据' in text:
-        errors.append('禁止使用“是否必须新增数据”列')
-    if re.search(r'待确认|待核实|代码依据|证据编号|源码行号',text):
-        errors.append('包含禁止的占位或代码证据描述')
-    if re.search(r'[A-Za-z]:\\[^\s\x60|)]+',text):
-        errors.append('文档包含 Windows 本机绝对路径')
-    if text.count('```')%2:
-        errors.append('代码围栏未闭合')
-    flow=body.get('### 3.2 Mermaid 流程图','')
-    if body.get('### 3.1 整体流程说明','')!='无' or flow!='无':
-        blocks=[content for lang,content in fenced_blocks(flow) if lang.strip().lower()=='mermaid']
-        if not blocks:
-            errors.append('缺少 Mermaid 代码块')
-        elif not all(re.match(r'^\s*(?:flowchart TD|sequenceDiagram)\s*(?:\n|$)',b)
-                     for b in blocks):
-            errors.append('Mermaid 图必须以 flowchart TD 或 sequenceDiagram 开始')
-    export_section=body.get('## 5. 测试用例导出','')
-    if export_section != '无':
-        if not re.search(r'\S+\.xlsx\b',export_section,re.I):
-            errors.append('测试用例导出章节缺少 Excel 文件名')
-        counts = {}
-        labels=('需求验收用例数量','既有核心流程回归用例数量','关联回归用例数量','业务规则与边界验证用例数量')
-        for label in labels+('总用例数量',):
-            found = re.search(re.escape(label) + r'\s*[:：]\s*(0|[1-9]\d*)(?!\d)', export_section)
-            if not found:
-                errors.append('测试用例导出章节缺少有效' + label)
-            else:
-                counts[label] = int(found.group(1))
-        if len(counts) == len(labels)+1:
-            if counts['总用例数量'] < 1:
-                errors.append('总用例数量必须大于 0；所有组均无用例时填写无')
-            elif sum(counts[label] for label in labels) != counts['总用例数量']:
-                errors.append('各类用例数量之和与总用例数量不一致')
-        if re.search(r'(?:\*\*)?(?:测试点|测试前提|步骤描述|预期结果)[:：]',export_section):
-            errors.append('Excel 测试用例不得重复写入 Markdown 报告')
-    special=body.get('## 4. 特殊逻辑与测试关注点','')
-    impact_error=existing_impact_error(special)
-    if impact_error:
-        errors.append(impact_error)
-    field_change = (body.get('### 2.1 需求改动','') + '\n' +
-                    body.get('### 2.2 表字段 DDL 修改',''))
-    if re.search(r'(?:新增|增加|修改|调整|删除|废弃).{0,20}(?:对外报文|请求字段|响应字段|数据库字段|表字段|DTO字段|接口字段|消息字段)',field_change) and special=='无':
-        errors.append('字段/接口契约变化时须在特殊逻辑章节说明既有功能影响')
-    cfg=body.get('### 2.4 配置文件调整','')
-    if cfg and cfg!='无' and not fenced_blocks(cfg):
-        errors.append('配置文件有调整但缺少配置片段代码块')
-    if re.search(r'(?i)(?:token|secret|password|api[_-]?key)\s*[:=]\s*[^\s<>$#]{12,}',text):
-        warnings.append('可能含真实凭据：人工检查敏感信息')
-    warnings.append('静态检查不证明 Mermaid 8.8.3 实际渲染、业务语义或 Git 归属正确')
-    return errors,warnings
-
-
-def without_draft_status(text):
-    """机器标记缺失时允许正式校验；存在重复、不配对或不规范的标记仍拒绝。"""
-    marker_count=text.count('<!-- diff-list-status: draft -->')
-    status_count=text.count('报告状态：未完成')
-    if marker_count!=status_count or marker_count>1:
-        raise ValueError('报告存在不一致或重复的草稿状态标记')
-    if not marker_count:
-        return text
-    candidate,count=re.subn(
-        r'(?m)^<!-- diff-list-status: draft -->\r?\n\*\*报告状态：未完成。\*\*[^\r\n]*\r?\n?',
-        '',text,count=1)
-    if count!=1:
-        raise ValueError('could not clear the generated draft marker/status')
-    return candidate
-
-
-def main(argv=None):
-    p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('report')
-    p.add_argument('--template',default=str(Path(__file__).resolve().parents[1]/'assets'/'diff-list-template.md'))
-    p.add_argument('--analysis',required=True,help='本次当前版本生成的固定取证结果')
-    p.add_argument('--review',required=True,help='本次模型源码补查与处置记录')
-    p.add_argument('--cases',required=True,help='当前四类用例JSON')
-    p.add_argument('--finalize',action='store_true',
-                   help='仅在所有校验通过后清除草稿标记并原子写回正式报告')
-    a=p.parse_args(argv)
-    try:
-        raw=Path(a.report).read_bytes()
-        text=raw.decode('utf-8-sig')
-        candidate_text=text
-        if a.finalize:
-            candidate_text=without_draft_status(text)
-        template=Path(a.template).read_text(encoding='utf-8-sig')
-        analysis=json.loads(Path(a.analysis).read_text(encoding='utf-8-sig'))
-        expected=expected_project_shas(analysis)
-        if not expected:
-            raise ValueError('analysis.json 中无法推导项目与完整 Git SHA')
-        errors,warnings=validate(candidate_text,template,expected)
-        case_data=json.loads(Path(a.cases).read_text(encoding='utf-8-sig'))
-        from scope_validation import validate_scope_files
-        validate_scope_files(a.analysis,a.review,a.cases)
-        from validate_analysis import validate_files
-        source_errors,source_warnings=validate_files(a.analysis,a.review,a.cases)
-        errors.extend(source_errors);warnings.extend(source_warnings)
-        errors.extend(validate_case_counts(candidate_text,case_data,analysis))
-        warnings.append('已校验当前复核范围和自动展开后的源码证据')
-    except (OSError,UnicodeError,ValueError,KeyError,TypeError,IndexError) as exc:
-        print('ERROR: '+str(exc),file=sys.stderr)
-        return 2
-    for msg in errors: print('ERROR: '+msg)
-    for msg in warnings: print('NOTE: '+msg)
-    if a.finalize and not errors:
-        target=Path(a.report)
-        try:
-            handle=tempfile.NamedTemporaryFile(mode='w',encoding='utf-8',newline='\n',
-                prefix=target.name+'.',suffix='.tmp',dir=str(target.parent),delete=False)
-            temporary=Path(handle.name)
-            with handle:
-                handle.write(candidate_text)
-            os.replace(str(temporary),str(target))
-        except OSError as exc:
-            print('ERROR: cannot finalize report: '+str(exc),file=sys.stderr)
-            return 2
-        print('FINALIZED: '+str(target.resolve()))
-    print('RESULT: '+('FAIL' if errors else 'PASS'))
-    return 1 if errors else 0
-
-
-def validate_case_counts(text,cases,analysis):
-    """有用例材料时，报告数量必须与实际导出结果一致。"""
-    from case_contract import PURPOSES,PURPOSE_NAMES
-    counts={name+'用例数量':len(cases['purpose_cases'][p]) for p,name in zip(PURPOSES,PURPOSE_NAMES)}
-    section=sections(text,[]).get('## 5. 测试用例导出','')
-    total=sum(counts.values())
-    if total==0:
-        return [] if section=='无' else ['没有用例时导出章节必须填写无']
-    counts['总用例数量']=total
-    errors=[]
-    for label,value in counts.items():
-        match=re.search(re.escape(label)+r'\s*[:：]\s*(0|[1-9]\d*)(?!\d)',section)
-        if not match or int(match.group(1))!=value:
-            errors.append('报告数量与用例材料不一致: '+label)
-    return errors
-
-
-
-if __name__=='__main__':
-    sys.exit(main())
-,special)
-    if len(lines)!=1:
+    matches=[]
+    for row in special.splitlines():
+        line=row.strip().lstrip('*- ').replace('**','').strip()
+        if line.startswith('既有功能影响：') or line.startswith('既有功能影响:'):
+            matches.append(line.split('：',1)[1].strip() if '：' in line else line.split(':',1)[1].strip())
+    if len(matches)!=1:
         return '特殊逻辑章节必须包含一条“既有功能影响：具体结论或无”'
-    conclusion=lines[0].strip().strip('*').strip()
-    if not conclusion or '【Agent填写' in conclusion or conclusion.startswith('【') or conclusion in ('：', ':'):
+    value=matches[0]
+    if not value or '【Agent填写' in value or value.startswith('【'):
         return '既有功能影响结论不能为空或保留模板占位，请填写具体结论或“无”'
     return None
 
@@ -356,8 +164,9 @@ def validate(text,template,expected):
         if re.search(r'(?:\*\*)?(?:测试点|测试前提|步骤描述|预期结果)[:：]',export_section):
             errors.append('Excel 测试用例不得重复写入 Markdown 报告')
     special=body.get('## 4. 特殊逻辑与测试关注点','')
-    if special and special!='无' and '既有功能影响' not in special:
-        errors.append('特殊逻辑章节缺少“既有功能影响”说明')
+    impact_error=existing_impact_error(special)
+    if impact_error:
+        errors.append(impact_error)
     field_change = (body.get('### 2.1 需求改动','') + '\n' +
                     body.get('### 2.2 表字段 DDL 修改',''))
     if re.search(r'(?:新增|增加|修改|调整|删除|废弃).{0,20}(?:对外报文|请求字段|响应字段|数据库字段|表字段|DTO字段|接口字段|消息字段)',field_change) and special=='无':
