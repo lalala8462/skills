@@ -10,18 +10,23 @@ MAX_CONFIG_FILES=100
 MAX_CONFIG_BYTES=300000
 
 
-def config_name_changes(lines):
-    """根据 Git --name-status 记录解析重命名映射和变化类别。"""
+def config_name_changes(fields):
+    """解析 --name-status -z 的状态、旧路径、新路径，不按换行分割文件名。"""
     renames,kinds={},{}
-    for line in lines:
-        columns=line.split(chr(9))
-        if len(columns)<2:
-            continue
-        kind=columns[0][:1]
-        target=columns[2] if len(columns)==3 else columns[1]
+    position=0
+    while position<len(fields):
+        status=fields[position]
+        position+=1
+        kind=status[:1]
+        count=2 if kind in ('R','C') else 1
+        names=fields[position:position+count]
+        if len(names)!=count or kind not in ('A','M','D','R','C','T','U'):
+            raise ValueError('invalid Git name-status -z record')
+        position+=count
+        target=names[-1]
         kinds[target]=kind
-        if len(columns)==3 and kind=='R':
-            renames[target]=columns[1]
+        if kind=='R':
+            renames[target]=names[0]
     return renames,kinds
 
 
