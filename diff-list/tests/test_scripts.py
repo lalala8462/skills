@@ -169,10 +169,10 @@ class DiffListTest(unittest.TestCase):
             g('add','.');g('commit','-qm','base')
             g('remote','add','origin','https://gitlab.example/group/webapi3.0.git')
             local_appdata=root/'local-appdata'
-            self.assertEqual(access.repository_name(str(source)),'webapi3.0')
+            self.assertEqual(access.repository_name(str(source)),'service')
             with mock.patch.dict(os.environ,{'LOCALAPPDATA':str(local_appdata)}):
                 clone,name=access.prepare_repo(str(source))
-            self.assertEqual(name,'webapi3.0')
+            self.assertEqual(name,'service')
             self.assertEqual(subprocess.check_output(['git','-C',str(clone),'rev-parse','HEAD'],text=True).strip(),g('rev-parse','HEAD'))
             self.assertFalse((clone/'app.txt').exists())
 
@@ -189,9 +189,9 @@ class DiffListTest(unittest.TestCase):
 
     def test_gitlab_url_parser(self):
         access = module('repo_access')
-        self.assertEqual(access.parse_repo_url('http://gitlab.fingard.cn/rh-rhf/webapi-group/webapi3.0'),
-                         ('gitlab.fingard.cn', 'rh-rhf/webapi-group', 'webapi3.0',
-                          'http://gitlab.fingard.cn/rh-rhf/webapi-group/webapi3.0.git'))
+        self.assertEqual(access.parse_repo_url('https://gitlab.example.org/team/inventory/service'),
+                         ('gitlab.example.org', 'team/inventory', 'service',
+                          'https://gitlab.example.org/team/inventory/service.git'))
         for bad in ('http://user:pass@gitlab.example/group/project',
                     'https://gitlab.example/group/../project',
                     'https://gitlab.example/group/project?token=secret',
@@ -635,6 +635,15 @@ class AdditionalRegressionTests(unittest.TestCase):
         for phrase in ('符合预期','处理成功','系统正常','接口成功','退款成功','状态正确','库存正常','权限校验成功','文件上传成功'):
             data=self.export_input();data['purpose_cases']['acceptance'][0]['observable_evidence'][0]['assertion']=phrase
             with self.assertRaisesRegex(ValueError,'not an observable'):exporter.normalize(data,fixture_analysis(),fixture_review())
+
+    def test_nonpayment_observable_assertions_are_specific(self):
+        exporter=module('export_test_cases')
+        data=self.export_input()
+        case=data['purpose_cases']['acceptance'][0]
+        case['observable_evidence'][0]=dict(
+            surface='接口',target='权限校验接口',assertion='无权限用户返回HTTP 403，记录数保持0')
+        result=exporter.normalize(data,fixture_analysis(),fixture_review())
+        self.assertIn('HTTP 403',result['purposes']['acceptance'][0][4])
 
     def test_evidence_channels_visible_in_xlsx_expected_column(self):
         import zipfile
