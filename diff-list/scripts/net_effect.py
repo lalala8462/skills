@@ -16,8 +16,7 @@ def _run(cmd, *, stdin=None):
     return process.returncode, process.stdout, process.stderr.decode('utf-8', 'replace').strip()
 
 
-def compose(repo, selected, capture_config=False,
-            max_config_files=100, max_config_bytes=300000, persist_snapshot=False):
+def compose(repo, selected, capture_config=False, persist_snapshot=False):
     """selected: ordered [{sha, parent}]. Strictly apply their patches only.
 
     Uses a temporary shared clone with an isolated index. No checked-out source
@@ -97,47 +96,39 @@ def compose(repo, selected, capture_config=False,
                 result.update(status='review_required', reason='cannot pin composed source tree')
                 return result
         if capture_config:
-            rename = git('diff', '--cached', '--name-status', '--find-renames', baseline)
-            rename_map, change_kinds = {}, {}
-            if rename.returncode == 0:
-                for line in rename.stdout.decode('utf-8', 'replace').splitlines():
-                    columns = line.split('\t')
-                    if len(columns) < 2:
-                        continue
-                    kind = columns[0][:1]
-                    target_name = columns[2] if len(columns) == 3 else columns[1]
-                    change_kinds[target_name] = kind
-                    if len(columns) == 3 and kind == 'R':
-                        rename_map[target_name] = columns[1]
-            result['config_sources'] = []
-            result['config_skipped'] = []
-            from config_changes import SUPPORTED_EXTENSIONS
-            names = [name for name in result['changed_files']
-                     if name.lower().endswith(SUPPORTED_EXTENSIONS)]
-            for name in names[max_config_files:]:
-                result['config_skipped'].append({'path': name, 'reason': 'file count limit'})
-            for name in names[:max_config_files]:
-                kind = change_kinds.get(name, 'M')
-                previous = git('show', baseline + ':' + rename_map.get(name, name))
-                current = git('show', ':' + name)
-                if previous.returncode != 0 and kind != 'A':
-                    result['config_skipped'].append({
-                        'path': name,
-                        'reason': 'cannot read baseline blob: ' + previous.stderr.decode('utf-8', 'replace').strip()[:300]})
+            from config_changes import (SUPPORTED_EXTENSIONS,MAX_CONFIG_FILES,
+                                        config_name_changes,config_source)
+            rename=git('diff','--cached','--name-status','--find-renames',baseline)
+            if rename.returncode:
+                raise ValueError('Git config rename diff failed: '+
+                                 rename.stderr.decode('utf-8','replace').strip())
+            rename_map,change_kinds=config_name_changes(
+                rename.stdout.decode('utf-8').splitlines())
+            result['config_sources']=[]
+            result['config_skipped']=[]
+            config_names=[name for name in result['changed_files']
+                          if name.lower().endswith(SUPPORTED_EXTENSIONS)]
+            for name in config_names[MAX_CONFIG_FILES:]:
+                result['config_skipped'].append({'path':name,'reason':'file count limit'})
+            for name in config_names[:MAX_CONFIG_FILES]:
+                kind=change_kinds.get(name,'M')
+                previous=git('show',baseline+':'+rename_map.get(name,name))
+                current=git('show',':'+name)
+                if previous.returncode and kind!='A':
+                    result['config_skipped'].append(
+                        {'path':name,'reason':'cannot read baseline blob: '+
+                         previous.stderr.decode('utf-8','replace').strip()})
                     continue
-                if current.returncode != 0 and kind != 'D':
-                    result['config_skipped'].append({
-                        'path': name,
-                        'reason': 'cannot read target blob: ' + current.stderr.decode('utf-8', 'replace').strip()[:300]})
+                if current.returncode and kind!='D':
+                    result['config_skipped'].append(
+                        {'path':name,'reason':'cannot read target blob: '+
+                         current.stderr.decode('utf-8','replace').strip()})
                     continue
-                before = previous.stdout if previous.returncode == 0 else b''
-                after = current.stdout if current.returncode == 0 else b''
-                if max(len(before), len(after)) > max_config_bytes:
-                    result['config_skipped'].append({'path': name, 'reason': 'file size limit'})
-                    continue
-                try:
-                    result['config_sources'].append({'path': name, 'before': before.decode('utf-8'),
-                                                     'after': after.decode('utf-8')})
-                except UnicodeDecodeError:
-                    result['config_skipped'].append({'path': name, 'reason': 'non-UTF-8 source'})
+                entry,issue=config_source(name,
+                    previous.stdout if previous.returncode==0 else b'',
+                    current.stdout if current.returncode==0 else b'')
+                if issue:
+                    result['config_skipped'].append(issue)
+                else:
+                    result['config_sources'].append(entry)
         return result
