@@ -23,8 +23,11 @@ def _nonempty_text(value):
 def report_errors(text,template):
     """只检查 Agent 直接维护的业务章节和 Markdown 结构；脚本维护章节在 refresh 时覆盖。"""
     errors=[]
-    want=[title for _,title in heading_positions(template)]
-    got=[title for _,title in heading_positions(text)]
+    try:
+        want=[title for _,title in heading_positions(template)]
+        got=[title for _,title in heading_positions(text)]
+    except ValueError as exc:
+        return ['报告'+str(exc)]
     if got!=want:
         errors.append('report.md 标题及顺序与模板不一致')
         return errors
