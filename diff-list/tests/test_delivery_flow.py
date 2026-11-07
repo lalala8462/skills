@@ -74,7 +74,7 @@ class DeliveryFlowTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'围栏未闭合'):
             fenced_blocks(bad,strict=True)
         from validate_report import heading_positions,validate
-        malformed='## Before\\n\\n~~~mermaid\\nflowchart TD\\n A-->B\\n## After\\n'
+        malformed='## Before\n\n~~~mermaid\nflowchart TD\n A-->B\n## After\n'
         with self.assertRaisesRegex(ValueError,'围栏未闭合'):
             heading_positions(malformed)
         template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
