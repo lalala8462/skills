@@ -529,6 +529,74 @@ class AdditionalRegressionTests(unittest.TestCase):
         self.assertFalse(by_path['src/main/resources/mapper/OrderMapper.xml']['review_required'])
         self.assertEqual(by_path['src/main/resources/mapper/OrderMapper.xml']['kind'],'not_config_mapping')
 
+    def test_properties_escaped_keys_unicode_and_multiline(self):
+        config=module('config_changes')
+        slash=chr(92)
+        cases=[
+            (r'escaped\=key=value',{'escaped=key':'value'}),
+            (r'folder\\=value',{'folder\\':'value'}),
+            (r'name\ with\ spaces : ok',{'name with spaces':'ok'}),
+            (r'code=\u4E2D\u6587',{'code':'中文'}),
+            ('join=first'+slash+'\\n second',{'join':'firstsecond'}),
+            ('join=first'+slash*2+'\\nother=value',{'join':'first'+slash,'other':'value'}),
+            ('join=first'+slash*3+'\\n second',{'join':'first'+slash+'second'}),
+            ('\ufeffkey=value',{'key':'value'})
+        ]
+        for content,expected in cases:
+            with self.subTest(content=content):
+                self.assertEqual(config.properties(content),expected)
+
+    def test_windows_style_runtime_yaml_path_is_not_downgraded(self):
+        config=module('config_changes')
+        changed,issues=config.extract_config_changes([{
+            'path':r'src\main\resources\application.yml',
+            'before':'options:\n  - one\n',
+            'after':'options:\n  - two\n'}])
+        self.assertEqual(changed,[])
+        self.assertEqual(issues[0]['kind'],'parse_failure')
+        self.assertTrue(issues[0]['review_required'])
+
+    def test_config_range_and_one_commit_have_equal_contents(self):
+        collector=module('collect_git')
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td)/'repo';root.mkdir()
+            def git(*args):
+                return subprocess.check_output(['git','-C',str(root),*args],text=True).strip()
+            git('init','-q');git('config','user.name','Test');git('config','user.email','test@example.com')
+            cfg=root/'application.properties'
+            cfg.write_bytes(b'\xef\xbb\xbfvalue=old\n')
+            git('add','.');git('commit','-qm','base')
+            base=git('rev-parse','HEAD')
+            cfg.write_bytes(b'\xef\xbb\xbfvalue=new\n')
+            git('add','.');git('commit','-qm','change')
+            head=git('rev-parse','HEAD')
+            ranged=collector.collect(dict(name='repo',path=str(root),range=dict(base=base,head=head)),capture_config=True)
+            isolated=collector.collect(dict(name='repo',path=str(root),revisions=[head]),capture_config=True)
+            self.assertEqual(ranged['net_effect']['config_sources'],
+                             isolated['net_effect']['config_sources'])
+            self.assertEqual(ranged['net_effect']['config_sources'][0]['before'],'value=old\n')
+
+    def test_git_zero_delimited_names_and_invalid_utf8_rejection(self):
+        collector=module('collect_git')
+        access=module('repo_access')
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td)/'repo';root.mkdir()
+            def git(*args):
+                return subprocess.check_output(['git','-C',str(root),*args],text=True).strip()
+            git('init','-q');git('config','user.name','Test');git('config','user.email','test@example.com')
+            filename='中文'+chr(10)+'名称.java'
+            (root/filename).write_text('class Source {}',encoding='utf-8')
+            git('add','.');git('commit','-qm','initial')
+            base=git('rev-parse','HEAD')
+            (root/filename).write_text('class Source {int value;}',encoding='utf-8')
+            git('add','.');git('commit','-qm','update')
+            head=git('rev-parse','HEAD')
+            self.assertEqual(collector.paths(root,base,head),[filename])
+            self.assertEqual(access.decode_git_path(filename.encode('utf-8')),filename)
+            self.assertNotIn('\ufffd',collector.paths(root,base,head)[0])
+            with self.assertRaisesRegex(ValueError,'not UTF-8'):
+                access.decode_git_path(bytes([255,46,106,97,118,97]))
+
     def test_xml_config_mapping_add_remove_is_not_ignored(self):
         config = module('config_changes')
         removed, skipped = config.extract_config_changes([{
