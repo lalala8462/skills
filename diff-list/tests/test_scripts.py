@@ -617,8 +617,9 @@ class AdditionalRegressionTests(unittest.TestCase):
             self.assertEqual(access.decode_git_path(filename.encode('utf-8')),filename)
             self.assertEqual(collector.git_null_fields(b'normal'+bytes([10])+b'name.java'+bytes([0])),['normal'+chr(10)+'name.java'])
             self.assertNotIn('\ufffd',collector.paths(root,base,head)[0])
-            with self.assertRaisesRegex(ValueError,'not UTF-8'):
-                access.decode_git_path(bytes([255,46,106,97,118,97]))
+            with mock.patch.object(access.os,'fsdecode',return_value=chr(0xdcff)):
+                with self.assertRaisesRegex(ValueError,'not UTF-8'):
+                    access.decode_git_path(bytes([255,46,106,97,118,97]))
 
     def test_xml_config_mapping_add_remove_is_not_ignored(self):
         config = module('config_changes')
