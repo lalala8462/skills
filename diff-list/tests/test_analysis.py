@@ -846,6 +846,20 @@ class RefundService {Helper helper;String refundStatus(){return helper.getValue(
         self.assertTrue(relation_affects_review_scope(endpoint_return,graph))
         self.assertTrue(relation_affects_review_scope(refund_getter,graph))
 
+    def test_depth_three_reaches_three_resolved_method_hops(self):
+        graph=self.graph({'layers':'''package p;
+class Fourth {void fourth(){}}
+class Third {Fourth f;void third(){f.fourth();}}
+class Second {Third t;void second(){t.third();}}
+class First {Second s;void first(){s.second();}}
+'''})
+        default=ProjectAnalysis('p','unused',graph.index,graph.index,COMMON_RULES,DEFAULT_LIMITS)
+        expanded=ProjectAnalysis('p','unused',graph.index,graph.index,COMMON_RULES,
+                                 dict(DEFAULT_LIMITS,depth=3))
+        start={'p.First#first()'}
+        self.assertNotIn('p.Fourth#fourth()',default.traverse('result',start))
+        self.assertIn('p.Fourth#fourth()',expanded.traverse('result',start))
+
     def test_explicit_limits_are_not_silently_clamped(self):
         graph=self.graph({'cap':'class A{void run(){}}'})
         engine=ProjectAnalysis('p','unused',graph.index,graph.index,COMMON_RULES,
