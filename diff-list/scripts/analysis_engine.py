@@ -1099,6 +1099,12 @@ class ProjectAnalysis:
                               candidates=edge['targets']), [('result',method)], 'risk_candidate')
             for row in graph.index['events']:
                 if row['kind'] == 'mapper':
+                    # Mapper XML 按 namespace + id 定义语句，不能用重载的 Java
+                    # 方法签名猜测实际执行哪一个 SQL。
+                    declarations=[symbol for symbol in graph.methods_by_owner.get(row['owner'],[])
+                                  if graph.methods[symbol]['name']==row['name']]
+                    if len(declarations)!=1:
+                        continue
                     # 直接变化的 Mapper 声明可保留；其它声明必须由已选中
                     # 调用方的唯一 MyBatis 绑定引入，避免歧义候选被遍历误选后猜测 SQL。
                     linked = sorted({s for s in selected[side] if s in changed
