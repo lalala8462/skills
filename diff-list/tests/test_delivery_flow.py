@@ -518,6 +518,30 @@ class DeliveryFlowTest(unittest.TestCase):
             self.assertEqual(final['status'],'completed')
             self.assertEqual(final['clones_cleaned'],2)
 
+    def test_publish_failure_keeps_original_work_files_for_resume(self):
+        with tempfile.TemporaryDirectory() as td:
+            run=Path(td)/'result';work=run/'.work';work.mkdir(parents=True)
+            for name in ('coverage.json','test-cases.xlsx','report.md'):
+                (work/name).write_text('output',encoding='utf-8')
+            analysis=work/'analysis'/'analysis.json';analysis.parent.mkdir()
+            analysis.write_text('{}',encoding='utf-8')
+            state_path=work/'run-state.json'
+            state=dict(run_schema_version=delivery.RUN_SCHEMA_VERSION,
+                       run_dir=str(run.resolve()),status='resuming',stages={})
+            delivery._write_state(state_path,state)
+            with mock.patch.object(delivery.subprocess,'run',
+                                   return_value=SimpleNamespace(returncode=0)), \
+                 mock.patch.object(delivery.shutil,'copy2',
+                                   side_effect=OSError('copy failed')), \
+                 mock.patch.object(delivery,'cleanup_analysis_clones') as cleanup:
+                with self.assertRaisesRegex(RuntimeError,'finalize'):
+                    delivery._finalize_stage(state_path,state,run,analysis,
+                                             work/'review.json',work/'test-cases.json')
+            cleanup.assert_not_called()
+            self.assertEqual(json.loads(state_path.read_text(encoding='utf-8'))['status'],'failed')
+            self.assertTrue(all((work/name).exists()
+                                for name in ('coverage.json','test-cases.xlsx','report.md')))
+
     def test_clone_cleanup_failure_is_reported_without_failing_published_delivery(self):
         with tempfile.TemporaryDirectory() as td:
             run=Path(td)/'result';work=run/'.work';work.mkdir(parents=True)
