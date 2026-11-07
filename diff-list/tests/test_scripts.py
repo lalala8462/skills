@@ -283,6 +283,15 @@ class DiffListTest(unittest.TestCase):
         self.assertTrue(any('字段/接口契约变化' in issue for issue in errors))
 
 
+    def test_existing_impact_no_normalizes_markdown_and_whitespace(self):
+        validator=module('validate_report')
+        for row in ('**既有功能影响：** 无', '- **既有功能影响：**   无',
+                    '既有功能影响:  无', '* 既有功能影响：无'):
+            with self.subTest(row=row):
+                self.assertEqual(validator.existing_impact_values(row),['无'])
+        self.assertEqual(validator.existing_impact_values('既有功能影响：旧调用方返回不变。'),
+                         ['旧调用方返回不变。'])
+
     def test_bare_existing_function_impact_line_is_rejected(self):
         validator=module('validate_report')
         template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
