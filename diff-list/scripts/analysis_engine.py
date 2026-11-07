@@ -1059,12 +1059,22 @@ class ProjectAnalysis:
         self.configurations(selected)
         for side, graph in self.graphs.items():
             referenced_names = set()
+            # 只补充已选中方法直接调用、且已唯一绑定到 MyBatis XML 的声明。
+            # 不扩大普通 Java 方法遍历范围，也不将约定绑定当作运行时调用。
+            mapper_links=collections.defaultdict(set)
             for symbol in selected[side]:
                 for event in graph.events[symbol]:
                     referenced_names.update(re.findall(r'\b\w+\b',event.get('condition','')+' '+event.get('expression','')))
             for edge in graph.edges:
                 if edge['source'] not in selected[side]:
                     continue
+                if (edge['status']=='convention_inferred' and
+                        edge['reason']=='mybatis_namespace_statement' and
+                        len(edge['targets'])==1):
+                    target=edge['targets'][0]
+                    binding=graph.methods.get(target)
+                    if binding and (binding['owner'],binding['name']) in graph.mapper_methods:
+                        mapper_links[(binding['owner'],binding['name'])].add(target)
                 method = graph.methods[edge['source']]
                 evidence = self.evidence(side, method)
                 if not evidence:
@@ -1089,7 +1099,9 @@ class ProjectAnalysis:
                               candidates=edge['targets']), [('result',method)], 'risk_candidate')
             for row in graph.index['events']:
                 if row['kind'] == 'mapper':
-                    linked = [s for s in selected[side] if s.startswith(row['owner']+'#'+row['name']+'(')]
+                    linked = sorted({s for s in selected[side]
+                                     if s.startswith(row['owner']+'#'+row['name']+'(')}
+                                    | mapper_links[(row['owner'],row['name'])])
                     if linked:
                         self.fact('mapper_statement', dict(side=side, namespace=row['owner'], name=row['name'],
                                   statement=row['statement'], source=row['source'], dynamic=row['dynamic'],
