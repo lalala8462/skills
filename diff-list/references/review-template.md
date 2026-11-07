@@ -26,7 +26,7 @@ Agent 可以优先看 navigation_facets，但必须保证所有 review unit 最�
 
 ## 按需查证及完整性审计
 
-使用 `review_query.py --overview` 查看所有 unit 与异常计数；使用 `--unit / --query` 获取轻量索引，再使用 `--view facts/relations/evidence/db/calls/conditions` 分页展开。对于关键判断，用 `--fact` 查看事实，`--evidence` 校验 Git 固定快照并读取脱敏源码。
+使用 `review_query.py --overview` 查看所有 unit 与异常计数；使用 `--unit / --query` 获取轻量索引，再使用 `--view facts/relations/evidence/db/conditions` 分页展开。对于关键判断，用 `--fact` 查看事实，`--evidence` 校验 Git 固定快照并读取脱敏源码。
 
 `--unit` 索引包含直接事实 ID 和直接证据 ID；`--query 关键词 --view facts --matched-only` 仅展开精确事实，不默认携带该单元全部事实。响应 `page.complete=false` 必须沿 `next_cursor` 继续读取；分类视图不能充当全业务影响范围。
 
