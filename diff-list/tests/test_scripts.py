@@ -636,7 +636,7 @@ class AdditionalRegressionTests(unittest.TestCase):
         sha='a'*40
         invalid=(b'100644 blob '+b'b'*40+bytes([9,255])+b'.java'+bytes([0]))
         with mock.patch.object(verifier,'git_bytes',
-                               side_effect=[(sha+'\\n').encode('ascii'),invalid]), \
+                               side_effect=[(sha+'\n').encode('ascii'),invalid]), \
              mock.patch('repo_access.os.fsdecode',
                         side_effect=UnicodeDecodeError('utf-8',bytes([255]),0,1,'invalid')):
             with self.assertRaisesRegex(ValueError,'hex=ff2e6a617661'):
