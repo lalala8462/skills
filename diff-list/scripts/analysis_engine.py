@@ -676,7 +676,11 @@ class ProjectAnalysis:
 
     def evidence(self, side, row):
         graph = self.graphs[side]
-        file = next(f for f in graph.index['files'] if f['path'] == row['path'])
+        file = next((f for f in graph.index['files'] if f['path'] == row['path']),None)
+        if file is None:
+            self.scope_errors.append('internal evidence source missing: {}:{}:{}'.format(
+                side,row.get('path'),row.get('blob')))
+            return None
         cache_key = (side, row['path'], row['blob'])
         if cache_key not in self.source_line_cache:
             self.source_line_cache[cache_key] = source_lines(file['source'])
@@ -714,7 +718,10 @@ class ProjectAnalysis:
         data = clean(data)
         identifier = stable(self.name, kind, data, evidence)
         if identifier in self.fact_ids:
-            return next(f for f in self.facts if f['id'] == identifier)
+            existing=next((f for f in self.facts if f['id']==identifier),None)
+            if existing is None:
+                self.scope_errors.append('internal fact index inconsistent: '+identifier)
+            return existing
         result = dict(id=identifier, kind=kind, classification=classification, data=data, evidence_ids=evidence)
         self.fact_ids.add(identifier); self.facts.append(result)
         return result
