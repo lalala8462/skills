@@ -102,7 +102,7 @@ def compose(repo, selected, capture_config=False, persist_snapshot=False):
             rename=git('diff','--cached','--name-status','-z','--find-renames',baseline)
             if rename.returncode:
                 raise ValueError('Git config rename diff failed: '+
-                                 rename.stderr.decode('utf-8','replace').strip())
+                                 rename.stderr.decode('utf-8','backslashreplace').strip())
             rename_map,change_kinds=config_name_changes(
                 [decode_git_path(raw) for raw in rename.stdout.split(bytes([0])) if raw])
             result['config_sources']=[]
@@ -118,12 +118,12 @@ def compose(repo, selected, capture_config=False, persist_snapshot=False):
                 if previous.returncode and kind!='A':
                     result['config_skipped'].append(
                         {'path':name,'reason':'cannot read baseline blob: '+
-                         previous.stderr.decode('utf-8','replace').strip()})
+                         previous.stderr.decode('utf-8','backslashreplace').strip()})
                     continue
                 if current.returncode and kind!='D':
                     result['config_skipped'].append(
                         {'path':name,'reason':'cannot read target blob: '+
-                         current.stderr.decode('utf-8','replace').strip()})
+                         current.stderr.decode('utf-8','backslashreplace').strip()})
                     continue
                 entry,issue=config_source(name,
                     previous.stdout if previous.returncode==0 else b'',
