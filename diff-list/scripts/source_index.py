@@ -95,7 +95,7 @@ class JavaParser:
                               '-cp', self.classpath, '-d', str(self.root), str(source)],
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if run.returncode:
-            raise ValueError('Source index compiler failed: ' + run.stderr.decode('utf-8', 'replace')[:1200])
+            raise ValueError('Source index compiler failed: ' + run.stderr.decode('utf-8', 'backslashreplace')[:1200])
 
     def close(self):
         self.temp.cleanup()
@@ -113,7 +113,7 @@ class JavaParser:
         run = subprocess.run([self.java, '-Xmx768m', '-cp', self.classpath, 'JavaSourceIndex', str(manifest)],
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if run.returncode:
-            raise ValueError('Source parser failed: ' + run.stderr.decode('utf-8', 'replace')[:800])
+            raise ValueError('Source parser failed: ' + run.stderr.decode('utf-8', 'backslashreplace')[:800])
         result, active = {}, None
         for line in run.stdout.decode('utf-8').splitlines():
             row = json.loads(line)
