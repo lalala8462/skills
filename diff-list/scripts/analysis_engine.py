@@ -1099,8 +1099,10 @@ class ProjectAnalysis:
                               candidates=edge['targets']), [('result',method)], 'risk_candidate')
             for row in graph.index['events']:
                 if row['kind'] == 'mapper':
-                    linked = sorted({s for s in selected[side]
-                                     if s.startswith(row['owner']+'#'+row['name']+'(')}
+                    # 直接变化的 Mapper 声明可保留；其它声明必须由已选中
+                    # 调用方的唯一 MyBatis 绑定引入，避免歧义候选被遍历误选后猜测 SQL。
+                    linked = sorted({s for s in selected[side] if s in changed
+                                     and s.startswith(row['owner']+'#'+row['name']+'(')}
                                     | mapper_links[(row['owner'],row['name'])])
                     if linked:
                         self.fact('mapper_statement', dict(side=side, namespace=row['owner'], name=row['name'],
