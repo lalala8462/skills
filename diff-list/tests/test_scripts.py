@@ -199,7 +199,7 @@ class DiffListTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 access.parse_repo_url(bad)
 
-    def test_collect_cli_direct_revisions(self):
+    def test_collect_direct_revisions_without_obsolete_cli(self):
         collector=module('collect_git')
         with tempfile.TemporaryDirectory() as td:
             root=Path(td)/'project';root.mkdir()
@@ -211,18 +211,12 @@ class DiffListTest(unittest.TestCase):
             (root/'a.txt').write_text('world\n',encoding='utf-8')
             g('add','.');g('commit','-qm','change')
             commit=g('rev-parse','HEAD')
-            evidence=Path(td)/'evidence.json'
-            with mock.patch.object(collector,'prepare_repo',return_value=(root,'project')) as prepared:
-                self.assertEqual(collector.main(['--repo','https://github.com/owner/project',
-                    '--rev',commit,'--output',str(evidence)]),0)
-                prepared.assert_called_once_with('https://github.com/owner/project')
-            parsed=json.loads(evidence.read_text(encoding='utf-8'))
-            self.assertEqual(parsed['schema_version'],2)
-            self.assertEqual(parsed['projects'][0]['selection'][0]['sha'],commit)
-            self.assertEqual(collector.main(['--repo','https://github.com/owner/project',
-                    '--rev',commit,'--base','start','--head','end',
-                    '--output',str(Path(td)/'bad.json')]),2)
-
+            data=collector.collect(dict(name='project',path=str(root),revisions=[commit]))
+            self.assertEqual(data['selection'][0]['sha'],commit)
+            self.assertFalse(hasattr(collector,'main'))
+            with self.assertRaisesRegex(ValueError,'exactly one'):
+                collector.collect(dict(name='project',path=str(root),revisions=[commit],
+                                       range=dict(base=commit,head=commit)))
 
     def test_report_requires_existing_function_impact(self):
         val=module('validate_report')
@@ -336,7 +330,7 @@ class DiffListTest(unittest.TestCase):
                 self.assertEqual([p['path'] for p in net['config_sources']],['渠道配置.properties'])
                 self.assertFalse(net['config_skipped'])
 
-    def test_footer_allows_only_isolated_clone_directories(self):
+    def test_report_rejects_machine_local_paths_without_legacy_footer(self):
         val=module('validate_report')
         template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
         sha='a'*40
@@ -354,46 +348,39 @@ class DiffListTest(unittest.TestCase):
         }
         report='\n'.join(line+'\n'+blocks.get(line,'') if line.startswith('#') else line
                          for line in template.splitlines())
-        footer=('\n<!-- diff-list-generated-clones:start -->\n'
-                '**本次创建的分析仓库目录（请后续手动删除）：**\n'
-                '- \x60C:\\Users\\test\\AppData\\Local\\diff-list\\runs\\run-abc\x60\n'
-                '<!-- diff-list-generated-clones:end -->\n')
-        errors,_=val.validate(report+footer,template,['webapi='+sha])
+        errors,_=val.validate(report,template,['webapi='+sha])
         self.assertEqual(errors,[])
-        errors,_=val.validate(report+footer.replace('diff-list\\runs','work\\source'),
-                               template,['webapi='+sha])
-        self.assertTrue(any('专用目录' in err for err in errors))
         errors,_=val.validate(report+'\nC:\\work\\Main.java',template,['webapi='+sha])
         self.assertTrue(any('Windows 本机绝对路径' in err for err in errors))
 
-    def test_append_run_dirs_records_exact_locations(self):
-        writer=module('append_run_dirs')
+    def test_completed_run_cleanup_deletes_only_isolated_clones(self):
+        access=module('repo_access')
         with tempfile.TemporaryDirectory() as td:
-            with mock.patch.dict('os.environ',{'LOCALAPPDATA':td}):
-                clone=Path(td)/'diff-list'/'runs'/'run-123'/'repo'
-                (clone/'.git').mkdir(parents=True)
-                report=Path(td)/'report.md'
-                report.write_text('# Report\n## 6. 验证情况\n静态分析。\n',encoding='utf-8')
-                evidence=Path(td)/'evidence.json'
-                evidence.write_text(json.dumps({'schema_version':2,'analyzer_version':module('analysis_engine').VERSION,
-                    'projects':[{'analysis_clone':str(clone)}]}),
-                                    encoding='utf-8')
-                dirs=writer.append(report,[str(evidence)])
-                self.assertEqual(dirs,[str(clone.parent)])
-                self.assertIn(str(clone.parent),report.read_text(encoding='utf-8'))
-                self.assertIn('请后续手动删除',report.read_text(encoding='utf-8'))
-                with self.assertRaises(ValueError):
-                    writer.append(report,[str(evidence)])
+            with mock.patch.dict(os.environ,{'LOCALAPPDATA':td}):
+                base=Path(td)/'diff-list'/'runs'
+                clones=[base/'run-a'/'repo',base/'run-b'/'repo']
+                for clone in clones:
+                    (clone/'.git').mkdir(parents=True)
+                report=Path(td)/'analysis.json'
+                report.write_text(json.dumps({'projects':[{'analysis_clone':str(p)} for p in clones]}),encoding='utf-8')
+                self.assertEqual(access.cleanup_analysis_clones(report),2)
+                self.assertTrue(all(not clone.parent.exists() for clone in clones))
 
-    def test_append_run_dirs_requires_project_clone_metadata(self):
-        writer=module('append_run_dirs')
+    def test_clone_cleanup_rejects_external_or_mixed_directories(self):
+        access=module('repo_access')
         with tempfile.TemporaryDirectory() as td:
-            source=Path(td)/'analysis.json'
-            for payload in ({'analysis_clone':'unused'},
-                    {'schema_version':2,'analyzer_version':module('analysis_engine').VERSION,
-                     'projects':[{'repository':'unused'}]}):
-                source.write_text(json.dumps(payload),encoding='utf-8')
-                with self.assertRaises(ValueError):writer.input_clones(source)
+            with mock.patch.dict(os.environ,{'LOCALAPPDATA':td}):
+                protected=Path(td)/'source'/'repo'
+                (protected/'.git').mkdir(parents=True)
+                owned=Path(td)/'diff-list'/'runs'/'run-a'/'repo'
+                (owned/'.git').mkdir(parents=True)
+                source=Path(td)/'analysis.json'
+                source.write_text(json.dumps({'projects':[
+                    {'analysis_clone':str(owned)},{'analysis_clone':str(protected)}]}),encoding='utf-8')
+                with self.assertRaisesRegex(ValueError,'unsafe clone cleanup'):
+                    access.cleanup_analysis_clones(source)
+                self.assertTrue(protected.exists())
+                self.assertTrue(owned.exists())
 
     def test_range_long_paths_capture_config(self):
         collector=module('collect_git')
@@ -645,7 +632,7 @@ class AdditionalRegressionTests(unittest.TestCase):
 
     def test_vague_assertions_rejected(self):
         exporter=module('export_test_cases')
-        for phrase in ('符合预期','处理成功','系统正常','接口成功','退款成功','状态正确'):
+        for phrase in ('符合预期','处理成功','系统正常','接口成功','退款成功','状态正确','库存正常','权限校验成功','文件上传成功'):
             data=self.export_input();data['purpose_cases']['acceptance'][0]['observable_evidence'][0]['assertion']=phrase
             with self.assertRaisesRegex(ValueError,'not an observable'):exporter.normalize(data,fixture_analysis(),fixture_review())
 
