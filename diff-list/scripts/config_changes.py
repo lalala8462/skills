@@ -53,7 +53,7 @@ def _likely_runtime_yaml(path):
     it is not a target of this scalar configuration parser and should not by
     itself force the whole analysis into review_required.
     """
-    normalized = path.replace('\\\\', '/').lower()
+    normalized = path.replace(chr(92), '/').lower()
     parts = [part for part in normalized.split('/') if part]
     name = parts[-1] if parts else normalized
     if name.startswith(('application.', 'application-', 'bootstrap.', 'bootstrap-')):
@@ -65,38 +65,80 @@ SENSITIVE = re.compile(r'(password|secret|token|api.?key|private.?key|credential
 
 
 def properties(text):
-    data = {}
-    lines = text.splitlines()
-    logical = []
-    current = ''
-    for line in lines:
-        current += line.lstrip() if current else line
-        if (len(current) - len(current.rstrip('\\'))) % 2:
-            current = current[:-1]
+    """读取 Java properties 的续行、转义键和 Unicode 转义。"""
+    logical=[]
+    current=''
+    continuation=False
+    for row in text.lstrip('\ufeff').splitlines():
+        line=row.lstrip(' \t\f') if continuation else row
+        backslashes=len(line)-len(line.rstrip('\\'))
+        if backslashes%2:
+            current+=line[:-1]
+            continuation=True
             continue
+        logical.append(current+line)
+        current=''
+        continuation=False
+    if continuation:
         logical.append(current)
-        current = ''
-    if current:
-        logical.append(current)
-    for line in logical:
-        line = line.strip()
-        if not line or line.startswith(('#', '!')):
-            continue
-        # Java properties delimiter: first unescaped =, :, or whitespace.
-        delimiter = re.search(r'(?<!\\)(?:[=:]|\s+)', line)
-        if delimiter:
-            name, value = line[:delimiter.start()], line[delimiter.end():].strip()
-            value = value.lstrip('=:').strip()
-        else:
-            name, value = line, ''
-        name = name.replace('\\.', '.').replace('\\:', ':').replace('\\=', '=')
-        if not name:
-            raise ValueError('empty properties key')
-        if name in data:
-            raise ValueError('duplicate properties key: ' + name)
-        data[name] = value
-    return data
 
+    def unescape(value):
+        output=[]
+        index=0
+        mapping={'t':'\t','n':'\n','r':'\r','f':'\f'}
+        while index<len(value):
+            ch=value[index]
+            if ch!='\\':
+                output.append(ch)
+                index+=1
+                continue
+            index+=1
+            if index>=len(value):
+                output.append('\\')
+                break
+            char=value[index]
+            if char=='u':
+                code=value[index+1:index+5]
+                if len(code)!=4 or any(c not in '0123456789abcdefABCDEF' for c in code):
+                    raise ValueError('invalid properties Unicode escape')
+                output.append(chr(int(code,16)))
+                index+=5
+            else:
+                output.append(mapping.get(char,char))
+                index+=1
+        return ''.join(output)
+
+    result={}
+    for row in logical:
+        line=row.lstrip(' \t\f')
+        if not line or line.startswith(('#','!')):
+            continue
+        slash_count=0
+        separator=None
+        for index,ch in enumerate(line):
+            if ch=='\\':
+                slash_count+=1
+                continue
+            escaped=slash_count%2!=0
+            slash_count=0
+            if not escaped and (ch in '=:' or ch.isspace()):
+                separator=index
+                break
+        if separator is None:
+            key,value=line,''
+        else:
+            key,value=line[:separator],line[separator:]
+            value=value.lstrip(' \t\f')
+            if value.startswith(('=',':')):
+                value=value[1:].lstrip(' \t\f')
+        key=unescape(key)
+        value=unescape(value)
+        if not key:
+            raise ValueError('empty properties key')
+        if key in result:
+            raise ValueError('duplicate properties key: '+key)
+        result[key]=value
+    return result
 
 def yaml_scalars(text):
     """Parse ordinary nested scalar YAML keys; reject unsupported constructs safely."""
