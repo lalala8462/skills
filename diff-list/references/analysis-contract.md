@@ -7,7 +7,7 @@
 
 analysis_id 由分析器版本、规则和项目固定快照计算。
 
-每个 project 保存 repository、analysis_clone、snapshots、change_seeds、git、facts、relations、hard_errors 和 stats。
+每个 project 保存 repository、analysis_clone、snapshots、change_seeds、git、facts、relations、hard_errors 和 stats。`analysis_clone` 仅用于当前运行的固定快照取证，成功交付后脚本删除隔离 clone，路径作为来源记录保留；交付后不能继续通过该路径读取源码。
 
 facts 是静态事实底账，主要包括方法/字段/类变化、配置、参数来源、Mapper、字段来源、返回值、分支、集合判断、未解析关系、对象复制和构造映射等。
 
@@ -40,7 +40,7 @@ Agent 可以直接调用此脚本，不需要 MCP 服务或持久化查询缓存
 - `--overview`：全部 review unit 的分页索引和全局异常计数；
 - `--unit / --query`：按变化单元或关键词获取索引，unit 直接给出 `direct_fact_ids/direct_evidence_ids`；
 - `--query --view facts --matched-only`：只返回直接匹配事实，不扩大到 unit 所有事实；默认查询行为不变；
-- `--view facts/relations/evidence/db/calls/conditions`：仅显式展开所选类别，分类不代表全部业务影响；
+- `--view facts/relations/evidence/db/conditions`：仅显式展开所选类别，分类不代表全部业务影响；
 - `--fact`：完整事实及相关 evidence ID；
 - `--evidence --source-lines N`：校验固定 tree/blob 后返回脱敏源码上下文；
 - `--audit`：原始分析事实相对于 review 的归属差异、unresolved、hard_errors、证据缺失及分析边界；
