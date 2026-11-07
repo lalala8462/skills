@@ -51,7 +51,6 @@ def relation_affects_review_scope(edge, graph, custom_tokens=()):
     receiver=' '.join((edge.get('receiver_type') or '',relation_receiver_hint(site))).casefold()
     source=edge.get('source') or ''
     target_surface=' '.join((receiver,name)).casefold()
-    caller=source.casefold()
     caller_method=source.split('#')[-1].split('(',1)[0].casefold()
     method_rows=getattr(graph,'methods',{})
     method_meta=method_rows.get(source,{}) if isinstance(method_rows,dict) else {}
