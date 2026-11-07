@@ -278,6 +278,9 @@ class DiffListTest(unittest.TestCase):
                                  '旧调用方可能忽略该字段，需验证已有调用方行为。')
         errors,_=val.validate(corrected,template,[])
         self.assertEqual(errors, [])
+        invalid=corrected.replace('旧调用方可能忽略该字段，需验证已有调用方行为。','无')
+        errors,_=val.validate(invalid,template,[])
+        self.assertTrue(any('字段/接口契约变化' in issue for issue in errors))
 
 
     def test_bare_existing_function_impact_line_is_rejected(self):
@@ -458,6 +461,22 @@ class DiffListTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'unsafe clone cleanup'):
                 access.cleanup_analysis_clones(source)
             self.assertTrue(real.exists())
+
+    def test_clone_cleanup_symlink_guard_without_windows_privilege(self):
+        access=module('repo_access')
+        with tempfile.TemporaryDirectory() as td:
+            clone=Path(td)/'diff-list'/'runs'/'run-mock'/'repo'
+            (clone/'.git').mkdir(parents=True)
+            source=Path(td)/'analysis.json'
+            source.write_text(json.dumps({'projects':[{'analysis_clone':str(clone)}]}),
+                              encoding='utf-8')
+            original=Path.is_symlink
+            def simulate_link(path):
+                return path==clone or original(path)
+            with mock.patch.object(Path,'is_symlink',simulate_link):
+                with self.assertRaisesRegex(ValueError,'unsafe clone cleanup'):
+                    access.cleanup_analysis_clones(source)
+            self.assertTrue(clone.exists())
 
     def test_range_long_paths_capture_config(self):
         collector=module('collect_git')
