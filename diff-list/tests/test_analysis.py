@@ -250,7 +250,9 @@ class Handler {
         self.assertFalse(any(f['kind']=='method_change' for f in p['facts']))
 
     def test_mapper_is_bound_but_dynamic_sql_not_executed(self):
-        statements=self.facts('mapper_statement')
+        expanded,_=self.analyze([self.after],limits={'depth':3})
+        statements=[fact for fact in expanded['projects'][0]['facts']
+                    if fact['kind']=='mapper_statement']
         self.assertTrue(any(f['data']['name']=='list' and f['data']['dynamic'] for f in statements))
 
     def test_configuration_file_change_is_captured_with_redacted_evidence(self):
@@ -756,7 +758,8 @@ class Forwarder{Transport transport;void forward(Base callback){transport.post(c
 class Callback extends Base{Executor executor;@Override public void onDone(){executor.execute(new Task());}}
 class Task implements Runnable{@Override public void run(){System.out.println("persist result");}}
 '''})
-        engine=ProjectAnalysis('p','unused',copy.deepcopy(graph.index),copy.deepcopy(graph.index),COMMON_RULES,DEFAULT_LIMITS)
+        engine=ProjectAnalysis('p','unused',copy.deepcopy(graph.index),copy.deepcopy(graph.index),
+                               COMMON_RULES,dict(DEFAULT_LIMITS,depth=3))
         selected=engine.traverse('result',{'p.Main#send()'})
         self.assertIn('p.Callback#onDone()',selected)
         self.assertNotIn('p.Task#run()',selected)
@@ -818,12 +821,20 @@ class RefundService {Helper helper;String refundStatus(){return helper.getValue(
         self.assertTrue(relation_affects_review_scope(endpoint_return,graph))
         self.assertTrue(relation_affects_review_scope(refund_getter,graph))
 
-    def test_relation_expansion_hard_caps_apply_inside_analysis_engine(self):
+    def test_explicit_limits_are_not_silently_clamped(self):
         graph=self.graph({'cap':'class A{void run(){}}'})
         engine=ProjectAnalysis('p','unused',graph.index,graph.index,COMMON_RULES,
-                               dict(DEFAULT_LIMITS,depth=9,methods=500))
-        self.assertEqual(engine.limits['depth'],1)
-        self.assertEqual(engine.limits['methods'],100)
+                               dict(DEFAULT_LIMITS,depth=3,methods=500))
+        self.assertEqual(engine.limits['depth'],3)
+        self.assertEqual(engine.limits['methods'],500)
+        for invalid in ({'depth':4},{'methods':501},{'context_bytes':67108865},
+                        {'files':20001},{'total_bytes':536870913},{'file_bytes':4194305}):
+            with self.subTest(invalid=invalid):
+                with self.assertRaisesRegex(ValueError,'limits exceed'):
+                    self.analyze([self.after],limits=invalid)
+        expanded,_=self.analyze([self.after],limits={'depth':3})
+        self.assertEqual(expanded['limits']['depth'],3)
+        self.assertNotEqual(self.analysis['analysis_id'],expanded['analysis_id'])
 
     def test_builder_field_binding_is_covered_as_field_source_not_relation_review(self):
         graph=mock.Mock();graph.events={};graph.origins.return_value=[]
