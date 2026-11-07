@@ -149,6 +149,9 @@ def validate(text,template,expected):
         errors.append('包含禁止的占位或代码证据描述')
     if re.search(r'[A-Za-z]:\\[^\s\x60|)]+',text):
         errors.append('文档包含 Windows 本机绝对路径')
+    if (re.search(r'(?<![\w:/])/(?:home|Users|mnt|tmp|var|opt|root)/[^\s\x60|)]+',text)
+            or re.search(r'\\\\[A-Za-z0-9._$-]+\\[A-Za-z0-9._$-]+',text)):
+        errors.append('文档包含 Unix 或 UNC 本机绝对路径')
     if unclosed_fences(text):
         errors.append('代码围栏未闭合')
     flow=body.get('### 3.2 Mermaid 流程图','')
@@ -184,7 +187,10 @@ def validate(text,template,expected):
         errors.append(impact_error)
     field_change = (body.get('### 2.1 需求改动','') + '\n' +
                     body.get('### 2.2 表字段 DDL 修改',''))
-    if re.search(r'(?:新增|增加|修改|调整|删除|废弃).{0,20}(?:对外报文|请求字段|响应字段|数据库字段|表字段|DTO字段|接口字段|消息字段)',field_change) and special=='无':
+    impact_none = special=='无' or any(
+        line.strip().lstrip('*- ').replace('**','').strip() in ('既有功能影响：无','既有功能影响:无')
+        for line in special.splitlines())
+    if re.search(r'(?:新增|增加|修改|调整|删除|废弃).{0,20}(?:对外报文|请求字段|响应字段|数据库字段|表字段|DTO字段|接口字段|消息字段)',field_change) and impact_none:
         errors.append('字段/接口契约变化时须在特殊逻辑章节说明既有功能影响')
     cfg=body.get('### 2.4 配置文件调整','')
     if cfg and cfg!='无' and not fenced_blocks(cfg):

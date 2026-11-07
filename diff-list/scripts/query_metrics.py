@@ -11,6 +11,9 @@ LOG_NAME='query-metrics.jsonl'
 QUERY_METRICS_VERSION=1
 
 
+RUN_SCHEMA_VERSION=4
+
+
 def metrics_path(analysis_path,review_path,run_schema_version):
     """仅识别 run_delivery 创建的固定运行目录，独立查询不记录。"""
     analysis=Path(analysis_path).resolve()

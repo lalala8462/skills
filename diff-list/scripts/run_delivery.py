@@ -11,13 +11,12 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from query_metrics import summarize_queries
+from query_metrics import RUN_SCHEMA_VERSION, summarize_queries
 from repo_access import cleanup_analysis_clones
 
 
 SCRIPT_DIR=Path(__file__).resolve().parent
 STATE_NAME='run-state.json'
-RUN_SCHEMA_VERSION=4
 AGENT_PHASES=('source_review','analysis_authoring','rework')
 WAIT_STATUSES=('waiting_agent','waiting_coverage_review','waiting_rework')
 

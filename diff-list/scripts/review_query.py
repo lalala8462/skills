@@ -11,8 +11,7 @@ from pathlib import Path
 from analysis_engine import VERSION, redact
 from source_index import git_bytes, source_lines
 from validate_analysis import verify_evidence
-from query_metrics import metrics_path, record_query
-from run_delivery import RUN_SCHEMA_VERSION
+from query_metrics import RUN_SCHEMA_VERSION, metrics_path, record_query
 
 PRIMARY_KINDS={
     'method_change','field_change','class_binding_change','configuration',
@@ -245,9 +244,11 @@ def _unit_index(row,indexes):
 
 def _paginate(rows,analysis_id,scope,limit,cursor):
     # Token 绑定范围和内容 ID，材料变化或跨视图重用会直接拒绝。
-    signature=hashlib.sha256(json.dumps(
-        [analysis_id,scope,limit,rows],ensure_ascii=False,
-        sort_keys=True).encode('utf-8')).hexdigest()[:20]
+    def signature(offset):
+        # 将期望页起点纳入校验，避免复制现有 cursor 后直接修改页码。
+        return hashlib.sha256(json.dumps(
+            [analysis_id,scope,limit,rows,offset],ensure_ascii=False,
+            sort_keys=True).encode('utf-8')).hexdigest()[:20]
     start=0
     if cursor:
         try:
@@ -256,11 +257,11 @@ def _paginate(rows,analysis_id,scope,limit,cursor):
             start=int(number)
         except (ValueError,UnicodeError,TypeError,binascii.Error) as exc:
             raise ValueError('invalid cursor: '+str(exc))
-        if start<0 or start>len(rows) or digest!=signature:
+        if start<0 or start>len(rows) or digest!=signature(start):
             raise ValueError('cursor 与当前分析范围/视图/内容不匹配')
     selected=rows[start:start+limit]
     end=start+len(selected)
-    token=(base64.urlsafe_b64encode('{}:{}'.format(end,signature).encode('ascii'))
+    token=(base64.urlsafe_b64encode('{}:{}'.format(end,signature(end)).encode('ascii'))
            .decode('ascii') if end<len(rows) else None)
     return selected,dict(total=len(rows),returned=len(selected),
         offset=start,complete=token is None,next_cursor=token)
