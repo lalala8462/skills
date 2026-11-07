@@ -6,7 +6,7 @@ import os
 import re
 import sys
 import tempfile
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 
 HEAD=re.compile(r'^#{1,6} .+$',re.M)
 
@@ -114,34 +114,7 @@ def validate(text,template,expected):
         errors.append('禁止使用“是否必须新增数据”列')
     if re.search(r'待确认|待核实|代码依据|证据编号|源码行号',text):
         errors.append('包含禁止的占位或代码证据描述')
-    checked = text
-    start_tag = '<!-- diff-list-generated-clones:start -->'
-    end_tag = '<!-- diff-list-generated-clones:end -->'
-    found_block = re.search(re.escape(start_tag) + r'\n(.*?)\n' +
-                            re.escape(end_tag) + r'\s*\Z', text, re.S)
-    if start_tag in text or end_tag in text:
-        if not found_block or text.count(start_tag)!=1 or text.count(end_tag)!=1:
-            errors.append('分析目录清单必须完整且位于报告最后')
-        else:
-            rows = found_block.group(1).splitlines()
-            if not rows or rows[0].strip() != '**本次创建的分析仓库目录（请后续手动删除）：**':
-                errors.append('分析目录清单缺少手动删除提示')
-            if len(rows) < 2:
-                errors.append('分析目录清单为空')
-            for row in rows[1:]:
-                m = re.fullmatch(r'- \x60([^\x60\r\n]+)\x60', row)
-                if m is None:
-                    errors.append('分析目录清单格式不正确')
-                    continue
-                p = m.group(1)
-                parts = PureWindowsPath(p).parts
-                if (not re.fullmatch(r'[A-Za-z]:\\.*', p) or
-                        '..' in parts or len(parts) < 4 or
-                        [piece.casefold() for piece in parts[-3:-1]] != ['diff-list','runs'] or
-                        not parts[-1].startswith('run-')):
-                    errors.append('分析目录路径不属于 diff-list 专用目录')
-            checked = text[:found_block.start()]
-    if re.search(r'[A-Za-z]:\\[^\s\x60|)]+',checked):
+    if re.search(r'[A-Za-z]:\\[^\s\x60|)]+',text):
         errors.append('文档包含 Windows 本机绝对路径')
     if text.count('```')%2:
         errors.append('代码围栏未闭合')

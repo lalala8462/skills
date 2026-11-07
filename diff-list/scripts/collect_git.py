@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
 """Collect exact selected Git changes without editing repositories (Python 3.8+)."""
-import argparse
 import json
 import subprocess
-import sys
 from pathlib import Path
-from repo_access import prepare_repo
 from net_effect import compose
 from commit_review import review as review_commit_history
 
@@ -244,52 +241,3 @@ def collect(project, capture_config=False, persist_snapshot=False):
         result['commit_review']['review_reasons'].append(
             'unselected intermediate commits touch selected files; scope needs review')
     return result
-
-
-def main(argv=None):
-    p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--repo', required=True, help='GitHub or GitLab repository URL')
-    p.add_argument('--rev', action='append', help='Commit SHA or SHA:parentIndex; repeat to select multiple commits')
-    p.add_argument('--base', help='Base for explicit range, used together with --head')
-    p.add_argument('--head', help='Head for explicit range, used together with --base')
-    p.add_argument('--output', required=True, help='Local JSON evidence path (sensitive)')
-    p.add_argument('--max-diff-bytes', type=int, default=20000000,
-                   help='Abort if combined diffs exceed this many UTF-8 bytes')
-    args = p.parse_args(argv)
-    try:
-        if bool(args.rev) == bool(args.base or args.head):
-            raise ValueError('Use either one or more --rev, or --base and --head')
-        if not args.rev and not (args.base and args.head):
-            raise ValueError('Range requires both --base and --head')
-        if args.max_diff_bytes < 1:
-            raise ValueError('--max-diff-bytes must be positive')
-        root, name = prepare_repo(args.repo)
-        selection = {'name': name, 'path': str(root), 'isolated_no_checkout': True}
-        if args.rev:
-            selection['revisions'] = [({'rev': v.rsplit(':', 1)[0], 'parent': int(v.rsplit(':', 1)[1])}
-                                     if ':' in v and v.rsplit(':', 1)[1].isdigit() else v)
-                                    for v in args.rev]
-        else:
-            selection['range'] = {'base': args.base, 'head': args.head}
-        result = {'schema_version': 2, 'projects': [collect(selection)],
-                  'source_repository': args.repo,
-                  'analysis_clone': str(root),
-                  'notice': 'Diff may contain secrets. Internal evidence only; do not copy into test report.'}
-        total = sum(len(entry['diff'].encode('utf-8')) for pr in result['projects']
-                    for entry in pr['selection'])
-        if total > args.max_diff_bytes:
-            raise ValueError('Diff size ' + str(total) + ' exceeds --max-diff-bytes; narrow selection or raise limit')
-        out = Path(args.output)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        if out.exists():
-            raise ValueError('Refuse to overwrite evidence: ' + str(out))
-        out.write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-        print(str(out.resolve()))
-        return 0
-    except (ValueError, KeyError, OSError) as exc:
-        print('ERROR: ' + str(exc), file=sys.stderr)
-        return 2
-
-
-if __name__ == '__main__':
-    sys.exit(main())

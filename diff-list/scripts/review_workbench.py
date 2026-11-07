@@ -9,20 +9,6 @@ from analysis_engine import VERSION
 from source_index import stable
 
 
-def normal_flow_name(symbol):
-    surface=(symbol or '').casefold()
-    if any(token in surface for token in ('refund','refundable')):
-        return '退款主流程'
-    if any(token in surface for token in ('notice','notify','callback','seefee')):
-        return '通知与回调主流程'
-    if any(token in surface for token in ('uniquecontrol','billno','unique_bill')):
-        return '渠道流水号主流程'
-    if any(token in surface for token in ('onecode','qrcode','aggregatepay','payment')) or 'pay' in surface:
-        return '聚合码支付主流程'
-    owner=(symbol or '').split('#',1)[0].rsplit('.',1)[-1]
-    return '其他关键流程：'+(owner or '未定位')
-
-
 def fact_symbols(fact):
     """提取事实中明确绑定的方法符号，不通过共享 evidence 扩大范围。"""
     data=fact.get('data') or {}
@@ -90,16 +76,6 @@ def fact_preview(fact):
     return dict(id=fact['id'],kind=fact.get('kind'),classification=fact.get('classification'),
                 data=_preview_value(fact.get('data') or {}),
                 evidence_ids=sorted(fact.get('evidence_ids') or []))
-
-
-def relation_preview(relation):
-    site=relation.get('site') or {}
-    compact_site={key:_preview_value(site[key]) for key in
-                  ('name','receiver','expression','arguments','usage') if key in site}
-    return dict(id=relation.get('id'),side=relation.get('side'),source=relation.get('source'),
-                targets=relation.get('targets') or [],status=relation.get('status'),
-                reason=relation.get('reason'),receiver_type=relation.get('receiver_type'),
-                site=compact_site,evidence_ids=sorted(relation.get('evidence_ids') or []))
 
 
 def _data_anchors(data):
@@ -319,7 +295,6 @@ def build_review(analysis):
                 id='RU-'+stable(source['name'],symbol)[:12],
                 scope='method',
                 symbol=symbol,
-                flow=normal_flow_name(symbol),
                 related_symbols=sorted(local_symbols-{symbol}),
                 change_summary=summarize_facts(direct_facts),
                 direct_fact_ids=sorted(fact['id'] for fact in direct_facts),
@@ -331,14 +306,16 @@ def build_review(analysis):
                 relation_ids=sorted(relation['id'] for relation in touching if relation.get('id'))))
 
         project_facts=[fact for fact in facts
-                       if fact.get('kind') in primary_kinds and not symbols_by_fact[fact['id']]]
+                       if fact.get('kind') in primary_kinds
+                       and not symbols_by_fact[fact['id']]
+                       and not (fact.get('kind')=='configuration' and
+                                (fact.get('data') or {}).get('change')=='retained_or_consumers_changed')]
         if project_facts:
             project_unit_fact_ids=sorted(fact['id'] for fact in project_facts)
             units.append(dict(
                 id='RU-'+stable(source['name'],'project',project_unit_fact_ids)[:12],
                 scope='project',
                 symbol=None,
-                flow='项目级变化',
                 related_symbols=[],
                 change_summary=summarize_facts(project_facts),
                 direct_fact_ids=project_unit_fact_ids,
@@ -351,7 +328,6 @@ def build_review(analysis):
             selected_fact_ids.update(project_unit_fact_ids)
 
         fact_catalog=[fact_preview(facts_by_id[identifier]) for identifier in sorted(selected_fact_ids)]
-        relation_catalog=[relation_preview(selected_relations[identifier]) for identifier in sorted(selected_relations)]
         selected_relation_ids.update(selected_relations)
         units=sorted(units,key=lambda row:row['id'])
         facets=build_facets(source['name'],units,facts_by_id,relations_by_id)
@@ -375,12 +351,11 @@ def build_review(analysis):
                 source_fact_count=len(source['facts']),
                 selected_fact_count=len(fact_catalog),
                 source_relation_count=len(source['relations']),
-                selected_relation_count=len(relation_catalog)),
+                selected_relation_count=len(selected_relations)),
             review_facets=facets,
             navigation_facets=navigation_facets,
             review_units=units,
             fact_catalog=fact_catalog,
-            relation_catalog=relation_catalog,
             hard_errors=source['hard_errors'],
             stats=source['stats']
         ))

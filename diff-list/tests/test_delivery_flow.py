@@ -26,15 +26,15 @@ from run_delivery import _close_current_agent_phase, _record_stage_attempt
 class DeliveryFlowTest(unittest.TestCase):
     def test_navigation_facets_keep_high_value_and_hide_common_calls(self):
         units=[
-            dict(id='RU-1',symbol='sample.PayService#pay()'),
-            dict(id='RU-2',symbol='sample.PayService#refund()')
+            dict(id='RU-1',symbol='sample.InventoryService#add()'),
+            dict(id='RU-2',symbol='sample.InventoryService#remove()')
         ]
         facets=[
-            dict(id='RF-config',type='config',anchor='pay.timeout',
+            dict(id='RF-config',type='config',anchor='inventory.threshold',
                  unit_ids=['RU-1','RU-2'],unit_count=2),
-            dict(id='RF-owner',type='owner',anchor='sample.PayService',
+            dict(id='RF-owner',type='owner',anchor='sample.InventoryService',
                  unit_ids=['RU-1','RU-2'],unit_count=2),
-            dict(id='RF-business',type='direct_call',anchor='sample.OrderManager#lock()',
+            dict(id='RF-business',type='direct_call',anchor='sample.StockManager#reserve()',
                  unit_ids=['RU-1','RU-2'],unit_count=2),
             dict(id='RF-common',type='direct_call',anchor='sample.common.StringUtils#trim()',
                  unit_ids=['RU-1','RU-2'],unit_count=2)
@@ -480,6 +480,91 @@ class DeliveryFlowTest(unittest.TestCase):
         self.assertEqual(row['elapsed_seconds'],2.0)
         self.assertEqual(len(row['attempts']),2)
         self.assertEqual(row['status'],'completed')
+
+    def test_default_run_directory_is_outside_current_project(self):
+        with tempfile.TemporaryDirectory() as td:
+            with mock.patch.dict('os.environ',{'LOCALAPPDATA':td}), \
+                 mock.patch.object(delivery,'_prepare',return_value=0) as prepare:
+                self.assertEqual(delivery.main(['--repo','example','--rev','sha']),0)
+                args=prepare.call_args.args[0]
+                self.assertEqual(Path(args.runs_root),
+                                 Path(td)/'diff-list'/'deliveries')
+
+    def test_finalize_keeps_work_files_and_cleans_clones_after_success(self):
+        with tempfile.TemporaryDirectory() as td:
+            run=Path(td)/'result';work=run/'.work';work.mkdir(parents=True)
+            source_files={}
+            for name in ('coverage.json','test-cases.xlsx','report.md'):
+                path=work/name
+                path.write_bytes(('sample-'+name).encode('utf-8'))
+                source_files[name]=path
+            analysis=work/'analysis'/'analysis.json'
+            analysis.parent.mkdir()
+            analysis.write_text('{}',encoding='utf-8')
+            review=work/'review.json';cases=work/'test-cases.json'
+            state_path=work/'run-state.json'
+            state=dict(run_schema_version=delivery.RUN_SCHEMA_VERSION,
+                       run_dir=str(run.resolve()),status='resuming',stages={})
+            delivery._write_state(state_path,state)
+            with mock.patch.object(delivery.subprocess,'run',
+                                   return_value=SimpleNamespace(returncode=0)), \
+                 mock.patch.object(delivery,'cleanup_analysis_clones',return_value=2) as cleanup:
+                delivery._finalize_stage(state_path,state,run,analysis,review,cases)
+            cleanup.assert_called_once_with(analysis)
+            for name,source in source_files.items():
+                self.assertTrue(source.exists())
+                self.assertEqual((run/name).read_bytes(),source.read_bytes())
+            final=json.loads(state_path.read_text(encoding='utf-8'))
+            self.assertEqual(final['status'],'completed')
+            self.assertEqual(final['clones_cleaned'],2)
+
+    def test_publish_failure_keeps_original_work_files_for_resume(self):
+        with tempfile.TemporaryDirectory() as td:
+            run=Path(td)/'result';work=run/'.work';work.mkdir(parents=True)
+            for name in ('coverage.json','test-cases.xlsx','report.md'):
+                (work/name).write_text('output',encoding='utf-8')
+            analysis=work/'analysis'/'analysis.json';analysis.parent.mkdir()
+            analysis.write_text('{}',encoding='utf-8')
+            state_path=work/'run-state.json'
+            state=dict(run_schema_version=delivery.RUN_SCHEMA_VERSION,
+                       run_dir=str(run.resolve()),status='resuming',stages={})
+            delivery._write_state(state_path,state)
+            with mock.patch.object(delivery.subprocess,'run',
+                                   return_value=SimpleNamespace(returncode=0)), \
+                 mock.patch.object(delivery.shutil,'copy2',
+                                   side_effect=OSError('copy failed')), \
+                 mock.patch.object(delivery,'cleanup_analysis_clones') as cleanup:
+                with self.assertRaisesRegex(RuntimeError,'finalize'):
+                    delivery._finalize_stage(state_path,state,run,analysis,
+                                             work/'review.json',work/'test-cases.json')
+            cleanup.assert_not_called()
+            self.assertEqual(json.loads(state_path.read_text(encoding='utf-8'))['status'],'failed')
+            self.assertTrue(all((work/name).exists()
+                                for name in ('coverage.json','test-cases.xlsx','report.md')))
+
+    def test_clone_cleanup_failure_is_reported_without_failing_published_delivery(self):
+        with tempfile.TemporaryDirectory() as td:
+            run=Path(td)/'result';work=run/'.work';work.mkdir(parents=True)
+            for name in ('coverage.json','test-cases.xlsx','report.md'):
+                (work/name).write_text('output',encoding='utf-8')
+            analysis=work/'analysis'/'analysis.json'
+            analysis.parent.mkdir()
+            analysis.write_text('{}',encoding='utf-8')
+            state_path=work/'run-state.json'
+            state=dict(run_schema_version=delivery.RUN_SCHEMA_VERSION,
+                       run_dir=str(run.resolve()),status='resuming',stages={})
+            delivery._write_state(state_path,state)
+            with mock.patch.object(delivery.subprocess,'run',
+                                   return_value=SimpleNamespace(returncode=0)), \
+                 mock.patch.object(delivery,'cleanup_analysis_clones',
+                                   side_effect=ValueError('unsafe path')), \
+                 contextlib.redirect_stderr(io.StringIO()):
+                delivery._finalize_stage(state_path,state,run,analysis,
+                                         work/'review.json',work/'test-cases.json')
+            finished=json.loads(state_path.read_text(encoding='utf-8'))
+            self.assertEqual(finished['status'],'completed')
+            self.assertIn('unsafe path',finished['clone_cleanup_error'])
+            self.assertTrue((run/'report.md').exists())
 
     def test_stage_timing_rejects_noncurrent_shape(self):
         state={'stages':{'coverage':{

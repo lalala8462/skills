@@ -3,13 +3,16 @@
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 from query_metrics import summarize_queries
+from repo_access import cleanup_analysis_clones
 
 
 SCRIPT_DIR=Path(__file__).resolve().parent
@@ -309,7 +312,6 @@ def _finalize_stage(state_path,state,run_dir,analysis,review,cases):
     status='completed'
     returncode=0
     commands=[
-        [sys.executable,'-B',str(SCRIPT_DIR/'append_run_dirs.py'),str(report),'--source',str(analysis)],
         [sys.executable,'-B',str(SCRIPT_DIR/'validate_report.py'),str(report),
          '--analysis',str(analysis),'--review',str(review),'--cases',str(cases),'--finalize']]
     try:
@@ -323,7 +325,17 @@ def _finalize_stage(state_path,state,run_dir,analysis,review,cases):
             for source,name in ((coverage,'coverage.json'),(excel,'test-cases.xlsx'),(report,'report.md')):
                 if not source.is_file():
                     raise OSError('缺少待发布文件: '+str(source))
-                os.replace(str(source),str(run_dir/name))
+                # 不移动 .work 原文件：某个输出发布失败后仍可直接 resume 重试。
+                temporary=run_dir/(name+'.tmp')
+                shutil.copy2(str(source),str(temporary))
+                os.replace(str(temporary),str(run_dir/name))
+            try:
+                state['clones_cleaned']=cleanup_analysis_clones(analysis)
+                state.pop('clone_cleanup_error',None)
+            except (OSError,ValueError,TypeError,KeyError) as exc:
+                # 交付已完成，清理失败不能导致重复发布或误删其它目录。
+                state['clone_cleanup_error']=str(exc)
+                print('CLONE_CLEANUP_WARNING: '+str(exc),file=sys.stderr)
     except OSError:
         status='failed'
         returncode=127
@@ -430,7 +442,9 @@ def main(argv=None):
     parser.add_argument('--head')
     parser.add_argument('--manifest')
     parser.add_argument('--rules')
-    parser.add_argument('--runs-root',default='runs')
+    parser.add_argument('--runs-root',
+                        default=str(Path(os.getenv('LOCALAPPDATA') or tempfile.gettempdir())/
+                                    'diff-list'/'deliveries'))
     parser.add_argument('--resume',help='继续指定 run 目录，完成预检、coverage、Excel、report 和 finalize')
     parser.add_argument('--run-dir',help='配合 --mark-agent-phase 指定当前 run 目录')
     parser.add_argument('--mark-agent-phase',choices=AGENT_PHASES,

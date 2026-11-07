@@ -22,11 +22,13 @@
 
 首次执行：
 
-    py -3 .\scripts\run_delivery.py --repo https://github.com/example/project --rev FULL_SHA --runs-root G:\tmp\diff-list\runs
+    py -3 .\scripts\run_delivery.py --repo https://github.com/example/project --rev FULL_SHA
 
-脚本创建唯一运行目录：
+默认在系统用户数据目录创建运行目录，不在 Git 项目内生成 `runs/` 或 `.work/`：
 
-    runs/20261106-140500-123/
+    %LOCALAPPDATA%\diff-list\deliveries\20261106-140500-123\
+
+可选 `--runs-root G:\tmp\diff-list\deliveries` 指定其它仓库外目录。脚本只在成功交付后删除自己创建的隔离 clone；失败时保留以便重试，删除失败会在 `run-state.json` 留下错误说明。交付后原始快照源码查询不再可用，完整分析事实仍保留在 `.work/analysis/`。
 
 内部结构：
 
@@ -96,7 +98,7 @@ review_schema_version=4 的 review.json 提供：
 - review_units：变化点级复核入口；
 - review_facets：完整精确结构关系；
 - navigation_facets：高价值阅读排序；
-- fact_catalog / relation_catalog：复核所需事实和关系预览。
+- fact_catalog：复核单元对应的事实预览；完整关系通过 analysis.json 或 `--view relations` 查证。
 
 review_facets 当前锚点包括 owner、direct_call、config、mapper、field。它们允许重叠，不做传递闭包，也不表示业务需求归属。
 
@@ -116,7 +118,7 @@ PowerShell 先定义复核材料路径：
 三层查证：
 
 1. **全局变化概览**：`py -3 .\scripts\review_query.py --analysis $a --review $r --overview`。返回可分页的 unit 索引、事实/关系数量、分析限制与审计异常计数。
-2. **按需精确查询**：`--unit RU-xxx` 或 `--query originalTradeNo` 默认只返回结构索引；`--unit RU-xxx --view facts`、`--view calls`、`--view db`、`--view conditions`、`--view relations`、`--view evidence` 才会展开详细数据。
+2. **按需精确查询**：`--unit RU-xxx` 或 `--query originalTradeNo` 默认只返回结构索引；`--unit RU-xxx --view facts`、`--view db`、`--view conditions`、`--view relations`、`--view evidence` 才会展开详细数据。
 3. **原始源码复核**：`--fact F-xxx` 返回完整事实及 evidence ID；`--evidence E-xxx --source-lines 12` 会校验固定 Git tree/blob 并读取脱敏源码上下文。关键业务判断必须核实 before/after，不能只看摘要。
 
 新增精确命中：`--query originalTradeNo --view facts --matched-only` 只返回关键词直接匹配的事实及关联单元入口，不把命中 unit 的全部事实一并展开；不带 `--matched-only` 时保持完整 unit 上下文模式。`--unit RU-xxx` 的索引直接包含 `direct_fact_ids / direct_evidence_ids / context_fact_count`，可按 ID 回查固定快照。
@@ -224,7 +226,7 @@ Agent 不手工填写 fact/evidence ID，脚本根据 review_unit_ids 自动展�
 - 代码关系不等于业务关系；
 - 脚本不自动声明业务变化归属；
 - coverage 不证明业务正确性；
-- unresolved、hard_errors、状态、金额、幂等、配置、DB/渠道副作用、接口契约、异常恢复仍需 Agent 按风险回查；
+- unresolved、hard_errors、状态、数值精度、幂等、配置、数据库及外部依赖副作用、接口契约、异常恢复仍需 Agent 按风险回查；
 - 未实际执行的构建、单元测试、数据库验证或环境联调不得写成已验证。
 
 ## 回归测试

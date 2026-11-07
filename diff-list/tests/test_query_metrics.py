@@ -94,6 +94,17 @@ class QueryMetricsTest(unittest.TestCase):
             self.assertEqual(summary['returned_items'],1)
             self.assertEqual(summary['invalid_events'],0)
 
+    def test_duplicate_calls_view_is_removed(self):
+        with tempfile.TemporaryDirectory() as td:
+            _,analysis,review,_=self._fixture(td)
+            with contextlib.redirect_stdout(io.StringIO()), \
+                 contextlib.redirect_stderr(io.StringIO()) as error:
+                status=review_query.main([
+                    '--analysis',str(analysis),'--review',str(review),
+                    '--query','access','--view','calls'])
+            self.assertEqual(status,2)
+            self.assertIn('ERROR',error.getvalue())
+
     def test_repeat_identity_accounts_for_cursor_and_view(self):
         args=SimpleNamespace(
             overview=False,audit=False,query='fieldFromSource',unit=None,

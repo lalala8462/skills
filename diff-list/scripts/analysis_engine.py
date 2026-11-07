@@ -51,7 +51,6 @@ def relation_affects_review_scope(edge, graph, custom_tokens=()):
     receiver=' '.join((edge.get('receiver_type') or '',relation_receiver_hint(site))).casefold()
     source=edge.get('source') or ''
     target_surface=' '.join((receiver,name)).casefold()
-    caller=source.casefold()
     caller_method=source.split('#')[-1].split('(',1)[0].casefold()
     method_rows=getattr(graph,'methods',{})
     method_meta=method_rows.get(source,{}) if isinstance(method_rows,dict) else {}
@@ -62,14 +61,11 @@ def relation_affects_review_scope(edge, graph, custom_tokens=()):
     endpoint_annotation=any(a in ('restcontroller','controller','requestmapping','getmapping',
         'postmapping','putmapping','patchmapping','deletemapping') for a in annotations)
     return_type=(method_meta.get('return_type') or '').rsplit('.',1)[-1].casefold()
-    response_return=any(token in return_type for token in ('response','reply','result','bizresult'))
-    business_return=any(token in (method_meta.get('owner','')+' '+caller_method).casefold()
-                        for token in ('refund','payment','pay','notify','notification','callback'))
+    response_return=any(token in return_type for token in ('response','reply','result'))
     critical_return_context=(endpoint_annotation or 'controller' in method_meta.get('owner','').casefold()
-                             or response_return or business_return)
-    scopes=('mapper','dao','repository','jdbc','database','recordindex','store',
-            'channel','proxy','acquirer','notification','notify','callback','qrcode',
-            'outtradeno','orderno','billno','transtype')
+                             or response_return)
+    scopes=('mapper','dao','repository','jdbc','database','store',
+            'proxy','notification','notify','callback')
     sink_context=any(token in target_surface for token in scopes)
     custom_target=any(token.casefold() in target_surface for token in custom_tokens)
     raw_receiver=site.get('receiver') or ''
@@ -90,20 +86,18 @@ def relation_affects_review_scope(edge, graph, custom_tokens=()):
         candidate_db=any(token in candidate_target for token in ('mapper','dao','repository','jdbc','database','recordindex','store'))
         if candidate_builder and candidate_name!='build':return False
         if candidate_name.startswith('set'):
-            return candidate_db and any(token in candidate_name[3:] for token in ('refund','status','state'))
+            return candidate_db and any(token in candidate_name[3:] for token in ('status','state'))
         if candidate_name=='<init>':
-            return any(token in candidate_target for token in ('bizexception','exception','bizresult','response','resp','reply','errorcode'))
-        if 'bizresult' in candidate_target and candidate_name in ('success','fail','error','ok'):
-            return True
+            return any(token in candidate_target for token in ('exception','response','resp','reply','result','errorcode'))
         if candidate_name.startswith(('get','is','has','equals','hashcode','tostring','contains')):
             return (candidate_db and candidate_name.startswith(('getby','find','query','select','count','exists','list','load','read')) or
                     any(token.casefold() in candidate_target for token in custom_tokens) or
-                    any(token in candidate_name for token in ('refundstatus','refundstate','channelrespdesc','channelrefundno','channelparam')))
+                    any(token in candidate_name for token in ('status','state')))
         return (any(token in candidate_target for token in scopes) or
                 any(token.casefold() in candidate_target for token in custom_tokens) or
-                any(token in candidate_name for token in ('refund','refundable','transstate','paystate','status','state')) or
+                any(token in candidate_name for token in ('status','state')) or
                 candidate_name.startswith(('insert','update','delete','save','persist','execute','batch',
-                    'commit','rollback','register','send','publish','pay','refund','close','cancel',
+                    'commit','rollback','register','send','publish','close','cancel',
                     'notice','notify','write','remove','mark')))
     if name.startswith('log') or 'logger' in receiver:
         return False
@@ -124,25 +118,21 @@ def relation_affects_review_scope(edge, graph, custom_tokens=()):
                     returned_flow=True
             if row.get('kind')=='branch':
                 condition=(row.get('condition') or '').casefold()
-                has_state=any(token in condition for token in (
-                    'refund','refundable','transstate','paystate','status','state'))
+                has_state=any(token in condition for token in ('status','state'))
                 if has_state and call_origins & set(graph.origins(
                         row.get('condition',''),source,row.get('order',0))):
                     state_branch=True
-                if 'refund' in caller and name in ('isfail','isunKnow','issuccess'):
-                    state_branch|=bool(call_origins & set(graph.origins(
-                        row.get('condition',''),source,row.get('order',0))))
         for sibling in graph.edges:
             if sibling['source']!=source or sibling is edge or not critical_sink(sibling):
                 continue
             for argument in sibling['site'].get('arguments',[]):
                 if call_origins & set(graph.origins(argument,source,sibling['site'].get('order',0))):
                     sink_flow=True
-    state_context=(any(token in name for token in ('refund','refundable','transstate','paystate','status','state')) or
-                   any(token in caller_method for token in ('refundstatus','refundstate','transstatus','paystate')))
+    state_context=(any(token in name for token in ('status','state')) or
+                   any(token in caller_method for token in ('status','state')))
     if name=='<init>':
         response_type=any(token in target_surface for token in (
-            'bizexception','exception','bizresult','response','resp','reply','errorcode'))
+            'exception','response','resp','reply','result','errorcode'))
         return response_type or sink_flow
     if access_method:
         if name.startswith(('equals','hashcode','tostring')):
@@ -154,12 +144,9 @@ def relation_affects_review_scope(edge, graph, custom_tokens=()):
     # DTO 字段填充由字段来源事实表达。
     if name.startswith('set'):
         database_target=any(token in receiver for token in ('mapper','dao','repository','jdbc','database','recordindex','store'))
-        return database_target and any(token in name[3:] for token in ('refund','status','state'))
+        return database_target and any(token in name[3:] for token in ('status','state'))
     if builder_chain:
         return sink_flow
-    if name=='<init>':
-        return any(token in target_surface for token in ('bizexception','exception','bizresult','response','resp',
-                                                          'reply','errorcode'))
     if (returned_flow and critical_return_context) or sink_flow or state_branch:
         return True
     if sink_context:
@@ -168,7 +155,7 @@ def relation_affects_review_scope(edge, graph, custom_tokens=()):
     if custom_target:
         return True
     if name.startswith(('insert','update','delete','save','persist','execute','batch','commit','rollback',
-                        'register','send','publish','pay','refund','close','cancel','notice','notify','write','remove','mark')):
+                        'register','send','publish','close','cancel','notice','notify','write','remove','mark')):
         return True
     return False
 

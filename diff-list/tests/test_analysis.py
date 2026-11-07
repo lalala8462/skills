@@ -249,12 +249,6 @@ class Handler {
         self.assertTrue(p['git']['commit_review']['review_required'])
         self.assertFalse(any(f['kind']=='method_change' for f in p['facts']))
 
-    def test_new_analysis_clone_footer_uses_analysis_clone(self):
-        from append_run_dirs import input_clones
-        p=self.base/'footer.json'
-        p.write_text(json.dumps(self.analysis),encoding='utf-8')
-        self.assertEqual(input_clones(p),[self.analysis['projects'][0]['analysis_clone']])
-
     def test_mapper_is_bound_but_dynamic_sql_not_executed(self):
         statements=self.facts('mapper_statement')
         self.assertTrue(any(f['data']['name']=='list' and f['data']['dynamic'] for f in statements))
@@ -357,12 +351,31 @@ class Handler {
         self.assertEqual(compact['review_summary']['max_facet_size'],12)
         self.assertEqual({facet['type'] for facet in compact['review_facets']},{'direct_call','owner'})
         self.assertTrue(all(facet['unit_count']==12 for facet in compact['review_facets']))
-        self.assertEqual({unit['flow'] for unit in compact['review_units']},{'退款主流程'})
+        self.assertTrue(all('flow' not in unit for unit in compact['review_units']))
         self.assertEqual({unit['symbol'] for unit in compact['review_units']},
                          {fact['data']['symbol'] for fact in facts})
         self.assertEqual({fact['id'] for fact in compact['fact_catalog']},
                          {fact['id'] for fact in facts})
-        self.assertEqual(len(compact['relation_catalog']),12)
+        self.assertNotIn('relation_catalog',compact)
+
+    def test_nonpayment_review_does_not_infer_business_and_ignores_retained_config_as_project_change(self):
+        from analysis_engine import VERSION
+        from review_workbench import build_review
+        symbol='sample.inventory.StockService#adjust(int)'
+        analysis=dict(schema_version=2,analyzer_version=VERSION,analysis_id='inventory-review',
+            projects=[dict(name='inventory',change_seeds=[symbol],facts=[
+                dict(id='F-stock',kind='method_change',classification='source_fact',
+                     data=dict(symbol=symbol,change='modified'),evidence_ids=[]),
+                dict(id='F-unchanged-setting',kind='configuration',classification='source_fact',
+                     data=dict(change='retained_or_consumers_changed',before={},after={}),
+                     evidence_ids=[])],
+                relations=[],hard_errors=[],stats={})],cross_project_relations=[])
+        result=build_review(analysis)['projects'][0]
+        self.assertEqual(len(result['review_units']),1)
+        self.assertEqual(result['review_units'][0]['symbol'],symbol)
+        self.assertNotIn('flow',result['review_units'][0])
+        self.assertNotIn('F-unchanged-setting',result['review_units'][0]['fact_ids'])
+        self.assertEqual(result['review_summary']['selected_relation_count'],0)
 
     def test_review_facets_do_not_merge_transitively_and_summary_stays_direct(self):
         from analysis_engine import VERSION
@@ -760,6 +773,22 @@ class Consumer {ExampleAdapter adapter;
         edge=next(e for e in graph.edges if e['site']['name']=='getValue')
         self.assertFalse(relation_affects_review_scope(edge,graph))
         self.assertTrue(relation_affects_review_scope(edge,graph,('ExampleAdapter',)))
+
+    def test_inventory_and_access_checks_without_payment_names(self):
+        graph=self.graph({'inventory':'''package sample;
+class StockStore {String findById(String key){return key;} void save(String key){}}
+class StockService {StockStore store;String apply(String key){
+ String prior=store.findById(key);store.save(key);return prior;}}
+class AccessHelper {String getLabel(){return "ok";}}
+class AccessService {AccessHelper helper;String view(){return helper.getLabel();}}
+'''})
+        by_name={edge['site']['name']:edge for edge in graph.edges}
+        self.assertTrue(relation_affects_review_scope(
+            dict(by_name['save'],status='unresolved',requires_review=True),graph))
+        self.assertTrue(relation_affects_review_scope(
+            dict(by_name['findById'],status='unresolved',requires_review=True),graph))
+        self.assertFalse(relation_affects_review_scope(
+            dict(by_name['getLabel'],status='unresolved',requires_review=True),graph))
 
     def test_unresolved_relation_scope_keeps_database_effects_and_drops_plain_accessors(self):
         graph=self.graph({'scope':'''package p;

@@ -15,7 +15,7 @@ description: "基于指定仓库与 Git 修订生成最终净变化分析、范�
 
 ## 正常入口
 
-正常流程只使用 scripts/run_delivery.py。**默认使用通用分析规则，不依赖任何项目专用 rules 文件。** 未收到用户明确指定的规则文件时，不要自行搜索、猜测或补传某项目规则，更不能因此重复分析同一批 SHA。
+正常流程只使用 scripts/run_delivery.py。运行目录默认在系统用户数据目录（Windows `%LOCALAPPDATA%/diff-list/deliveries`），不要把 `--runs-root` 指向项目工作区。成功交付后脚本自动清理隔离 clone，失败保留以便继续 `--resume`。**默认使用通用分析规则，不依赖任何项目专用 rules 文件。** 未收到用户明确指定的规则文件时，不要自行搜索、猜测或补传某项目规则，更不能因此重复分析同一批 SHA。
 
 首次运行生成：
 
@@ -49,7 +49,7 @@ facet 不代表同一业务需求，代码关系也不等于业务关系。
 ## Agent 复核顺序与脚本接口
 
 1. 先用 `review_query.py --analysis <analysis.json> --review <review.json> --overview` 获得全局变化索引，再用 `--audit` 查看结构盲区和 hard_errors；不能只看 navigation_facets。
-2. 针对需要核实的问题使用 `--unit <RU-id>`、`--query <字段/方法/配置键/Mapper>` 获取轻量索引；unit 索引给出 `direct_fact_ids/direct_evidence_ids` 方便直接回查；显式通过 `--view facts/relations/evidence/db/calls/conditions` 查询相关证据。`--query <关键词> --view facts --matched-only` 只返回精确命中事实；不带该参数仍返回关联单元背景。分类视图不代表完整业务范围。
+2. 针对需要核实的问题使用 `--unit <RU-id>`、`--query <字段/方法/配置键/Mapper>` 获取轻量索引；unit 索引给出 `direct_fact_ids/direct_evidence_ids` 方便直接回查；显式通过 `--view facts/relations/evidence/db/conditions` 查询相关证据。`--query <关键词> --view facts --matched-only` 只返回精确命中事实；不带该参数仍返回关联单元背景。分类视图不代表完整业务范围。
 3. 根据返回的 fact/evidence ID 使用 `--fact <id>` 和 `--evidence <id> --source-lines 12` 核验固定 Git 快照中的脱敏源码，重要结论需要检查 before/after。
 4. 响应 `page.complete=false` 时用 `--cursor <next_cursor>` 继续读取，不得把截取的第一页视为完整；默认 10 条、`--limit` 最大 100。不要主动使用 `--view all` 把大量重复证据一次性送入 Agent 上下文。
 5. 完成业务结论、用例和报告后再次 `--audit`，检查未归属主要事实、未索引事实/关系、未解析依赖、证据缺失和分析硬错误。`coverage.pending_review=0` 不能代替这一步。Audit 优先看直接变化和触及变更方法的未解析关系；背景事实仍可查，不能直接判定为业务无关。
@@ -128,5 +128,5 @@ coverage 待复核继续计入 `analysis_authoring`；preflight 等步骤失败�
 - query 只查证，不归纳业务；
 - 不自动生成正式业务变化组；
 - 不从代码结构自动声明测试充分；
-- unresolved、hard_errors、状态、金额、幂等、接口契约、配置、DB/渠道副作用和异常恢复仍需按风险回查；
+- unresolved、hard_errors、状态、数值精度、幂等、接口契约、配置、数据库及外部依赖副作用和异常恢复仍需按风险回查；
 - 未实际执行的构建、单元测试、数据库验证或环境联调不得写成已验证。
