@@ -255,7 +255,7 @@ def build_review(analysis):
     primary_kinds={
         'method_change','field_change','class_binding_change','configuration',
         'configuration_file_change','configuration_parse_boundary',
-        'argument_source_change'
+        'argument_source_change','mapper_statement_change'
     }
     supporting_kinds={
         'branch','switch_branch','membership_filter','return_sources','return_override',
@@ -307,7 +307,9 @@ def build_review(analysis):
 
         project_facts=[fact for fact in facts
                        if fact.get('kind') in primary_kinds
-                       and not symbols_by_fact[fact['id']]
+                       and (not symbols_by_fact[fact['id']] or
+                            (fact.get('kind')=='mapper_statement_change' and
+                             fact['id'] not in selected_fact_ids))
                        and not (fact.get('kind')=='configuration' and
                                 (fact.get('data') or {}).get('change')=='retained_or_consumers_changed')]
         if project_facts:
