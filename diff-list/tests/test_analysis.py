@@ -754,7 +754,7 @@ class Base {} class Child extends Base {}
             self.assertEqual(graph.type_owner('Base',child),'p.Base')
             resolve.assert_called_once()
         reference=weakref.ref(graph)
-        del original,graph
+        del original,resolve,graph
         gc.collect()
         self.assertIsNone(reference())
 
