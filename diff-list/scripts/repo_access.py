@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Resolve a GitHub URL to an isolated, automatically maintained Git cache."""
+import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -97,6 +99,34 @@ def prepare_repo(url):
     target = run_dir / 'repo'
     try:
         run_git('-c', 'core.longpaths=true', 'clone', '--quiet', '--no-checkout', source, target)
-    except ValueError as exc:
-        raise ValueError(str(exc) + '\nCreated run directory (delete manually): ' + str(run_dir)) from exc
+    except ValueError:
+        # clone 失败时无证据可复用，清理由本次调用创建的空目录。
+        shutil.rmtree(str(run_dir))
+        raise
     return target, repo
+
+
+def cleanup_analysis_clones(analysis_path):
+    """交付成功后只删除本工具创建的隔离 clone，不触碰源仓库及其它目录。"""
+    analysis=json.loads(Path(analysis_path).read_text(encoding='utf-8-sig'))
+    projects=analysis.get('projects') or []
+    if not projects:
+        raise ValueError('analysis.json missing projects for clone cleanup')
+    root=(Path(os.getenv('LOCALAPPDATA') or tempfile.gettempdir())/'diff-list'/'runs').resolve()
+    directories=[]
+    for project in projects:
+        original=project.get('analysis_clone')
+        if not isinstance(original,str) or not original:
+            raise ValueError('analysis project missing analysis_clone')
+        raw=Path(original)
+        path=raw.resolve()
+        parent=path.parent
+        if (raw.is_symlink() or parent.is_symlink() or path.name!='repo'
+                or parent.parent!=root or not parent.name.startswith('run-')
+                or not (path/'.git').is_dir()
+                or {part.name for part in parent.iterdir()}!={'repo'}):
+            raise ValueError('refuse unsafe clone cleanup: '+str(original))
+        directories.append(parent)
+    for directory in sorted(set(directories)):
+        shutil.rmtree(str(directory))
+    return len(set(directories))
