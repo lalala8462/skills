@@ -741,6 +741,14 @@ class Convert{To run(From source){To target=new To(source);BeanUtils.copyPropert
         constructors=[e for e in graph.edges if e['site']['kind']=='construct']
         self.assertTrue(any(e['targets'] and e['status']=='source_resolved' for e in constructors))
 
+    def test_missing_indexed_evidence_is_recorded_as_scope_error(self):
+        graph=self.graph({'sample':'class Service {void run(){}}'})
+        engine=ProjectAnalysis('sample','unused',graph.index,graph.index,COMMON_RULES,DEFAULT_LIMITS)
+        missing=dict(path='missing.java',blob='unknown',line=1,end_line=1,kind='method')
+        self.assertIsNone(engine.evidence('result',missing))
+        self.assertTrue(any('internal evidence source missing' in row
+                            for row in engine.scope_errors))
+
     def test_graph_type_owner_cache_does_not_pin_graph_instances(self):
         import gc
         import weakref
