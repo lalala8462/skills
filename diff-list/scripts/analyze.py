@@ -98,6 +98,7 @@ def analyze_project(spec,rules,limits,parser,cache):
     after=build_index(root,effect['result_tree'],limits,parser,cache)
     changed_paths=set(effect.get('changed_files',[]))
     changed_java_paths={path for path in changed_paths if path.lower().endswith('.java')}
+    changed_xml_paths={path for path in changed_paths if path.lower().endswith('.xml')}
     engine=ProjectAnalysis(name,root,before,after,rules,limits)
     result,context=engine.run()
     configs,config_errors=extract_config_changes(config_pairs)
@@ -106,12 +107,23 @@ def analyze_project(spec,rules,limits,parser,cache):
     evidence_omissions=result.pop('critical_evidence_omissions',[])
     changed_source_issues={row['path'] for index in (before,after) for row in index['issues']
                            if row['path'] in changed_java_paths}
+    changed_xml_issues={row['path'] for index in (before,after) for row in index['issues']
+                        if row['path'] in changed_xml_paths}
+    limit_errors=[]
+    limit_reasons={'file_count_limit','file_size_limit','total_size_limit'}
+    for side,index in (('baseline',before),('result',after)):
+        skipped=[row for row in index['issues'] if row['reason'] in limit_reasons]
+        if skipped:
+            sample=', '.join('{} ({})'.format(row['path'],row['reason']) for row in skipped[:3])
+            limit_errors.append('source indexing limit exceeded on {}: {} file(s); examples: {}'.format(
+                side,len(skipped),sample))
     result['hard_errors']=sorted(set(
         [row['reason'] for index in (before,after) for row in index['issues']
          if 'missing source blob' in row['reason']]
         +['changed Java source could not be fully indexed: '+path for path in changed_source_issues]
+        +['changed XML source could not be fully indexed: '+path for path in changed_xml_issues]
         +['critical changed evidence exceeded analysis context limits: '+marker for marker in evidence_omissions]
-        +scope_errors))
+        +limit_errors+scope_errors))
     relevant=configs+[r for r in config_errors+skipped if r.get('review_required',True)
                       and r['path'].lower().endswith(('.properties','.yaml','.yml','.xml'))]
     if relevant:

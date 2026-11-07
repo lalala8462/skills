@@ -3,17 +3,17 @@
 ## analysis.json
 
 - schema_version=2
-- analyzer_version=2.2.1
+- analyzer_version=2.3.0
 
 analysis_id 由分析器版本、生效规则（含 limits 参数）和项目固定快照计算；显式调整 limits 会改变分析身份。
 
 每个 project 保存 repository、analysis_clone、snapshots、change_seeds、git、facts、relations、hard_errors 和 stats。`analysis_clone` 仅用于当前运行的固定快照取证，成功交付后脚本删除隔离 clone，路径作为来源记录保留；交付后不能继续通过该路径读取源码。
 
-facts 是静态事实底账，主要包括方法/字段/类变化、配置、参数来源、Mapper、字段来源、返回值、分支、集合判断、未解析关系、对象复制和构造映射等。
+facts 是静态事实底账，主要包括方法/字段/类变化、配置、参数来源、Mapper、字段来源、返回值、分支、集合判断、未解析关系、对象复制和构造映射等。`mapper_statement_change` 是 Mapper XML 中 SQL 语句新增、修改、删除的主事实；即使只有 XML 发生变化，也生成对应的项目级复核单元。
 
 当选中的 Java 方法直接调用能够唯一匹配到 MyBatis namespace/statement 的 Mapper 声明时，即使 Mapper 接口方法超出默认方法遍历深度（depth=1），也生成对应 `mapper_statement` 事实；这一关系仍标识为约定推断，不等于运行时调用证明。不扩大其它 Java 方法遍历范围，未绑定或有歧义的 Mapper 不凭名称生成 SQL 事实。
 
-relations 记录直接变化相关的解析关系及需要人工复核的未解析关系，状态包括 source_resolved、convention_inferred、unresolved。默认遍历 depth=1，可显式增至 3；回调对象来源传播独立固定为 4 轮。超限直接拒绝，不静默截断。跨项目关系记录在 cross_project_relations。
+relations 记录直接变化相关的解析关系及需要人工复核的未解析关系，状态包括 source_resolved、convention_inferred、unresolved。默认遍历 depth=1，可显式增至 3；回调对象来源传播独立固定为 4 轮。规则上限和源码索引预算通过明确报错阻断不完整交付；变化 Java/XML 源码解析失败同样形成 hard_errors。跨项目关系记录在 cross_project_relations。
 
 ## context.jsonl
 
@@ -21,9 +21,9 @@ relations 记录直接变化相关的解析关系及需要人工复核的未解�
 
 完整 fact/evidence 不因 review 摘要、facet 或导航而删除。最终交付按 test-cases 中实际引用的 review unit 重新展开和校验证据。
 
-**Properties 语义**：配置值按 `java.util.Properties` 标准解析。单个反斜杠是转义前缀，未知转义也会去掉反斜杠；Windows 路径若需保留反斜杠，配置文件中应写成双反斜杠。不要为了显示原样路径而更改实际配置取值。
+**Properties 语义**：配置值按 `java.util.Properties` 标准解析。单个反斜杠是转义前缀，未知转义也会去掉反斜杠；Windows 路径若需保留反斜杠，配置文件中采用双反斜杠，展示值与实际解析值保持一致。
 
-**Git 路径编码边界**：changed-files、离散提交组合、Java/XML 源码索引及最终证据验证均使用零分隔 Git 路径和同一解码规则。优先 UTF-8；仅当文件系统解码可安全编码为 UTF-8、且能还原原始字节时接受。否则立即报包含原始路径十六进制值的错误并终止分析/校验，**不生成部分成功的事实底账、不使用替换字符、不跳过该文件继续正常交付**。Git 的诊断 stderr 使用转义显示，不作为可读路径依据。
+**Git 路径编码边界**：changed-files、离散提交组合、Java/XML 源码索引及最终证据验证均使用零分隔 Git 路径和同一解码规则。优先 UTF-8；仅当文件系统解码可安全编码为 UTF-8、且能还原原始字节时接受。无法安全还原时，立即报包含原始路径十六进制值的错误并终止分析/校验。Git 的诊断 stderr 使用转义显示，路径身份以零分隔的原始字节和经验证的解码结果为准。
 
 ## review.json
 
@@ -36,7 +36,7 @@ relations 记录直接变化相关的解析关系及需要人工复核的未解�
 
 change_summary 只压缩直接事实。
 
-navigation_facets 不能作为范围过滤器。facet 不表示业务需求归属，也不做传递合并。
+navigation_facets 用于阅读排序；完整复核范围来自 review_units、review_facets 与底账事实。facet 表示精确结构关联，业务需求归属由 Agent 判断。
 
 ## review_query.py
 
@@ -55,7 +55,7 @@ Agent 可以直接调用此脚本，不需要 MCP 服务或持久化查询缓存
 
 Audit 将未归属的真实直接变化与背景事实分开；`configuration` 的 `retained_or_consumers_changed` 属于背景提示，直接触及净变化的 unresolved 优先显示，但绝不删除原始关系。
 
-`--audit` 不证明 Agent 已完整理解业务；支持性事实未绑定 unit 可是正常情况，但必须可见并供按需回查。
+`--audit` 提供结构完整性证据；支持性背景事实可以独立保留，并支持按需回查。
 
 ## test-cases.json
 
@@ -81,7 +81,7 @@ Agent 直接维护业务章节：
 - Excel 文件名和用例数量；
 - 验证说明。
 
-机器草稿状态标记可以缺失；报告刷新负责重建，正式化仍拒绝重复或不配对的标记。脚本刷新不得改写 Agent 业务章节。
+机器草稿状态标记可以缺失；报告刷新负责重建，正式化仍拒绝重复或不配对的标记。脚本刷新时原样保留 Agent 业务章节。
 
 ## coverage.json
 
@@ -89,9 +89,9 @@ Agent 直接维护业务章节：
 
 pending_review 表示尚未被测试用例引用的 review unit，并提供 high_value_facets、candidate_case_ids、related_referenced_unit_ids 和完整 facet 引用。
 
-`referenced_unit_count` 为测试用例引用的单元数；`referenced_facet_count` 为至少一个成员单元被用例引用的 facet 数，`all_units_referenced_facet_count` 才表示成员单元全部被引用。不存在业务分支覆盖率指标。旧的 covered_* 字段不再输出。
+`referenced_unit_count` 为测试用例引用的单元数；`referenced_facet_count` 为至少一个成员单元被用例引用的 facet 数，`all_units_referenced_facet_count` 才表示成员单元全部被引用。该统计仅反映复核单元的引用情况，由 Agent 进一步判断业务分支覆盖。
 
-它是未引用范围的复核工具，不是业务覆盖率证明。
+它用于提示尚待核实的引用关系；业务测试覆盖质量由 Agent 结合实际场景判断。
 
 ## run-state.json 与查询计量
 

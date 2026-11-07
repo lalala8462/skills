@@ -16,10 +16,11 @@ from run_delivery import RUN_SCHEMA_VERSION
 
 PRIMARY_KINDS={
     'method_change','field_change','class_binding_change','configuration',
-    'configuration_file_change','configuration_parse_boundary','argument_source_change'
+    'configuration_file_change','configuration_parse_boundary','argument_source_change',
+    'mapper_statement_change'
 }
 CONDITION_KINDS={'branch','switch_branch','membership_filter'}
-DB_KINDS={'mapper_statement','field_source'}
+DB_KINDS={'mapper_statement','mapper_statement_change','field_source'}
 VIEW_CHOICES=('index','facts','relations','evidence','db','conditions','all')
 AUDIT_VIEWS=(
     'missing_seeds','unassigned_primary_facts','unindexed_facts','unindexed_relations',

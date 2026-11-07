@@ -231,6 +231,24 @@ class Handler {
         project=result['projects'][0]
         self.assertIn('changed Java source could not be fully indexed: src/Small.java',project['hard_errors'])
 
+    def test_unchanged_source_limit_is_a_hard_error(self):
+        commit(self.source,{'src/LimitFirst.java':'class LimitFirst {}',
+                            'src/LimitSecond.java':'class LimitSecond {}'},'limit background baseline')
+        head=commit(self.source,{'source-limit-note.txt':'change without Java edits'},'change text only')
+        result,_=self.analyze([head],limits={'files':1})
+        errors=result['projects'][0]['hard_errors']
+        self.assertTrue(any('source indexing limit exceeded' in message for message in errors))
+
+    def test_changed_mapper_parse_failure_is_a_hard_error(self):
+        valid=MAPPER.replace('select * from records','select * from records_before_invalid')
+        commit(self.source,{'src/Store.xml':valid},'valid XML baseline')
+        head=commit(self.source,{'src/Store.xml':'<mapper namespace="sample.Store"><select id="list">'},
+                    'invalid Mapper XML')
+        result,_=self.analyze([head])
+        errors=result['projects'][0]['hard_errors']
+        self.assertTrue(any('changed XML source could not be fully indexed: src/Store.xml' in message
+                            for message in errors))
+
     def test_non_utf8_file_is_reported(self):
         path=self.source/'src/Legacy.java';path.write_bytes(b'//\xff\xfe\nclass Legacy {}')
         git(self.source,'add','.');git(self.source,'commit','-qm','encoding fixture')
@@ -309,6 +327,25 @@ class Flow { Store store; void process(){ store.list("old"); } }
                                          revisions=[head])],root/'out')
             self.assertFalse([f for f in result['projects'][0]['facts']
                               if f['kind']=='mapper_statement'])
+
+    def test_mapper_only_change_creates_primary_review_unit(self):
+        from review_workbench import build_review
+        previous=MAPPER.replace('order_no = #{orderNo}', 'order_no = #{orderNo} /* before */')
+        updated=MAPPER.replace('order_no = #{orderNo}', 'trade_no = #{orderNo} /* after */')
+        commit(self.source,{'src/Store.xml':previous},'mapper-only baseline')
+        head=commit(self.source,{'src/Store.xml':updated},'mapper-only SQL change')
+        result,_=self.analyze([head])
+        project=result['projects'][0]
+        self.assertEqual(project['change_seeds'],[])
+        changes=[fact for fact in project['facts'] if fact['kind']=='mapper_statement_change']
+        self.assertEqual(len(changes),1)
+        self.assertEqual(changes[0]['data']['name'],'list')
+        self.assertIn('order_no',changes[0]['data']['before']['source'])
+        self.assertIn('trade_no',changes[0]['data']['after']['source'])
+        review=build_review(result)['projects'][0]
+        project_units=[unit for unit in review['review_units'] if unit['scope']=='project']
+        self.assertEqual(len(project_units),1)
+        self.assertIn(changes[0]['id'],project_units[0]['direct_fact_ids'])
 
     def test_configuration_file_change_is_captured_with_redacted_evidence(self):
         base=commit(self.source,{'application.properties':'feature=0\npassword=SENSITIVE_VALUE\n'},'config base')
