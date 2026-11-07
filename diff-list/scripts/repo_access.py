@@ -57,15 +57,15 @@ def decode_git_path(value):
     try:
         return value.decode('utf-8')
     except UnicodeDecodeError:
-        decoded=os.fsdecode(value)
         try:
+            decoded=os.fsdecode(value)
             decoded.encode('utf-8')
             if os.fsencode(decoded)!=value:
                 raise UnicodeError('filesystem encoding cannot round-trip Git path')
-        except UnicodeError as exc:
+            return decoded
+        except (UnicodeError,ValueError) as exc:
             raise ValueError('Git path is not UTF-8 (hex={}): cannot safely index'.format(
                 value.hex())) from exc
-        return decoded
 
 
 def local_repo_path(value):
