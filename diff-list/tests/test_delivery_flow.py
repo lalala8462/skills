@@ -366,6 +366,25 @@ class DeliveryFlowTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'cursor'):
             query_tool._paginate(altered,'a1','facts',2,valid_cursor)
 
+    def test_query_cli_rejects_exact_parameter_boundaries(self):
+        checks=(
+            (['--limit','0'],'--limit 必须在 1-100'),
+            (['--limit','101'],'--limit 必须在 1-100'),
+            (['--source-lines','-1'],'--source-lines 必须在 0-100'),
+            (['--source-lines','101'],'--source-lines 必须在 0-100'),
+            (['--view','all','--cursor','invalid'],'--view all 不支持 cursor'),
+            (['--audit','--view','unknown'],'--audit --view 支持'),
+        )
+        for extra,detail in checks:
+            with self.subTest(args=extra), mock.patch.object(query_tool,'metrics_path',return_value=None):
+                stderr=io.StringIO()
+                with contextlib.redirect_stderr(stderr):
+                    status=query_tool.main(['--analysis','missing.json','--review','missing.json',
+                                            '--overview']+extra) if '--audit' not in extra else query_tool.main(
+                                                ['--analysis','missing.json','--review','missing.json']+extra)
+                self.assertEqual(status,2)
+                self.assertIn(detail,stderr.getvalue())
+
     def test_evidence_expansion_validates_snapshot_before_returning_source(self):
         record=dict(id='E-1',project='sample',side='result',tree='a'*40,
                     blob='b'*40,path='src/App.java',start_line=2,end_line=2,

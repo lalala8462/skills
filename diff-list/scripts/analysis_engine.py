@@ -5,7 +5,7 @@ import json
 import re
 from source_index import stable, source_lines
 
-VERSION = '2.3.0'
+VERSION = '2.3.1'
 COMMON_RULES = dict(version=1, config_annotations=['Value', 'ConfigurationProperties'],
                     config_scopes={}, aliases=['JSONField', 'JsonProperty'],
                     relation_review_tokens=[], limits={})
@@ -46,7 +46,7 @@ def relation_receiver_hint(site):
     return ''
 
 
-def relation_affects_review_scope(edge, graph, custom_tokens=()):
+def relation_affects_review_scope(edge, graph, custom_tokens=(), siblings=None):
     """只把可能触及关键业务结果的未解析调用放入人工复核。"""
     site=edge.get('site') or {}
     name=(site.get('name') or '').casefold()
@@ -123,7 +123,7 @@ def relation_affects_review_scope(edge, graph, custom_tokens=()):
                 if has_state and call_origins & set(graph.origins(
                         row.get('condition',''),source,row.get('order',0))):
                     state_branch=True
-        for sibling in graph.edges:
+        for sibling in (siblings if siblings is not None else graph.edges):
             if sibling['source']!=source or sibling is edge or not critical_sink(sibling):
                 continue
             for argument in sibling['site'].get('arguments',[]):
@@ -819,7 +819,7 @@ class ProjectAnalysis:
         seen = {s: 0 for s in valid_seeds}
         # 上溯和下探分别进行，避免经共享配置方法反向扩散到无关业务。
         for direction in (reverse,forward):
-            visited={s:0 for s in sorted(seeds) if s in graph.methods}
+            visited={s:0 for s in valid_seeds}
             queue=collections.deque(sorted(visited))
             while queue:
                 symbol=queue.popleft();distance=visited[symbol]
@@ -1084,6 +1084,9 @@ class ProjectAnalysis:
             # 只补充已选中方法直接调用、且已唯一绑定到 MyBatis XML 的声明。
             # 不扩大普通 Java 方法遍历范围，也不将约定绑定当作运行时调用。
             mapper_links=collections.defaultdict(set)
+            sibling_edges=collections.defaultdict(list)
+            for edge in graph.edges:
+                sibling_edges[edge['source']].append(edge)
             for symbol in selected[side]:
                 for event in graph.events[symbol]:
                     referenced_names.update(re.findall(r'\b\w+\b',event.get('condition','')+' '+event.get('expression','')))
@@ -1109,7 +1112,8 @@ class ProjectAnalysis:
                         for param,arg in zip(target['parameters'],site['arguments'])]
                 direct_relation=edge['source'] in changed or any(target in changed for target in edge['targets'])
                 relation_in_scope=direct_relation and (edge['status']!='unresolved' or relation_affects_review_scope(
-                    edge,graph,self.rules.get('relation_review_tokens',())))
+                    edge,graph,self.rules.get('relation_review_tokens',()),
+                    sibling_edges[edge['source']]))
                 if relation_in_scope:
                     self.relations.append(dict(id=stable(self.name, side, edge['source'], site), side=side,
                         source=edge['source'], targets=edge['targets'], status=edge['status'], reason=edge['reason'],

@@ -112,14 +112,14 @@ def analyze_project(spec,rules,limits,parser,cache):
     limit_errors=[]
     limit_reasons={'file_count_limit','file_size_limit','total_size_limit'}
     for side,index in (('baseline',before),('result',after)):
-        skipped=[row for row in index['issues'] if row['reason'] in limit_reasons]
-        if skipped:
-            sample=', '.join('{} ({})'.format(row['path'],row['reason']) for row in skipped[:3])
+        source_skipped=[row for row in index['issues'] if row.get('code') in limit_reasons]
+        if source_skipped:
+            sample=', '.join('{} ({})'.format(row['path'],row['reason']) for row in source_skipped[:3])
             limit_errors.append('source indexing limit exceeded on {}: {} file(s); examples: {}'.format(
-                side,len(skipped),sample))
+                side,len(source_skipped),sample))
     result['hard_errors']=sorted(set(
         [row['reason'] for index in (before,after) for row in index['issues']
-         if 'missing source blob' in row['reason']]
+         if row.get('code')=='missing_source_blob']
         +['changed Java source could not be fully indexed: '+path for path in changed_source_issues]
         +['changed XML source could not be fully indexed: '+path for path in changed_xml_issues]
         +['critical changed evidence exceeded analysis context limits: '+marker for marker in evidence_omissions]

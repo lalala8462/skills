@@ -224,6 +224,12 @@ class Handler {
         self.assertTrue(any(f['kind']=='field_change' for f in generic['projects'][0]['facts']))
         self.assertTrue(any(f['kind']=='annotation_binding_unconfigured' for f in generic['projects'][0]['facts']))
 
+    def test_index_limit_issue_has_stable_machine_code(self):
+        tree=git(self.source,'rev-parse',self.after+'^{tree}')
+        index=build_index(self.source,tree,dict(DEFAULT_LIMITS,files=0),None,{})
+        self.assertTrue(index['issues'])
+        self.assertTrue(all(row['code']=='file_count_limit' for row in index['issues']))
+
     def test_file_limit_is_explicit_and_cannot_silently_pass(self):
         head=commit(self.source,{'src/A.java':'package sample; class A {}',
             'src/Small.java':AFTER.replace('class Flow {','class Flow { String limitMarker(){return "changed";}')},'limit changed source files')

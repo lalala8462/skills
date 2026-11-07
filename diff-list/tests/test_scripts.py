@@ -55,6 +55,24 @@ class DiffListTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,'javac not found'):
                     source_index.jdk_tools()
 
+    def test_report_rejects_unix_and_unc_paths(self):
+        validator=module('validate_report')
+        template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
+        for path in ('/home/example/private/project/File.java',r'\\server\share\project\File.java'):
+            with self.subTest(path=path):
+                errors,_=validator.validate(template+'\n'+path,template,[])
+                self.assertTrue(any('Unix 或 UNC 本机绝对路径' in error for error in errors))
+
+    def test_vague_english_assertions_are_rejected(self):
+        exporter=module('export_test_cases')
+        for statement in ('OK','success','operation successful','as expected'):
+            with self.subTest(statement=statement):
+                with self.assertRaisesRegex(ValueError,'not an observable'):
+                    exporter._observable_evidence([
+                        dict(surface='接口',target='支付响应',assertion=statement)],'C-1')
+        self.assertTrue(exporter._observable_evidence([
+            dict(surface='HTTP',target='响应状态',assertion='HTTP 200 OK')],'C-2'))
+
     def test_generated_input_skeletons_use_current_contracts(self):
         contract=module('case_contract')
         data=contract.empty_cases('analysis-1')
@@ -260,6 +278,9 @@ class DiffListTest(unittest.TestCase):
                                  '旧调用方可能忽略该字段，需验证已有调用方行为。')
         errors,_=val.validate(corrected,template,[])
         self.assertEqual(errors, [])
+        invalid=corrected.replace('旧调用方可能忽略该字段，需验证已有调用方行为。','无')
+        errors,_=val.validate(invalid,template,[])
+        self.assertTrue(any('字段/接口契约变化' in issue for issue in errors))
 
 
     def test_bare_existing_function_impact_line_is_rejected(self):
@@ -440,6 +461,22 @@ class DiffListTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'unsafe clone cleanup'):
                 access.cleanup_analysis_clones(source)
             self.assertTrue(real.exists())
+
+    def test_clone_cleanup_symlink_guard_without_windows_privilege(self):
+        access=module('repo_access')
+        with tempfile.TemporaryDirectory() as td:
+            clone=Path(td)/'diff-list'/'runs'/'run-mock'/'repo'
+            (clone/'.git').mkdir(parents=True)
+            source=Path(td)/'analysis.json'
+            source.write_text(json.dumps({'projects':[{'analysis_clone':str(clone)}]}),
+                              encoding='utf-8')
+            original=Path.is_symlink
+            def simulate_link(path):
+                return path==clone or original(path)
+            with mock.patch.object(Path,'is_symlink',simulate_link):
+                with self.assertRaisesRegex(ValueError,'unsafe clone cleanup'):
+                    access.cleanup_analysis_clones(source)
+            self.assertTrue(clone.exists())
 
     def test_range_long_paths_capture_config(self):
         collector=module('collect_git')

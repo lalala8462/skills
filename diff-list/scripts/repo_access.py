@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Resolve a GitHub URL to an isolated, automatically maintained Git cache."""
+"""Resolve a local or HTTP(S) Git repository to an isolated analysis clone."""
 import json
 import os
 import re
@@ -22,7 +22,7 @@ def parse_github_url(url):
 
 
 def parse_repo_url(url):
-    """Accept GitHub or GitLab HTTP(S) clone URLs, without credentials or URL options."""
+    """Accept GitHub.com or generic Git HTTP(S) clone URLs without credentials or URL options."""
     parts = urlsplit(url.strip())
     if parts.hostname == 'github.com':
         owner, repo, canonical = parse_github_url(url)
@@ -30,14 +30,14 @@ def parse_repo_url(url):
     if (parts.scheme not in ('http', 'https') or not parts.hostname or
             parts.username or parts.password or parts.query or parts.fragment or
             parts.port is not None):
-        raise ValueError('Expected GitLab HTTP(S) repository URL without credentials')
+        raise ValueError('Expected Git HTTP(S) repository URL without credentials')
     segments = parts.path.strip('/').split('/')
     if len(segments) < 2 or any(not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.-]*', s)
                                 or s in ('.', '..') for s in segments):
-        raise ValueError('Expected GitLab group/project repository path')
+        raise ValueError('Expected Git owner/group/project repository path')
     segments[-1] = re.sub(r'\.git$', '', segments[-1])
     if not segments[-1] or segments[-1] in ('.', '..'):
-        raise ValueError('Invalid GitLab project name')
+        raise ValueError('Invalid Git repository name')
     canonical = '{}://{}/{}.git'.format(parts.scheme, parts.hostname, '/'.join(segments))
     return (parts.hostname, '/'.join(segments[:-1]), segments[-1], canonical)
 

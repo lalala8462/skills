@@ -164,25 +164,26 @@ def build_index(repo, tree, limits, parser, cache):
     selected=[]
     for position, (path, oid) in enumerate(entries):
         if position >= limits['files']:
-            issues.append(dict(path=path, reason='file_count_limit'))
+            issues.append(dict(path=path, code='file_count_limit', reason='file_count_limit'))
             continue
         try:
             size = sizes.get(oid)
             if size is None:
                 raise ValueError('missing source blob')
             if size > limits['file_bytes'] or total + size > limits['total_bytes']:
-                issues.append(dict(path=path, reason='file_size_limit' if size > limits['file_bytes'] else 'total_size_limit'))
+                issues.append(dict(path=path, code='file_size_limit' if size > limits['file_bytes'] else 'total_size_limit',
+                                   reason='file_size_limit' if size > limits['file_bytes'] else 'total_size_limit'))
                 continue
             total += size
             selected.append((path,oid,size))
         except ValueError as exc:
-            issues.append(dict(path=path,reason=str(exc)))
+            issues.append(dict(path=path, code='missing_source_blob', reason=str(exc)))
     blobs=batch_blobs(repo,sorted(set(oid for _,oid,_ in selected)))
     for path,oid,size in selected:
         try:
             source=blobs[oid].decode('utf-8-sig')
         except (ValueError, UnicodeError) as exc:
-            issues.append(dict(path=path, reason=str(exc)))
+            issues.append(dict(path=path, code='source_decode_error', reason=str(exc)))
             continue
         files.append(dict(path=path, blob=oid, source=source, size=size))
         if path.lower().endswith('.java') and oid not in cache:
@@ -201,6 +202,6 @@ def build_index(repo, tree, limits, parser, cache):
             for row in rows:
                 events.append(dict(row, path=file['path'], blob=file['blob']))
         except (ValueError, ET.ParseError) as exc:
-            issues.append(dict(path=file['path'], reason=str(exc)))
+            issues.append(dict(path=file['path'], code='source_parse_error', reason=str(exc)))
     return dict(tree=tree, files=files, events=events, issues=issues,
                 stats=dict(discovered_files=len(entries), parsed_files=len(files), bytes=total))

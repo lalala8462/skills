@@ -3,7 +3,7 @@
 ## analysis.json
 
 - schema_version=2
-- analyzer_version=2.3.0
+- analyzer_version=2.3.1
 
 analysis_id 由分析器版本、生效规则（含 limits 参数）和项目固定快照计算；显式调整 limits 会改变分析身份。
 
@@ -51,7 +51,7 @@ Agent 可以直接调用此脚本，不需要 MCP 服务或持久化查询缓存
 - `--audit`：原始分析事实相对于 review 的归属差异、unresolved、hard_errors、证据缺失及分析边界；
 - `--audit --view <类别>`：按类别分页读取审计问题明细。
 
-分页字段为 `page.total/returned/complete/next_cursor`，游标绑定固定分析身份、视图和排序内容，错误游标应拒绝，不能静默跳过任何记录。
+分页字段为 `page.total/returned/offset/complete/next_cursor`。游标绑定固定分析身份、视图、排序内容和页起点 offset；改动页起点、跨视图复用或数据变化均应拒绝。
 
 Audit 将未归属的真实直接变化与背景事实分开；`configuration` 的 `retained_or_consumers_changed` 属于背景提示，直接触及净变化的 unresolved 优先显示，但绝不删除原始关系。
 
@@ -65,21 +65,21 @@ Audit 将未归属的真实直接变化与背景事实分开；`configuration` �
 
 ## report.md
 
-Agent 直接维护业务章节：
+以下标题为 `generate_report.AGENT_HEADINGS` 的权威章节列表，Agent 直接维护：
 
-- 需求改动；
-- DDL；
-- DML；
-- 整体流程；
-- Mermaid；
-- 特殊逻辑与测试关注点/既有功能影响。
+- `### 2.1 需求改动`
+- `### 2.2 表字段 DDL 修改`
+- `### 2.3 表配置 DML 准备清单`
+- `### 3.1 整体流程说明`
+- `### 3.2 Mermaid 流程图`
+- `## 4. 特殊逻辑与测试关注点`（包含既有功能影响）
 
-脚本维护并在 refresh 时重建：
+`generate_report.MACHINE_HEADINGS` 由脚本在 refresh 时刷新：
 
-- 分析范围；
-- 配置文件变化；
-- Excel 文件名和用例数量；
-- 验证说明。
+- `## 1. 分析范围`
+- `### 2.4 配置文件调整`
+- `## 5. 测试用例导出`
+- `## 6. 验证情况`
 
 机器草稿状态标记可以缺失；报告刷新负责重建，正式化仍拒绝重复或不配对的标记。脚本刷新时原样保留 Agent 业务章节。
 
@@ -95,16 +95,16 @@ pending_review 表示尚未被测试用例引用的 review unit，并提供 high
 
 ## run-state.json 与查询计量
 
-当前 `run_schema_version=4`，只支持本版状态结构。编排记录三项 Agent 子阶段：
+当前 `run_schema_version=4`，只支持本版状态结构。CLI 的 `AGENT_PHASES` 是 `source_review`、`analysis_authoring`、`rework`；在 `run-state.json.stages` 中存储键名增加 `agent_` 前缀：
 
 - `agent_source_review`：源码查证；
 - `agent_analysis_authoring`：综合业务分析、用例设计、报告编写；
 - `agent_rework`：失败后修复。
 
-`agent_between_steps` 是上述子阶段累计总时间，不能与它们重复加总。完整口径：`TRACKED_TOTAL = SCRIPT_TOTAL + agent_between_steps`。失败脚本尝试另记于 `stage.attempts`。
+`agent_between_steps` 是上述子阶段累计总时长，等价于终端打印的 `AGENT_TOTAL`，不能重复累加。`SCRIPT_TOTAL`、`AGENT_TOTAL`、`TRACKED_TOTAL` 三项仅由 `run_delivery.py` **终端打印**，不作为同名字段写入 `run-state.json`。总计公式：`TRACKED_TOTAL = SCRIPT_TOTAL + AGENT_TOTAL`。失败脚本尝试记录在对应 `stages.<name>.attempts`。
 
 `review_query.py` 只在符合 run 布局与版本的 `.work` 下追加 `query-metrics.jsonl`（仅遥测，不是新的复核材料）。每条事件包含：匿名请求哈希、查询模式、视图、成功/失败、生成响应字节数、终端输出字节数、返回项目数。不会记录原始搜索词、源码内容或完整命令参数。
 
-下一次 `run_delivery.py` 写入状态时，从事件日志汇总为 `run-state.json.query_stats`，包含调用数、失败数、重复调用数、模式/视图分布、返回项目数及字节数。对完全相同的请求条件（包括分页 cursor）计算重复。审计前后两次调用若参数相同也计为重复，不表示一定是无效查询。
+下一次 `run_delivery.py` 写状态时从事件日志汇总为 `run-state.json.query_stats`。固定统计字段：`calls`、`successes`、`failures`、`distinct_requests`、`repeated_calls`、`returned_items`、`returned_bytes`、`stdout_bytes`、`by_mode`、`by_view`、`repeated_by_mode`、`invalid_events`、`note`；读取异常时另外有 `read_error`。相同请求条件（包括分页 cursor）按请求哈希识别重复，重复不等于无效。
 
 查询输出字节数不等于 Agent 实际阅读的 Token；只作为趋势指标。原始复核事实及证据结构保持不变。

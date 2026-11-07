@@ -94,6 +94,20 @@ class QueryMetricsTest(unittest.TestCase):
             self.assertEqual(summary['returned_items'],1)
             self.assertEqual(summary['invalid_events'],0)
 
+    def test_output_file_is_never_overwritten(self):
+        with tempfile.TemporaryDirectory() as td:
+            run,analysis,review,_=self._fixture(td)
+            output=run/'.work'/'existing.json'
+            output.write_text('preserve',encoding='utf-8')
+            stderr=io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()),contextlib.redirect_stderr(stderr):
+                status=review_query.main([
+                    '--analysis',str(analysis),'--review',str(review),
+                    '--overview','--output',str(output)])
+            self.assertEqual(status,2)
+            self.assertIn('File exists',stderr.getvalue())
+            self.assertEqual(output.read_text(encoding='utf-8'),'preserve')
+
     def test_duplicate_calls_view_is_removed(self):
         with tempfile.TemporaryDirectory() as td:
             _,analysis,review,_=self._fixture(td)
