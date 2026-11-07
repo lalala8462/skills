@@ -5,7 +5,7 @@ import json
 import re
 from source_index import stable, source_lines
 
-VERSION = '2.1.0'
+VERSION = '2.2.0'
 COMMON_RULES = dict(version=1, config_annotations=['Value', 'ConfigurationProperties'],
                     config_scopes={}, aliases=['JSONField', 'JsonProperty'],
                     relation_review_tokens=[], limits={})
