@@ -260,7 +260,8 @@ class Graph:
                     result[stable(origin)]=origin
             return result
         # 有界传递源码参数中的具体对象来源，保留来源而不假定实际运行时选择。
-        for _ in range(self.rules.get('limits',{}).get('depth',4)):
+        # 回调对象来源推断按独立固定跳数执行；depth 只约束复核方法遍历。
+        for _ in range(4):
             changed=False
             for edge in self.edges:
                 if len(edge['targets'])!=1:continue
@@ -653,8 +654,6 @@ class ProjectAnalysis:
     def __init__(self, name, repo, before, after, rules, limits):
         self.name, self.repo, self.rules = name, str(repo), rules
         self.limits=dict(limits)
-        self.limits['depth']=min(self.limits['depth'],1)
-        self.limits['methods']=min(self.limits['methods'],100)
         self.graphs = dict(baseline=Graph(before, rules), result=Graph(after, rules))
         self.facts, self.context, self.relations = [], {}, []
         self.context_bytes, self.context_methods = 0, collections.Counter()
