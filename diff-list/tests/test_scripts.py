@@ -252,6 +252,7 @@ class DiffListTest(unittest.TestCase):
         }
         report='\n'.join(line+'\n'+blocks.get(line,'') if line.startswith('#') else line
                          for line in template.splitlines())
+        report=report.replace("**既有功能影响：** 【Agent填写：基于完整复核事实形成业务结论；无相关内容时填写“无”】",'**既有功能影响：** 无')
         errors,_=val.validate(report,template,[])
         self.assertTrue(any('既有功能影响' in e for e in errors))
         corrected=report.replace('新增字段对旧调用方的影响。',
@@ -704,6 +705,7 @@ class AdditionalRegressionTests(unittest.TestCase):
         content=content.replace('## 4. 特殊逻辑与测试关注点','## 4. 特殊逻辑与测试关注点\n无')
         content=content.replace('## 5. 测试用例导出','## 5. 测试用例导出\n无')
         content=content.replace('## 6. 验证情况','## 6. 验证情况\n静态测试')
+        content=content.replace("**既有功能影响：** 【Agent填写：基于完整复核事实形成业务结论；无相关内容时填写“无”】",'**既有功能影响：** 无')
         errors,_=validator.validate(content,template,['webapi='+one,'adpts='+two])
         self.assertEqual(errors,[])
         errors,_=validator.validate(content,template,['webapi='+two])
