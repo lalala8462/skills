@@ -910,6 +910,29 @@ class RefundService {Helper helper;String refundStatus(){return helper.getValue(
         self.assertTrue(relation_affects_review_scope(endpoint_return,graph))
         self.assertTrue(relation_affects_review_scope(refund_getter,graph))
 
+    def test_ambiguous_mapper_call_does_not_claim_sql_statement(self):
+        from source_index import mapper_events
+        before='''package sample;
+interface Store { String list(String code); String list(Integer number); }
+class Flow { Store store; void run(){store.list(null);} }
+'''
+        after=before.replace('void run(){store.list(null);}',
+                             'void run(){if(true)store.list(null);}')
+        old=self.graph({'ambiguous':before}).index
+        new=self.graph({'ambiguous':after}).index
+        for index in (old,new):
+            index['events'].extend(dict(event,path='Store.xml',blob='mapper-xml')
+                                   for event in mapper_events(MAPPER))
+            index['files'].append(dict(path='Store.xml',blob='mapper-xml',source=MAPPER))
+        engine=ProjectAnalysis('sample','unused',old,new,COMMON_RULES,DEFAULT_LIMITS)
+        ambiguous=[edge for edge in engine.graphs['result'].edges
+                   if edge['site']['name']=='list']
+        self.assertTrue(ambiguous)
+        self.assertTrue(all(edge['status']=='unresolved' for edge in ambiguous))
+        result,_=engine.run()
+        self.assertFalse([fact for fact in result['facts']
+                          if fact['kind']=='mapper_statement'])
+
     def test_depth_three_reaches_three_resolved_method_hops(self):
         graph=self.graph({'layers':'''package p;
 class Fourth {void fourth(){}}
