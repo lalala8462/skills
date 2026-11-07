@@ -26,15 +26,15 @@ from run_delivery import _close_current_agent_phase, _record_stage_attempt
 class DeliveryFlowTest(unittest.TestCase):
     def test_navigation_facets_keep_high_value_and_hide_common_calls(self):
         units=[
-            dict(id='RU-1',symbol='sample.PayService#pay()'),
-            dict(id='RU-2',symbol='sample.PayService#refund()')
+            dict(id='RU-1',symbol='sample.InventoryService#add()'),
+            dict(id='RU-2',symbol='sample.InventoryService#remove()')
         ]
         facets=[
-            dict(id='RF-config',type='config',anchor='pay.timeout',
+            dict(id='RF-config',type='config',anchor='inventory.threshold',
                  unit_ids=['RU-1','RU-2'],unit_count=2),
-            dict(id='RF-owner',type='owner',anchor='sample.PayService',
+            dict(id='RF-owner',type='owner',anchor='sample.InventoryService',
                  unit_ids=['RU-1','RU-2'],unit_count=2),
-            dict(id='RF-business',type='direct_call',anchor='sample.OrderManager#lock()',
+            dict(id='RF-business',type='direct_call',anchor='sample.StockManager#reserve()',
                  unit_ids=['RU-1','RU-2'],unit_count=2),
             dict(id='RF-common',type='direct_call',anchor='sample.common.StringUtils#trim()',
                  unit_ids=['RU-1','RU-2'],unit_count=2)
