@@ -84,8 +84,9 @@ class DiffListTest(unittest.TestCase):
 
     def test_template_heading_only(self):
         template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
-        self.assertTrue(all(not line.strip() or line.startswith('# ' ) or line.startswith('## ')
-                            or line.startswith('### ') for line in template.splitlines()))
+        self.assertTrue(all(not line.strip() or line.startswith('# ') or line.startswith('## ')
+                            or line.startswith('### ') or line.startswith('**既有功能影响：**')
+                            for line in template.splitlines()))
         self.assertEqual(len([x for x in template.splitlines() if x.startswith('#')]),13)
 
     def test_generate_and_validate_report_structure(self):
@@ -109,11 +110,14 @@ class DiffListTest(unittest.TestCase):
             '### 2.3 表配置 DML 准备清单':'无',
             '### 3.1 整体流程说明':'请求后检查支付状态。',
             '### 3.2 Mermaid 流程图':'~~~mermaid\nflowchart TD\n A[请求] --> B[状态]\n~~~',
-            '## 4. 特殊逻辑与测试关注点':'既有功能影响：无'
+            '## 4. 特殊逻辑与测试关注点':'**既有功能影响：** 无'
         }
         for heading,value in replacements.items():
-            draft=draft.replace(heading+'\n\n'+generator.AGENT_PLACEHOLDER,
-                                heading+'\n\n'+value,1)
+            if heading=='## 4. 特殊逻辑与测试关注点':
+                draft=draft.replace('**既有功能影响：** '+generator.AGENT_PLACEHOLDER,value,1)
+            else:
+                draft=draft.replace(heading+'\n\n'+generator.AGENT_PLACEHOLDER,
+                                    heading+'\n\n'+value,1)
         self.assertEqual(preflight.report_errors(draft,template),[])
         case_data={'purpose_cases':{'acceptance':[{}],'core_regression':[],'related_regression':[],'boundary':[]}}
         refreshed=generator.refresh_report(draft,template,analysis,case_data,'webapi-cases.xlsx')
@@ -251,10 +255,34 @@ class DiffListTest(unittest.TestCase):
         errors,_=val.validate(report,template,[])
         self.assertTrue(any('既有功能影响' in e for e in errors))
         corrected=report.replace('新增字段对旧调用方的影响。',
-                                 '既有功能影响：旧调用方可能忽略该字段，需验证已有调用方行为。')
+                                 '新字段对旧调用方可能有影响。').replace(
+                                 '【Agent填写：基于完整复核事实形成业务结论；无相关内容时填写“无”】',
+                                 '旧调用方可能忽略该字段，需验证已有调用方行为。')
         errors,_=val.validate(corrected,template,[])
         self.assertEqual(errors, [])
 
+
+    def test_bare_existing_function_impact_line_is_rejected(self):
+        validator=module('validate_report')
+        template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
+        preflight=module('delivery_preflight')
+        from generate_report import initial_report, AGENT_PLACEHOLDER
+        sha='a'*40
+        analysis={'projects':[{'name':'sample','facts':[],
+                              'git':{'selection':[{'type':'commit','sha':sha}]}}]}
+        draft=initial_report(template,analysis)
+        for title in ('### 2.1 需求改动','### 2.2 表字段 DDL 修改',
+                      '### 2.3 表配置 DML 准备清单','### 3.1 整体流程说明',
+                      '### 3.2 Mermaid 流程图'):
+            draft=draft.replace(title+'\\n\\n'+AGENT_PLACEHOLDER,title+'\\n\\n无')
+        draft=draft.replace(AGENT_PLACEHOLDER,'')
+        self.assertTrue(any('既有功能影响' in error
+                            for error in preflight.report_errors(draft,template)))
+        self.assertTrue(any('既有功能影响' in error
+                            for error in validator.validate(draft.replace(
+                                '<!-- diff-list-status: draft -->','').replace(
+                                '**报告状态：未完成。** 业务章节待 Agent 复核，校验通过前不作为正式交付。',''),
+                                template,[])[0]))
 
     def test_selected_net_and_cancel(self):
         collector=module('collect_git')
