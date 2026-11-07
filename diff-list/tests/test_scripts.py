@@ -169,10 +169,10 @@ class DiffListTest(unittest.TestCase):
             g('add','.');g('commit','-qm','base')
             g('remote','add','origin','https://gitlab.example/group/webapi3.0.git')
             local_appdata=root/'local-appdata'
-            self.assertEqual(access.repository_name(str(source)),'service')
+            self.assertEqual(access.repository_name(str(source)),'webapi3.0')
             with mock.patch.dict(os.environ,{'LOCALAPPDATA':str(local_appdata)}):
                 clone,name=access.prepare_repo(str(source))
-            self.assertEqual(name,'service')
+            self.assertEqual(name,'webapi3.0')
             self.assertEqual(subprocess.check_output(['git','-C',str(clone),'rev-parse','HEAD'],text=True).strip(),g('rev-parse','HEAD'))
             self.assertFalse((clone/'app.txt').exists())
 
@@ -760,7 +760,7 @@ class CommitHistoryRegressionTest(unittest.TestCase):
             git('add','.')
             git('commit','-qm','Update second field')
             two=git('rev-parse','HEAD')
-            result=collector.collect({'name':'service','path':str(root),
+            result=collector.collect({'name':'webapi3.0','path':str(root),
                                       'revisions':[one,two]})
             review=result['commit_review']
             self.assertEqual(len(review['repeated_files']),1)
