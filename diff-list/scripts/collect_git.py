@@ -5,16 +5,30 @@ import subprocess
 from pathlib import Path
 from net_effect import compose
 from commit_review import review as review_commit_history
+from repo_access import decode_git_path
 
 
 def git(root, *args):
     cmd = ['git', '-C', str(root), '-c', 'core.longpaths=true', '-c', 'core.quotePath=false', '-c',
            'i18n.logOutputEncoding=utf-8', *args]
     p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                       encoding='utf-8', errors='replace', check=False)
+                       encoding='utf-8', errors='backslashreplace', check=False)
     if p.returncode:
         raise ValueError('Git failed: ' + ' '.join(cmd) + '\n' + p.stderr.strip())
     return p.stdout
+
+
+def git_raw(root,*args):
+    command=['git','-C',str(root),'-c','core.longpaths=true',
+             '-c','core.quotePath=false',*args]
+    result=subprocess.run(command,stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=False)
+    if result.returncode:
+        raise ValueError('Git failed: '+result.stderr.decode('utf-8','backslashreplace').strip())
+    return result.stdout
+
+
+def git_null_fields(data):
+    return [decode_git_path(item) for item in data.split(bytes([0])) if item]
 
 
 def is_ancestor(root, earlier, later):
@@ -34,8 +48,8 @@ def resolved(root, rev):
 
 
 def paths(root, a, b):
-    return [s for s in git(root, 'diff', '--name-only', '--no-ext-diff',
-                           '--find-renames', a, b).splitlines() if s]
+    return git_null_fields(git_raw(root,'diff','--name-only','-z','--no-ext-diff',
+                                   '--find-renames',a,b))
 
 
 def read_blob(root, rev, filename):
@@ -134,8 +148,8 @@ def collect(project, capture_config=False, persist_snapshot=False):
         if capture_config:
             from config_changes import (SUPPORTED_EXTENSIONS,MAX_CONFIG_FILES,
                                         config_name_changes,config_source)
-            rename_output=git(root,'diff','--name-status','--find-renames',a,b)
-            rename_map,change_kinds=config_name_changes(rename_output.splitlines())
+            rename_output=git_raw(root,'diff','--name-status','-z','--find-renames',a,b)
+            rename_map,change_kinds=config_name_changes(git_null_fields(rename_output))
             result['net_effect']['config_sources']=[]
             result['net_effect']['config_skipped']=[]
             selected=[name for name in changed if name.lower().endswith(SUPPORTED_EXTENSIONS)]
