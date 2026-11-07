@@ -10,6 +10,9 @@ VERSION = '2.1.0'
 COMMON_RULES = dict(version=1, config_annotations=['Value', 'ConfigurationProperties'],
                     config_scopes={}, aliases=['JSONField', 'JsonProperty'],
                     relation_review_tokens=[], limits={})
+DB_RECEIVER_TOKENS=('mapper','dao','repository','jdbc','database','store')
+EXTERNAL_SINK_TOKENS=('proxy','notification','notify','callback')
+
 STANDARD_TYPES = set('String Object Boolean Integer Long Double Float Short Byte Character Math System '
                      'List ArrayList LinkedList Map HashMap Set HashSet Collection Collections Arrays '
                      'Objects Optional Comparator BigDecimal StringUtils CollectionUtils Assert Date '
@@ -64,8 +67,7 @@ def relation_affects_review_scope(edge, graph, custom_tokens=()):
     response_return=any(token in return_type for token in ('response','reply','result'))
     critical_return_context=(endpoint_annotation or 'controller' in method_meta.get('owner','').casefold()
                              or response_return)
-    scopes=('mapper','dao','repository','jdbc','database','store',
-            'proxy','notification','notify','callback')
+    scopes=DB_RECEIVER_TOKENS+EXTERNAL_SINK_TOKENS
     sink_context=any(token in target_surface for token in scopes)
     custom_target=any(token.casefold() in target_surface for token in custom_tokens)
     raw_receiver=site.get('receiver') or ''
@@ -83,7 +85,7 @@ def relation_affects_review_scope(edge, graph, custom_tokens=()):
         candidate_builder=(candidate_name in ('builder','newbuilder','tobuilder') or
             'builder' in (candidate.get('receiver_type') or '').casefold() or
             bool(re.search(r'\.(?:new)?builder\s*\(',candidate_site.get('receiver') or '',re.I)))
-        candidate_db=any(token in candidate_target for token in ('mapper','dao','repository','jdbc','database','recordindex','store'))
+        candidate_db=any(token in candidate_target for token in DB_RECEIVER_TOKENS)
         if candidate_builder and candidate_name!='build':return False
         if candidate_name.startswith('set'):
             return candidate_db and any(token in candidate_name[3:] for token in ('status','state'))
@@ -138,12 +140,12 @@ def relation_affects_review_scope(edge, graph, custom_tokens=()):
         if name.startswith(('equals','hashcode','tostring')):
             return state_branch or sink_flow
         # DTO/枚举访问器由字段来源与分支事实覆盖；这里只保留关键状态或副作用数据流。
-        database_query=any(token in receiver for token in ('mapper','dao','repository','jdbc','database','recordindex','store')) and name.startswith(
+        database_query=any(token in receiver for token in DB_RECEIVER_TOKENS) and name.startswith(
             ('getby','find','query','select','count','exists','list','load','read'))
         return state_context or state_branch or sink_flow or database_query or custom_target
     # DTO 字段填充由字段来源事实表达。
     if name.startswith('set'):
-        database_target=any(token in receiver for token in ('mapper','dao','repository','jdbc','database','recordindex','store'))
+        database_target=any(token in receiver for token in DB_RECEIVER_TOKENS)
         return database_target and any(token in name[3:] for token in ('status','state'))
     if builder_chain:
         return sink_flow
