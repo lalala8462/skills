@@ -8,7 +8,7 @@ from pathlib import Path
 from analysis_engine import COMMON_RULES, VERSION, ProjectAnalysis, clean, redact
 from collect_git import collect, read_blob
 from config_changes import extract_config_changes
-from repo_access import prepare_repo, repository_name
+from repo_access import prepare_repo, repository_name, decode_git_path
 from source_index import DEFAULT_LIMITS, JavaParser, build_index, git_bytes, stable, source_lines
 
 
@@ -108,7 +108,8 @@ def analyze_project(spec,rules,limits,parser,cache):
                            if row['path'] in changed_java_paths}
     result['hard_errors']=sorted(set(
         [row['reason'] for index in (before,after) for row in index['issues']
-         if 'missing source blob' in row['reason']]
+         if 'missing source blob' in row['reason'] or
+            row['reason'].startswith('invalid Git source path encoding:')]
         +['changed Java source could not be fully indexed: '+path for path in changed_source_issues]
         +['critical changed evidence exceeded analysis context limits: '+marker for marker in evidence_omissions]
         +scope_errors))
@@ -121,7 +122,7 @@ def analyze_project(spec,rules,limits,parser,cache):
             for record in git_bytes(root,'ls-tree','-r','-z',tree).split(b'\0'):
                 if not record:continue
                 meta,path=record.split(b'\t',1);parts=meta.decode('ascii').split()
-                if parts[1]=='blob':mapping[path.decode('utf-8')]=parts[2]
+                if parts[1]=='blob':mapping[decode_git_path(path)]=parts[2]
             tree_files[side]=mapping
         for candidate in relevant:
             refs=[]
