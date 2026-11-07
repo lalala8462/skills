@@ -58,7 +58,7 @@ def read_blob(root, rev, filename):
                         'show', rev + ':' + filename],
                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
     if p.returncode:
-        return None, p.stderr.decode('utf-8', 'replace').strip()[:300]
+        return None, p.stderr.decode('utf-8', 'backslashreplace').strip()[:300]
     return p.stdout, None
 
 
