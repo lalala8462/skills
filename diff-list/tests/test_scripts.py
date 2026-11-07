@@ -556,6 +556,7 @@ class AdditionalRegressionTests(unittest.TestCase):
             (r'folder\\=value',{'folder\\':'value'}),
             (r'name\ with\ spaces : ok',{'name with spaces':'ok'}),
             (r'code=\u4E2D\u6587',{'code':'中文'}),
+            (r'emoji=\uD83D\uDE00',{'emoji':'😀'}),
             ('join=first'+slash+'\n second',{'join':'firstsecond'}),
             ('join=first'+slash*2+'\nother=value',{'join':'first'+slash,'other':'value'}),
             ('join=first'+slash*3+'\n second',{'join':'first'+slash+'second'}),
@@ -564,6 +565,8 @@ class AdditionalRegressionTests(unittest.TestCase):
         for content,expected in cases:
             with self.subTest(content=content):
                 self.assertEqual(config.properties(content),expected)
+        with self.assertRaisesRegex(ValueError,'surrogate pair'):
+            config.properties(r'invalid=\uD83D')
 
     def test_windows_style_runtime_yaml_path_is_not_downgraded(self):
         config=module('config_changes')
