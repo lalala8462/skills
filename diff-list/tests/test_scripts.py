@@ -488,6 +488,30 @@ class AdditionalRegressionTests(unittest.TestCase):
         self.assertFalse(skipped[0]['review_required'])
         self.assertEqual(skipped[0]['kind'],'non_runtime_yaml')
 
+    def test_invalid_new_xml_is_not_masked_by_unmapped_old_xml(self):
+        config=module('config_changes')
+        changes,issues=config.extract_config_changes([{
+            'path':'src/main/resources/config.xml',
+            'before':'<beans><bean id="x"/></beans>',
+            'after':'<beans><property name="broken"></beans>'}])
+        self.assertEqual(changes,[])
+        self.assertEqual(len(issues),1)
+        self.assertEqual(issues[0]['kind'],'parse_failure')
+        self.assertIn('invalid XML',issues[0]['reason'])
+        self.assertIn('after:',issues[0]['reason'])
+        self.assertTrue(issues[0]['review_required'])
+
+    def test_git_ancestor_exit_codes(self):
+        collector=module('collect_git')
+        for code,expected in ((0,True),(1,False)):
+            with mock.patch.object(collector.subprocess,'run',
+                                   return_value=mock.Mock(returncode=code,stderr=b'')):
+                self.assertIs(collector.is_ancestor('sample','old','new'),expected)
+        with mock.patch.object(collector.subprocess,'run',
+                               return_value=mock.Mock(returncode=128,stderr=b'broken object')):
+            with self.assertRaisesRegex(ValueError,'broken object'):
+                collector.is_ancestor('sample','old','new')
+
     def test_runtime_yaml_and_non_config_xml_review_classification(self):
         config = module('config_changes')
         findings, skipped = config.extract_config_changes([
