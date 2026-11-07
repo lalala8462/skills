@@ -40,7 +40,7 @@ def is_ancestor(root, earlier, later):
     if result.returncode==1:
         return False
     raise ValueError('Git ancestor check failed (exit {}): {}'.format(
-        result.returncode,result.stderr.decode('utf-8','replace').strip()))
+        result.returncode,result.stderr.decode('utf-8','backslashreplace').strip()))
 
 
 def resolved(root, rev):
