@@ -741,6 +741,23 @@ class Convert{To run(From source){To target=new To(source);BeanUtils.copyPropert
         constructors=[e for e in graph.edges if e['site']['kind']=='construct']
         self.assertTrue(any(e['targets'] and e['status']=='source_resolved' for e in constructors))
 
+    def test_graph_type_owner_cache_does_not_pin_graph_instances(self):
+        import gc
+        import weakref
+        graph=self.graph({'types':'''package p;
+class Base {} class Child extends Base {}
+'''})
+        child=next(symbol for symbol in graph.classes if symbol.endswith('.Child'))
+        original=graph._resolve_type_owner
+        with mock.patch.object(graph,'_resolve_type_owner',wraps=original) as resolve:
+            self.assertEqual(graph.type_owner('Base',child),'p.Base')
+            self.assertEqual(graph.type_owner('Base',child),'p.Base')
+            resolve.assert_called_once()
+        reference=weakref.ref(graph)
+        del original,graph
+        gc.collect()
+        self.assertIsNone(reference())
+
     def test_windows_crlf_positions_preserve_source_lines(self):
         from source_index import source_lines
         source='class A {\r\n String name="中文";\r\n void run(){name="结束";}\r\n}\r\n'
