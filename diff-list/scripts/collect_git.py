@@ -17,6 +17,18 @@ def git(root, *args):
     return p.stdout
 
 
+def is_ancestor(root, earlier, later):
+    """Git exit 0=祖先、1=非祖先，其他退出码是执行错误，禁止误判历史。"""
+    command=['git','-C',str(root),'merge-base','--is-ancestor',earlier,later]
+    result=subprocess.run(command,stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=False)
+    if result.returncode==0:
+        return True
+    if result.returncode==1:
+        return False
+    raise ValueError('Git ancestor check failed (exit {}): {}'.format(
+        result.returncode,result.stderr.decode('utf-8','replace').strip()))
+
+
 def resolved(root, rev):
     return git(root, 'rev-parse', '--verify', str(rev) + '^{commit}').strip()
 
@@ -47,10 +59,7 @@ def _range_commit_review(root, base, head, net_status, max_commits=300,
     """First-parent timeline. Endpoint comparison still uses the complete net diff."""
     # merge-base rather than --is-ancestor so the existing range comparison
     # continues to work even when endpoints belong to different branches.
-    try:
-        common = git(root, 'merge-base', base, head).strip()
-    except ValueError:
-        common = ''
+    common=git(root,'merge-base',base,head).strip()
     if common != base:
         evidence = review_commit_history([], net_status)
         evidence['scope'] = 'endpoint_comparison_only'
@@ -187,21 +196,14 @@ def collect(project, capture_config=False, persist_snapshot=False):
         if any(e['sha'] == sha for e in entries):
             raise ValueError('Duplicate commit ' + sha)
         entries.append({'sha': sha, 'parent': parent, 'parent_index': parent_index})
-    # Determine chronology by ancestry, never by user input order or timestamp.
-    for x in entries:
-        for y in entries:
-            if x is y:
-                continue
-            anc_xy = subprocess.run(['git','-C',str(root),'merge-base','--is-ancestor',
-                                     x['sha'], y['sha']]).returncode == 0
-            anc_yx = subprocess.run(['git','-C',str(root),'merge-base','--is-ancestor',
-                                     y['sha'], x['sha']]).returncode == 0
-            if not anc_xy and not anc_yx:
-                raise ValueError('Selected revisions on incomparable histories; confirm final combination')
-    sortable = list(entries)  # list.sort temporarily hides entries from its own key closure
-    entries.sort(key=lambda e: sum(subprocess.run(
-        ['git','-C',str(root),'merge-base','--is-ancestor',other['sha'],e['sha']]).returncode == 0
-        for other in sortable if other is not e))
+    # 各提交的可达祖先数沿祖先关系严格增加。按该数量排序后，
+    # 只需检查相邻提交是否存在祖先关系，无需执行 O(n²) 次 Git 检查。
+    order={entry['sha']:int(git(root,'rev-list','--count',entry['sha']).strip())
+           for entry in entries}
+    entries.sort(key=lambda entry:(order[entry['sha']],entry['sha']))
+    for earlier,later in zip(entries,entries[1:]):
+        if not is_ancestor(root,earlier['sha'],later['sha']):
+            raise ValueError('Selected revisions on incomparable histories; confirm final combination')
     selected = {e['sha'] for e in entries}
     all_paths = set()
     for e in entries:
