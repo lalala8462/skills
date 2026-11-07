@@ -36,7 +36,7 @@ relations 记录直接变化相关的解析关系及需要人工复核的未解�
 
 change_summary 只压缩直接事实。
 
-navigation_facets 用于阅读排序；完整复核范围来自 review_units、review_facets 与底账事实。facet 表示精确结构关联，业务需求归属由 Agent 判断。
+navigation_facets **只用于阅读排序，不得据此裁剪复核范围**；完整复核范围来自 review_units、review_facets 与底账事实。facet 表示精确结构关联，业务需求归属由 Agent 判断。
 
 ## review_query.py
 
@@ -89,9 +89,9 @@ Audit 将未归属的真实直接变化与背景事实分开；`configuration` �
 
 pending_review 表示尚未被测试用例引用的 review unit，并提供 high_value_facets、candidate_case_ids、related_referenced_unit_ids 和完整 facet 引用。
 
-`referenced_unit_count` 为测试用例引用的单元数；`referenced_facet_count` 为至少一个成员单元被用例引用的 facet 数，`all_units_referenced_facet_count` 才表示成员单元全部被引用。该统计仅反映复核单元的引用情况，由 Agent 进一步判断业务分支覆盖。
+`referenced_unit_count` 为测试用例引用的单元数；`referenced_facet_count` 为至少一个成员单元被用例引用的 facet 数，`all_units_referenced_facet_count` 才表示成员单元全部被引用。
 
-它用于提示尚待核实的引用关系；业务测试覆盖质量由 Agent 结合实际场景判断。
+**`coverage.pending_review` 只衡量复核单元的用例引用情况，不证明业务覆盖或分支覆盖**；即使某个 review unit 已被引用，也必须由 Agent 核对具体业务场景及可观察断言。
 
 ## run-state.json 与查询计量
 

@@ -22,6 +22,7 @@ class DocsContractTest(unittest.TestCase):
         cls.guide=(ROOT/'docs'/'usage-guide.md').read_text(encoding='utf-8')
         cls.contract=(ROOT/'references'/'analysis-contract.md').read_text(encoding='utf-8')
         cls.readme=(ROOT/'README.md').read_text(encoding='utf-8')
+        cls.skill=(ROOT/'SKILL.md').read_text(encoding='utf-8')
         cls.agent=(ROOT/'agents'/'openai.yaml').read_text(encoding='utf-8')
 
     def test_limits_match_all_defaults_and_hard_maxima(self):
@@ -31,6 +32,19 @@ class DocsContractTest(unittest.TestCase):
                 row='| '+chr(96)+key+chr(96)+' | '+str(default)+' | '+str(maximum)+' |'
                 self.assertIn(row,self.guide)
         self.assertEqual(set(source_index.DEFAULT_LIMITS),set(analyze.MAX_LIMITS))
+
+    def test_default_rules_must_not_be_guessed_or_trigger_repeat_analysis(self):
+        for document in (self.skill,self.guide):
+            with self.subTest(document='SKILL' if document is self.skill else 'usage-guide'):
+                for requirement in ('默认使用通用规则',
+                                    '不要主动搜索、猜测或补传项目专用',
+                                    '只有用户明确提供规则文件时',
+                                    '不得为尝试或补传规则对同一批 SHA 重复分析'):
+                    self.assertIn(requirement,document)
+
+    def test_navigation_and_coverage_are_not_business_scope_filters(self):
+        self.assertIn('不得据此裁剪复核范围',self.contract)
+        self.assertIn('不证明业务覆盖或分支覆盖',self.contract)
 
     def test_analyzer_and_schema_versions_match_contract(self):
         self.assertIn('analyzer_version='+analysis_engine.VERSION,self.contract)

@@ -30,7 +30,7 @@
 
 ## 2. 规则与资源预算
 
-`--rules rules.json` 可扩展 `config_annotations`、`config_scopes`、`aliases`、`relation_review_tokens`、`limits`。例：
+**默认使用通用规则**。不要主动搜索、猜测或补传项目专用 `rules` 文件；只有用户明确提供规则文件时才传入 `--rules`，不得为尝试或补传规则对同一批 SHA 重复分析。用户明确提供的 `--rules rules.json` 可扩展 `config_annotations`、`config_scopes`、`aliases`、`relation_review_tokens`、`limits`。例：
 
 ~~~json
 {"version":1,"limits":{"depth":3,"methods":500}}
