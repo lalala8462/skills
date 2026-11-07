@@ -745,7 +745,8 @@ class Convert{To run(From source){To target=new To(source);BeanUtils.copyPropert
         from source_index import list_sources
         source_bytes=b'100644 blob '+b'a'*40+bytes([9])+bytes([255])+b'.java'+bytes([0])
         issues=[]
-        with mock.patch('source_index.git_bytes',return_value=source_bytes):
+        with mock.patch('source_index.git_bytes',return_value=source_bytes), \
+             mock.patch('repo_access.os.fsdecode',return_value=chr(0xdcff)):
             self.assertEqual(list_sources('unused','tree',issues),[])
         self.assertEqual(len(issues),1)
         self.assertIn('invalid Git source path encoding',issues[0]['reason'])
