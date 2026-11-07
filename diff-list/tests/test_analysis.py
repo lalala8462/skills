@@ -776,7 +776,7 @@ class Callback extends Base{Executor executor;@Override public void onDone(){exe
 class Task implements Runnable{@Override public void run(){System.out.println("persist result");}}
 '''})
         engine=ProjectAnalysis('p','unused',copy.deepcopy(graph.index),copy.deepcopy(graph.index),
-                               COMMON_RULES,dict(DEFAULT_LIMITS,depth=3))
+                               COMMON_RULES,dict(DEFAULT_LIMITS,depth=2))
         selected=engine.traverse('result',{'p.Main#send()'})
         self.assertIn('p.Callback#onDone()',selected)
         self.assertNotIn('p.Task#run()',selected)
