@@ -158,6 +158,17 @@ class DiffListTest(unittest.TestCase):
                 self.assertIn('--no-checkout', call.args)
                 self.assertIn('core.longpaths=true', call.args)
 
+    def test_failed_clone_cleans_its_own_temporary_directory(self):
+        access=module('repo_access')
+        with tempfile.TemporaryDirectory() as td:
+            with mock.patch.dict(os.environ,{'LOCALAPPDATA':td}), \
+                 mock.patch.object(access,'run_git',side_effect=ValueError('clone failed')):
+                with self.assertRaisesRegex(ValueError,'clone failed'):
+                    access.prepare_repo('https://github.com/example/inventory')
+            root=Path(td)/'diff-list'/'runs'
+            self.assertTrue(root.exists())
+            self.assertEqual(list(root.iterdir()),[])
+
     def test_local_repository_path_is_cloned_without_checkout(self):
         access=module('repo_access')
         with tempfile.TemporaryDirectory() as td:
