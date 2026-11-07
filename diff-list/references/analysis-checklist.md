@@ -75,7 +75,7 @@ branch、switch、contains、集合数量等源码事实由 Agent 结合业务�
 
 正常逻辑已在需求验收中覆盖时，不在回归或边界 sheet 重复。
 
-`coverage.json` 的 `pending_review` 只用于发现尚未绑定测试场景的 review unit。优先查看 `candidate_case_ids` 判断现有场景是否已经实际覆盖；能覆盖则补充 `review_unit_id` 绑定，不能覆盖才新增用例。不要为了让待复核数量归零而制造重复或无业务价值的测试。
+`coverage.json` 的 `pending_review` 只用于发现尚未绑定测试场景的 review unit。优先查看 `candidate_case_ids` 判断现有场景是否已经实际覆盖；能覆盖则补充 `review_unit_id` 绑定，不能覆盖才新增用例。新增用例以实际业务风险和测试价值为依据，已覆盖的单元使用现有用例建立引用。
 
 ## 7. 报告
 
