@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -324,7 +325,10 @@ def _finalize_stage(state_path,state,run_dir,analysis,review,cases):
             for source,name in ((coverage,'coverage.json'),(excel,'test-cases.xlsx'),(report,'report.md')):
                 if not source.is_file():
                     raise OSError('缺少待发布文件: '+str(source))
-                os.replace(str(source),str(run_dir/name))
+                # 不移动 .work 原文件：某个输出发布失败后仍可直接 resume 重试。
+                temporary=run_dir/(name+'.tmp')
+                shutil.copy2(str(source),str(temporary))
+                os.replace(str(temporary),str(run_dir/name))
             try:
                 state['clones_cleaned']=cleanup_analysis_clones(analysis)
                 state.pop('clone_cleanup_error',None)
