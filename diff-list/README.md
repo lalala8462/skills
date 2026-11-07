@@ -24,7 +24,7 @@
 
     py -3 .\scripts\run_delivery.py --repo https://github.com/example/project --rev FULL_SHA
 
-默认在系统用户数据目录创建运行目录，默认运行根目录位于系统用户数据目录，不向被分析的源仓库写入产物：
+默认运行目录位于系统用户数据目录，不向被分析的源仓库写入产物：
 
     %LOCALAPPDATA%\diff-list\deliveries\20261106-140500-123\
 
