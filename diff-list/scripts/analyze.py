@@ -214,7 +214,7 @@ def run(specs,outdir,rules_file=None):
                   status='needs_review',context_file='context.jsonl',projects=projects,
                   cross_project_relations=cross_project_links(projects,graphs),
                   note='Static source evidence for AI review; not runtime or business validation.')
-    analysis['analysis_id']=stable(VERSION,rules,[(p['name'],p['repository'],p['snapshots']) for p in projects])
+    analysis['analysis_id']=stable(VERSION,rules,limits,[(p['name'],p['repository'],p['snapshots']) for p in projects])
     outdir.mkdir(parents=True,exist_ok=True)
     with (outdir/'context.jsonl').open('x',encoding='utf-8') as out:
         for row in sorted(contexts,key=lambda r:r['id']):
