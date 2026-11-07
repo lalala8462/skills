@@ -51,6 +51,20 @@ def run_git(*args):
     return process.stdout.strip()
 
 
+def decode_git_path(value):
+    """将 Git -z 路径字节还原为可安全写入 UTF-8 JSON 的路径。"""
+    try:
+        return value.decode('utf-8')
+    except UnicodeDecodeError:
+        decoded=os.fsdecode(value)
+        try:
+            decoded.encode('utf-8')
+        except UnicodeEncodeError as exc:
+            raise ValueError('Git path is not UTF-8 (hex={}): cannot safely index'.format(
+                value.hex())) from exc
+        return decoded
+
+
 def local_repo_path(value):
     """Resolve an existing local Git worktree without reading or changing its worktree files."""
     candidate = Path(value).expanduser()
