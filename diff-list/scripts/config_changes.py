@@ -6,6 +6,37 @@ import xml.etree.ElementTree as ET
 SUPPORTED_EXTENSIONS = ('.properties', '.yaml', '.yml', '.xml')
 
 
+MAX_CONFIG_FILES=100
+MAX_CONFIG_BYTES=300000
+
+
+def config_name_changes(lines):
+    """根据 Git --name-status 记录解析重命名映射和变化类别。"""
+    renames,kinds={},{}
+    for line in lines:
+        columns=line.split(chr(9))
+        if len(columns)<2:
+            continue
+        kind=columns[0][:1]
+        target=columns[2] if len(columns)==3 else columns[1]
+        kinds[target]=kind
+        if len(columns)==3 and kind=='R':
+            renames[target]=columns[1]
+    return renames,kinds
+
+
+def config_source(path,before_bytes,after_bytes):
+    """两种 Git 采集路径共用同一配置内容限制和 BOM 处理。"""
+    if max(len(before_bytes),len(after_bytes))>MAX_CONFIG_BYTES:
+        return None,dict(path=path,reason='file size limit')
+    try:
+        before=before_bytes.decode('utf-8-sig')
+        after=after_bytes.decode('utf-8-sig')
+    except UnicodeDecodeError:
+        return None,dict(path=path,reason='non-UTF-8 source')
+    return dict(path=path,before=before,after=after),None
+
+
 class NoConfigMapping(ValueError):
     """XML 合法但不包含当前可识别的配置键值映射。"""
 
