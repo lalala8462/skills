@@ -9,7 +9,7 @@ from pathlib import Path
 from case_contract import PURPOSES, validate_cases
 from generate_report import AGENT_HEADINGS, AGENT_PLACEHOLDER
 from scope_validation import validate_scope_files
-from validate_report import existing_impact_error, fenced_blocks, heading_positions, sections
+from validate_report import existing_impact_error, fenced_blocks, unclosed_fences, heading_positions, sections
 
 
 CASE_FIELDS=('case_id','title','preconditions','steps','expected','observable_evidence','review_unit_ids')
@@ -29,6 +29,8 @@ def report_errors(text,template):
         errors.append('report.md 标题及顺序与模板不一致')
         return errors
     body=sections(text,got)
+    if unclosed_fences(text):
+        errors.append('报告代码围栏未闭合')
     for heading in AGENT_HEADINGS:
         value=body.get(heading,'').strip()
         if not value or value==AGENT_PLACEHOLDER:
@@ -40,9 +42,6 @@ def report_errors(text,template):
         if mermaid=='无':
             errors.append('整体流程非“无”时必须提供 Mermaid 代码块')
         else:
-            backtick=chr(96)*3
-            if mermaid.count(backtick)%2 or mermaid.count('~~~')%2:
-                errors.append('Mermaid 代码围栏未闭合')
             blocks=[content for lang,content in fenced_blocks(mermaid)
                     if lang.strip().lower()=='mermaid']
             if len(blocks)!=1:
