@@ -741,16 +741,14 @@ class Convert{To run(From source){To target=new To(source);BeanUtils.copyPropert
         constructors=[e for e in graph.edges if e['site']['kind']=='construct']
         self.assertTrue(any(e['targets'] and e['status']=='source_resolved' for e in constructors))
 
-    def test_non_utf8_git_source_path_is_visible_as_index_issue(self):
+    def test_non_utf8_git_source_path_fails_without_partial_index(self):
         from source_index import list_sources
         source_bytes=b'100644 blob '+b'a'*40+bytes([9])+bytes([255])+b'.java'+bytes([0])
-        issues=[]
         with mock.patch('source_index.git_bytes',return_value=source_bytes), \
-             mock.patch('repo_access.os.fsdecode',return_value=chr(0xdcff)):
-            self.assertEqual(list_sources('unused','tree',issues),[])
-        self.assertEqual(len(issues),1)
-        self.assertIn('invalid Git source path encoding',issues[0]['reason'])
-        self.assertNotIn('\ufffd',issues[0]['path'])
+             mock.patch('repo_access.os.fsdecode',
+                        side_effect=UnicodeDecodeError('utf-8',bytes([255]),0,1,'invalid')):
+            with self.assertRaisesRegex(ValueError,'hex=ff2e6a617661'):
+                list_sources('unused','tree')
 
     def test_missing_indexed_evidence_is_recorded_as_scope_error(self):
         graph=self.graph({'sample':'class Service {void run(){}}'})
