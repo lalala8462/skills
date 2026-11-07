@@ -126,7 +126,7 @@ def cleanup_analysis_clones(analysis_path):
     projects=analysis.get('projects') or []
     if not projects:
         raise ValueError('analysis.json missing projects for clone cleanup')
-    root=(Path(os.getenv('LOCALAPPDATA') or tempfile.gettempdir())/'diff-list'/'runs').resolve()
+    # 使用 analysis.json 已记录的真实 clone 路径，不依赖下一次会话的环境变量。
     directories=[]
     for project in projects:
         original=project.get('analysis_clone')
@@ -135,9 +135,11 @@ def cleanup_analysis_clones(analysis_path):
         raw=Path(original)
         path=raw.resolve()
         parent=path.parent
-        if (raw.is_symlink() or parent.is_symlink() or path.name!='repo'
-                or parent.parent!=root or not parent.name.startswith('run-')
-                or not (path/'.git').is_dir()
+        root=parent.parent
+        if (raw.is_symlink() or parent.is_symlink() or root.is_symlink()
+                or path.name!='repo' or root.name!='runs'
+                or root.parent.name!='diff-list' or not parent.name.startswith('run-')
+                or (path/'.git').is_symlink() or not (path/'.git').is_dir()
                 or {part.name for part in parent.iterdir()}!={'repo'}):
             raise ValueError('refuse unsafe clone cleanup: '+str(original))
         directories.append(parent)
