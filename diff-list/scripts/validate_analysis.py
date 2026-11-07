@@ -69,7 +69,7 @@ def validate(analysis,context,review,cases,verify_sources=True):
     projects=analysis.get('projects',[])
     if not projects or len({project.get('name') for project in projects})!=len(projects):
         return ['missing or duplicate projects'],warnings
-    expected=stable(VERSION,analysis.get('rules',{}),
+    expected=stable(VERSION,analysis.get('rules',{}),analysis.get('limits',{}),
                     [(project['name'],project['repository'],project['snapshots']) for project in projects])
     if analysis.get('analysis_id')!=expected:
         errors.append('analysis snapshot identity mismatch')
