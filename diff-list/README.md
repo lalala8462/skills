@@ -24,7 +24,7 @@
 
     py -3 .\scripts\run_delivery.py --repo https://github.com/example/project --rev FULL_SHA
 
-默认在系统用户数据目录创建运行目录，不在 Git 项目内生成 `runs/` 或 `.work/`：
+默认在系统用户数据目录创建运行目录，默认运行根目录位于系统用户数据目录，不向被分析的源仓库写入产物：
 
     %LOCALAPPDATA%\diff-list\deliveries\20261106-140500-123\
 
@@ -45,7 +45,7 @@
 
     analyze → review_workbench → report_init
 
-随后进入 waiting_agent。报告初稿已预置“既有功能影响”的填写位置；Agent 必须填写具体结论，确认无影响时写“无”，不能保留占位符。Agent 直接编辑：
+随后进入 waiting_agent。报告初稿已预置“既有功能影响”的填写位置；Agent 的六个业务章节均须填写结论或明确写“无”；特殊逻辑非“无”时必须在“既有功能影响：”同行写具体结论或“无”，空标签与占位符均不合格。Agent 直接编辑：
 
 - .work/test-cases.json
 - .work/report.md
@@ -68,7 +68,7 @@ report.md 中以下章节由 Agent 维护：
 
 然后继续：
 
-    py -3 .\scripts\run_delivery.py --resume G:\tmp\diff-list\runs\20261106-140500-123
+    py -3 .\scripts\run_delivery.py --resume "$env:LOCALAPPDATA\diff-list\deliveries\<run>"
 
 流程：
 
@@ -81,13 +81,25 @@ report.md 中以下章节由 Agent 维护：
 
 再次 --resume，pending_review=0 后继续：
 
-    excel → report(refresh) → finalize
+    excel → report → finalize
 
 最终只发布：
 
     test-cases.xlsx
     report.md
     coverage.json
+
+## 参数及分析限制
+
+- 输入：`--repo` 搭配一个或多个 `--rev SHA`，或者 `--base SHA --head SHA`；多项目使用 `--manifest projects.json`，与单项目参数互斥。
+- 自定义规则：仅在明确需要时传 `--rules file.json`。规则文件使用 `version: 1`，可选 `config_annotations`、`config_scopes`、`aliases`、`relation_review_tokens`、`limits`；未知键拒绝。
+- 限制：默认 `depth=1`、`methods=100`。可显式设置至 `depth=3`、`methods=500`；其余上限为 `files=20000`、`file_bytes=4194304`、`total_bytes=536870912`、`context_bytes=67108864`，超过直接报错，不做静默截断。depth 指复核方法调用遍历，回调对象来源传播使用独立固定 4 轮。
+- 查询：`review_query.py --context` 可显式指定同一分析目录的 context 文件；`--output` 写新 JSON 文件，不覆盖；`--view index/all` 为索引/一次性展开视图，`--limit` 默认 10 且范围 1–100，`--source-lines` 默认 8 且范围 0–100。
+- `analysis.json` 使用 `schema_version=2`。分析身份包含版本和生效规则（含限制参数），因此不同显式 limits 产生不同 analysis_id。
+
+```json
+{"version":1,"limits":{"depth":3,"methods":500}}
+```
 
 ## 完整事实与复核索引
 
@@ -108,7 +120,7 @@ navigation_facets 只用于“先看什么”。普通 Util/Common/Base/Helper �
 
 ## 按需证据查询与全局审计
 
-`review_query.py` 是 Agent 可主动调用的脚本接口，使用同一次分析的 `analysis.json`、`review.json`、`context.jsonl`，不生成 review packet，也不修改原始事实底账。
+`review_query.py` 是 Agent 可主动调用的脚本接口，使用同一次分析的 `analysis.json`、`review.json`、`context.jsonl`，不会修改原始事实底账。
 
 PowerShell 先定义复核材料路径：
 
@@ -123,7 +135,7 @@ PowerShell 先定义复核材料路径：
 
 新增精确命中：`--query originalTradeNo --view facts --matched-only` 只返回关键词直接匹配的事实及关联单元入口，不把命中 unit 的全部事实一并展开；不带 `--matched-only` 时保持完整 unit 上下文模式。`--unit RU-xxx` 的索引直接包含 `direct_fact_ids / direct_evidence_ids / context_fact_count`，可按 ID 回查固定快照。
 
-分页默认 10 项，`--limit` 最多 100。每次响应有 `page.total/returned/complete/next_cursor`；`complete=false` 必须按 `--cursor <next_cursor>` 继续读取，不能将一页当作全部结果。针对分类的 `db/conditions` 是确定性已知类别索引，**不是完整业务范围**；必要时查询 `facts/relations/evidence` 全部分类。只有明确使用 `--view all` 才返回当前命中范围的完整展开，可能占用大量 Token。
+分页默认 10 项，`--limit` 最多 100。分页查询视图的响应包含 `page.total/returned/complete/next_cursor`；`complete=false` 必须按 `--cursor <next_cursor>` 继续读取，不能将一页当作全部结果。针对分类的 `db/conditions` 是确定性已知类别索引，**不是完整业务范围**；必要时查询 `facts/relations/evidence` 全部分类。只有明确使用 `--view all` 才返回当前命中范围的完整展开，可能占用大量 Token。
 
 Agent 在分析开始和交付前分别执行：
 
