@@ -73,6 +73,17 @@ class DeliveryFlowTest(unittest.TestCase):
         self.assertTrue(unclosed_fences(bad))
         with self.assertRaisesRegex(ValueError,'围栏未闭合'):
             fenced_blocks(bad,strict=True)
+        from validate_report import heading_positions,validate
+        malformed='## Before\\n\\n~~~mermaid\\nflowchart TD\\n A-->B\\n## After\\n'
+        with self.assertRaisesRegex(ValueError,'围栏未闭合'):
+            heading_positions(malformed)
+        template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
+        preflight_errors=report_errors(malformed,template)
+        self.assertTrue(any('围栏未闭合' in row for row in preflight_errors))
+        self.assertFalse(any('标题及顺序' in row for row in preflight_errors))
+        final_errors,_=validate(malformed,template,[])
+        self.assertTrue(any('围栏未闭合' in row for row in final_errors))
+        self.assertFalse(any('标题及顺序' in row for row in final_errors))
 
     def test_report_template_requires_real_existing_feature_impact_decision(self):
         template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
