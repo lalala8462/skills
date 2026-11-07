@@ -6,6 +6,10 @@ import xml.etree.ElementTree as ET
 SUPPORTED_EXTENSIONS = ('.properties', '.yaml', '.yml', '.xml')
 
 
+class NoConfigMapping(ValueError):
+    """XML 合法但不包含当前可识别的配置键值映射。"""
+
+
 def _likely_runtime_yaml(path):
     """Return whether a YAML file is likely application/runtime configuration.
 
@@ -116,7 +120,7 @@ def xml_entries(text):
             raise ValueError('duplicate XML property: ' + name)
         result[name] = value.strip()
     if not result:
-        raise ValueError('no supported XML key/value mappings')
+        raise NoConfigMapping('no supported XML key/value mappings')
     return result
 
 
@@ -139,41 +143,41 @@ def extract_config_changes(pairs):
         before_error = after_error = None
         try:
             before = parse(path, pair['before'])
+        except NoConfigMapping as exc:
+            before_error = exc
         except ValueError as exc:
-            before_error = str(exc)[:240]
+            before_error = exc
         try:
             after = parse(path, pair['after'])
+        except NoConfigMapping as exc:
+            after_error = exc
         except ValueError as exc:
-            after_error = str(exc)[:240]
+            after_error = exc
 
         lower = path.lower()
-        no_xml_mapping = 'no supported XML key/value mappings'
         if lower.endswith('.xml'):
-            # If only one side has supported mappings, the other side is an
-            # empty mapping set so additions/removals remain visible. Only when
-            # neither side contains supported mappings is the file non-target.
-            if before_error == no_xml_mapping and after_error is None:
-                before, before_error = {}, None
-            elif after_error == no_xml_mapping and before_error is None:
-                after, after_error = {}, None
-            elif before_error == no_xml_mapping and after_error == no_xml_mapping:
-                issues.append({'path': path, 'reason': no_xml_mapping,
-                                'kind': 'not_config_mapping',
-                                'review_required': False})
+            if isinstance(before_error,NoConfigMapping) and isinstance(after_error,NoConfigMapping):
+                issues.append({'path':path,'reason':'no supported XML key/value mappings',
+                               'kind':'not_config_mapping','review_required':False})
                 continue
+            if isinstance(before_error,NoConfigMapping):
+                before,before_error={},None
+            if isinstance(after_error,NoConfigMapping):
+                after,after_error={},None
 
-        error = before_error or after_error
-        if error:
-            review_required = True
-            kind = 'parse_failure'
-            if lower.endswith(('.yaml', '.yml')) and not _likely_runtime_yaml(path):
-                # CI/workflow/other generic YAML can use constructs intentionally
-                # unsupported here. Do not promote this parser limitation to a
-                # global review flag unless the path looks like runtime config.
-                review_required = False
-                kind = 'non_runtime_yaml'
-            issues.append({'path': path, 'reason': error, 'kind': kind,
-                            'review_required': review_required})
+        reasons=[]
+        if before_error is not None:
+            reasons.append('before: '+str(before_error))
+        if after_error is not None:
+            reasons.append('after: '+str(after_error))
+        if reasons:
+            review_required=True
+            kind='parse_failure'
+            if lower.endswith(('.yaml','.yml')) and not _likely_runtime_yaml(path):
+                review_required=False
+                kind='non_runtime_yaml'
+            issues.append({'path':path,'reason':'; '.join(reasons),'kind':kind,
+                           'review_required':review_required})
             continue
         for key in sorted(set(before) | set(after)):
             old, new = before.get(key), after.get(key)
