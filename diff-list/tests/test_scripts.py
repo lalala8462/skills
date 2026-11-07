@@ -402,7 +402,9 @@ class DiffListTest(unittest.TestCase):
                     (clone/'.git').mkdir(parents=True)
                 report=Path(td)/'analysis.json'
                 report.write_text(json.dumps({'projects':[{'analysis_clone':str(p)} for p in clones]}),encoding='utf-8')
-                self.assertEqual(access.cleanup_analysis_clones(report),2)
+                # 运行完成时的用户环境变量可以已经改变；记录的路径仍应可清理。
+                with mock.patch.dict(os.environ,{'LOCALAPPDATA':str(Path(td)/'other-session')}):
+                    self.assertEqual(access.cleanup_analysis_clones(report),2)
                 self.assertTrue(all(not clone.parent.exists() for clone in clones))
 
     def test_clone_cleanup_rejects_external_or_mixed_directories(self):
@@ -420,6 +422,23 @@ class DiffListTest(unittest.TestCase):
                     access.cleanup_analysis_clones(source)
                 self.assertTrue(protected.exists())
                 self.assertTrue(owned.exists())
+
+    def test_clone_cleanup_rejects_symlinked_repository(self):
+        access=module('repo_access')
+        with tempfile.TemporaryDirectory() as td:
+            base=Path(td)/'diff-list'/'runs'
+            real=Path(td)/'actual-repo';(real/'.git').mkdir(parents=True)
+            linked=base/'run-link'/'repo';linked.parent.mkdir(parents=True)
+            try:
+                linked.symlink_to(real,target_is_directory=True)
+            except (OSError,NotImplementedError):
+                self.skipTest('creating directory symlinks requires OS permission')
+            source=Path(td)/'analysis.json'
+            source.write_text(json.dumps({'projects':[{'analysis_clone':str(linked)}]}),
+                              encoding='utf-8')
+            with self.assertRaisesRegex(ValueError,'unsafe clone cleanup'):
+                access.cleanup_analysis_clones(source)
+            self.assertTrue(real.exists())
 
     def test_range_long_paths_capture_config(self):
         collector=module('collect_git')
