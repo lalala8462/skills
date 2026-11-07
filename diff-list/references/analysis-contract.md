@@ -26,8 +26,7 @@ relations 只保存与本次变化直接相连的一层关系，状态包括 sou
 - review_units：变化方法或项目级变化的最小复核单元；
 - review_facets：按精确结构锚点形成的完整关系索引；
 - navigation_facets：review_facets 的高价值阅读排序子集；
-- fact_catalog：本轮复核相关 fact 预览；
-- relation_catalog：本轮复核相关 relation 预览。
+- fact_catalog：本轮复核相关 fact 预览；完整关系通过原始 analysis.json 或 `--view relations` 查看。
 
 change_summary 只压缩直接事实。
 
