@@ -20,7 +20,7 @@ PRIMARY_KINDS={
 }
 CONDITION_KINDS={'branch','switch_branch','membership_filter'}
 DB_KINDS={'mapper_statement','field_source'}
-VIEW_CHOICES=('index','facts','relations','evidence','db','calls','conditions','all')
+VIEW_CHOICES=('index','facts','relations','evidence','db','conditions','all')
 AUDIT_VIEWS=(
     'missing_seeds','unassigned_primary_facts','unindexed_facts','unindexed_relations',
     'unresolved_relations','missing_evidence','unreferenced_evidence',
@@ -451,9 +451,6 @@ def _render_request(args,analysis,review,context):
     elif args.view=='evidence':
         items=[indexes['evidence'][i] for i in sorted(expanded['evidence'])
                if i in indexes['evidence']]
-    elif args.view=='calls':
-        items=[indexes['relations'][i] for i in sorted(expanded['relations'])
-               if i in indexes['relations']]
     elif args.view=='db':
         items=[indexes['facts'][i] for i in sorted(expanded['facts'])
                if i in indexes['facts'] and indexes['facts'][i].get('kind') in DB_KINDS]
@@ -474,7 +471,7 @@ def _render_request(args,analysis,review,context):
                 selected_totals={key+'_count':len(value) for key,value in expanded.items()},
                 cross_project_relation_count=len(cross),
                 items=selected,page=page,
-                category_is_exhaustive=(not matched_only and args.view in ('facts','relations','evidence','calls')),
+                category_is_exhaustive=(not matched_only and args.view in ('facts','relations','evidence')),
                 note=NOTE)
 
 
@@ -508,7 +505,7 @@ def main(argv=None):
     group.add_argument('--unit',help='精确 review_unit_id')
     group.add_argument('--fact',help='完整 fact 及其证据引用')
     group.add_argument('--evidence',help='校验并读取固定 Git 快照中的源码证据')
-    parser.add_argument('--view',default='index',help='查询层级：index/facts/relations/evidence/db/calls/conditions/all；audit 可查看异常分类')
+    parser.add_argument('--view',default='index',help='查询层级：index/facts/relations/evidence/db/conditions/all；audit 可查看异常分类')
     parser.add_argument('--limit',type=int,default=10,help='每页最多 10 项，可按需提高至 100')
     parser.add_argument('--cursor',help='上一页返回的 next_cursor')
     parser.add_argument('--matched-only',action='store_true',
