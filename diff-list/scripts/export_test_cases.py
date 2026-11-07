@@ -47,9 +47,9 @@ def _observable_evidence(value, identifier):
         if any('\n' in value or '\r' in value for value in (surface, target, assertion)):
             raise ValueError(label + ' must be single-line')
         simple = re.sub(r'[\s,，。.!！:：;；、]+', '', assertion)
+        # 只识别没有具体值或可判定条件的空泛结论，不依赖支付领域的词表。
         generic = re.fullmatch(
-            r'(?:(?:业务|交易|支付|退款|订单|操作|请求|接口|系统|结果|响应|处理|执行|数据|状态|功能)){0,2}'
-            r'(?:成功|正常|正确|无异常|符合预期|与预期一致|通过)', simple)
+            r'[\u4e00-\u9fff]{0,12}(?:成功|正常|正确|无异常|符合预期|与预期一致|通过)', simple)
         if generic or simple in ('符合预期', '处理成功', '结果正确', '功能正常', '正常处理', '无异常'):
             raise ValueError(label + '.assertion is not an observable, verifiable result')
         assertions.append('{}. {}｜{}：{}'.format(index, surface, target, assertion))
