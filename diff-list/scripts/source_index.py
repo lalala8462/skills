@@ -62,7 +62,8 @@ def batch_blobs(repo, oids):
     return result
 
 
-def list_sources(repo, tree, issues=None):
+def list_sources(repo, tree):
+    """不支持的 Git 文件名直接终止分析，不生成不完整的源码事实。"""
     records = git_bytes(repo, 'ls-tree', '-r', '-z', tree).split(bytes([0]))
     result = []
     for record in records:
@@ -72,15 +73,7 @@ def list_sources(repo, tree, issues=None):
         mode, kind, oid = meta.decode('ascii').split()
         if kind != 'blob' or mode == '120000' or not path.lower().endswith((b'.java', b'.xml')):
             continue
-        try:
-            name=decode_git_path(path)
-        except ValueError as exc:
-            if issues is None:
-                raise
-            issues.append(dict(path='<non-UTF8:{}>'.format(path.hex()),
-                               reason='invalid Git source path encoding: '+str(exc)))
-            continue
-        result.append((name, oid))
+        result.append((decode_git_path(path), oid))
     return sorted(result)
 
 
@@ -158,7 +151,7 @@ def mapper_events(source):
 
 def build_index(repo, tree, limits, parser, cache):
     files, issues, new_sources, total = [], [], {}, 0
-    entries = list_sources(repo, tree, issues)
+    entries = list_sources(repo, tree)
     oids = sorted(set(oid for _,oid in entries))
     check = subprocess.run(['git','-C',str(repo),'cat-file','--batch-check'],
                            input=('\n'.join(oids)+'\n').encode('ascii'),stdout=subprocess.PIPE,stderr=subprocess.PIPE)
