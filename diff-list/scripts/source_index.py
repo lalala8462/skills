@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from repo_access import decode_git_path
 
 DEFAULT_LIMITS = dict(files=10000, file_bytes=1048576, total_bytes=134217728,
                       depth=1, methods=100, context_bytes=8388608)
@@ -38,7 +39,7 @@ def git_bytes(repo, *args):
     run = subprocess.run(['git', '-c', 'core.longpaths=true', '-C', str(repo), *args],
                          stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if run.returncode:
-        raise ValueError('Git source read failed: ' + run.stderr.decode('utf-8', 'replace')[:300])
+        raise ValueError('Git source read failed: ' + run.stderr.decode('utf-8', 'backslashreplace')[:300])
     return run.stdout
 
 
@@ -61,17 +62,25 @@ def batch_blobs(repo, oids):
     return result
 
 
-def list_sources(repo, tree):
-    records = git_bytes(repo, 'ls-tree', '-r', '-z', tree).split(b'\0')
+def list_sources(repo, tree, issues=None):
+    records = git_bytes(repo, 'ls-tree', '-r', '-z', tree).split(bytes([0]))
     result = []
     for record in records:
         if not record:
             continue
-        meta, path = record.split(b'\t', 1)
+        meta, path = record.split(bytes([9]), 1)
         mode, kind, oid = meta.decode('ascii').split()
-        name = path.decode('utf-8')
-        if kind == 'blob' and mode != '120000' and name.lower().endswith(('.java', '.xml')):
-            result.append((name, oid))
+        if kind != 'blob' or mode == '120000' or not path.lower().endswith((b'.java', b'.xml')):
+            continue
+        try:
+            name=decode_git_path(path)
+        except ValueError as exc:
+            if issues is None:
+                raise
+            issues.append(dict(path='<non-UTF8:{}>'.format(path.hex()),
+                               reason='invalid Git source path encoding: '+str(exc)))
+            continue
+        result.append((name, oid))
     return sorted(result)
 
 
@@ -149,7 +158,7 @@ def mapper_events(source):
 
 def build_index(repo, tree, limits, parser, cache):
     files, issues, new_sources, total = [], [], {}, 0
-    entries = list_sources(repo, tree)
+    entries = list_sources(repo, tree, issues)
     oids = sorted(set(oid for _,oid in entries))
     check = subprocess.run(['git','-C',str(repo),'cat-file','--batch-check'],
                            input=('\n'.join(oids)+'\n').encode('ascii'),stdout=subprocess.PIPE,stderr=subprocess.PIPE)
