@@ -9,6 +9,7 @@ from pathlib import Path
 from analysis_engine import VERSION, redact
 from case_contract import REVIEW_SCHEMA_VERSION, coverage_matrix, resolve_case_sources
 from source_index import batch_blobs, git_bytes, stable, source_lines
+from repo_access import decode_git_path
 
 
 def verify_evidence(project,records):
@@ -31,7 +32,7 @@ def verify_evidence(project,records):
             meta,path=row.split(b'\t',1)
             parts=meta.decode('ascii').split()
             if parts[1]=='blob':
-                files[path.decode('utf-8')]=parts[2]
+                files[decode_git_path(path)]=parts[2]
         trees[side]=files
     for record in records:
         side=record.get('side')
