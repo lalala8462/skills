@@ -9,7 +9,7 @@ from pathlib import Path
 from case_contract import PURPOSES, validate_cases
 from generate_report import AGENT_HEADINGS, AGENT_PLACEHOLDER
 from scope_validation import validate_scope_files
-from validate_report import fenced_blocks, heading_positions, sections
+from validate_report import existing_impact_error, fenced_blocks, heading_positions, sections
 
 
 CASE_FIELDS=('case_id','title','preconditions','steps','expected','observable_evidence','review_unit_ids')
@@ -51,10 +51,9 @@ def report_errors(text,template):
                 errors.append('Mermaid 必须以 flowchart TD 或 sequenceDiagram 开始，禁止 graph TD')
 
     special=body.get('## 4. 特殊逻辑与测试关注点','').strip()
-    if AGENT_PLACEHOLDER in special:
-        errors.append('特殊逻辑章节的“既有功能影响”仍是模板占位，请填写实际结论或“无”')
-    elif special and special!='无' and '既有功能影响' not in special:
-        errors.append('特殊逻辑章节非“无”时必须包含“既有功能影响”说明')
+    impact_error=existing_impact_error(special)
+    if impact_error:
+        errors.append(impact_error)
     return errors
 
 
