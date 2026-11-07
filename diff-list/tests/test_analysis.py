@@ -275,10 +275,40 @@ class Handler {
         self.assertIn('analysis snapshot identity mismatch',errors)
 
     def test_mapper_is_bound_but_dynamic_sql_not_executed(self):
+        # 默认只遍历一层 Java 调用，但已选中方法直接绑定的 Mapper 仍须取证。
+        self.assertEqual(self.analysis['limits']['depth'],1)
+        baseline=[fact for fact in self.analysis['projects'][0]['facts']
+                  if fact['kind']=='mapper_statement']
+        self.assertTrue(any(f['data']['name']=='list' and f['data']['dynamic']
+                            for f in baseline))
         expanded,_=self.analyze([self.after],limits={'depth':3})
         statements=[fact for fact in expanded['projects'][0]['facts']
                     if fact['kind']=='mapper_statement']
-        self.assertTrue(any(f['data']['name']=='list' and f['data']['dynamic'] for f in statements))
+        self.assertEqual({f['id'] for f in baseline},{f['id'] for f in statements})
+        keys=[(f['data']['side'],f['data']['namespace'],f['data']['name']) for f in baseline]
+        self.assertEqual(len(keys),len(set(keys)))
+
+    def test_mapper_without_matching_namespace_is_not_guessed(self):
+        with tempfile.TemporaryDirectory(prefix='diff-list-unbound-mapper-') as td:
+            root=Path(td)
+            source=root/'source'
+            initialize(source)
+            before='''package sample;
+interface Store { String list(String no); }
+class Flow { Store store; void process(){ store.list("old"); } }
+'''
+            after=before.replace('store.list("old")','store.list("new")')
+            unrelated=MAPPER.replace('namespace="sample.Store"',
+                                     'namespace="sample.UnrelatedStore"')
+            commit(source,{'src/Small.java':before,'src/Store.xml':unrelated},'base')
+            head=commit(source,{'src/Small.java':after},'change')
+            clone=root/'clone'
+            subprocess.check_call(['git','clone','-q','--no-checkout',str(source),str(clone)])
+            with mock.patch.object(analyze,'prepare_repo',return_value=(clone,'fixture')):
+                result=analyze.run([dict(repo='https://github.com/example/fixture',
+                                         revisions=[head])],root/'out')
+            self.assertFalse([f for f in result['projects'][0]['facts']
+                              if f['kind']=='mapper_statement'])
 
     def test_configuration_file_change_is_captured_with_redacted_evidence(self):
         base=commit(self.source,{'application.properties':'feature=0\npassword=SENSITIVE_VALUE\n'},'config base')
