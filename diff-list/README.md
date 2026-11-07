@@ -98,7 +98,7 @@ review_schema_version=4 的 review.json 提供：
 - review_units：变化点级复核入口；
 - review_facets：完整精确结构关系；
 - navigation_facets：高价值阅读排序；
-- fact_catalog / relation_catalog：复核所需事实和关系预览。
+- fact_catalog：复核单元对应的事实预览；完整关系通过 analysis.json 或 `--view relations` 查证。
 
 review_facets 当前锚点包括 owner、direct_call、config、mapper、field。它们允许重叠，不做传递闭包，也不表示业务需求归属。
 
