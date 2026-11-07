@@ -26,6 +26,8 @@ def heading_positions(text):
                 continue
         if fence_char is None and HEAD.fullmatch(line):
             headings.append((i, line.strip()))
+    if fence_char is not None:
+        raise ValueError('代码围栏未闭合')
     return headings
 
 
@@ -98,8 +100,11 @@ def validate(text,template,expected):
     errors=[]; warnings=[]
     if '<!-- diff-list-status: draft -->' in text or '报告状态：未完成' in text:
         errors.append('报告标记为未完成，不能通过正式交付校验')
-    want=[title for _, title in heading_positions(template)]
-    got=[title for _, title in heading_positions(text)]
+    try:
+        want=[title for _, title in heading_positions(template)]
+        got=[title for _, title in heading_positions(text)]
+    except ValueError as exc:
+        return [str(exc)],warnings
     if got!=want:
         errors.append('标题及顺序与模板不一致')
     body=sections(text,got)
