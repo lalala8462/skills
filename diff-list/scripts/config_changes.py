@@ -101,8 +101,22 @@ def properties(text):
                 code=value[index+1:index+5]
                 if len(code)!=4 or any(c not in '0123456789abcdefABCDEF' for c in code):
                     raise ValueError('invalid properties Unicode escape')
-                output.append(chr(int(code,16)))
-                index+=5
+                number=int(code,16)
+                if 0xD800<=number<=0xDBFF:
+                    following=value[index+5:index+11]
+                    if not (len(following)==6 and following[:2]==chr(92)+'u' and
+                            all(c in '0123456789abcdefABCDEF' for c in following[2:])):
+                        raise ValueError('invalid properties Unicode surrogate pair')
+                    lower=int(following[2:],16)
+                    if not 0xDC00<=lower<=0xDFFF:
+                        raise ValueError('invalid properties Unicode surrogate pair')
+                    output.append(chr(0x10000+(number-0xD800)*1024+(lower-0xDC00)))
+                    index+=11
+                elif 0xDC00<=number<=0xDFFF:
+                    raise ValueError('invalid properties Unicode surrogate pair')
+                else:
+                    output.append(chr(number))
+                    index+=5
             else:
                 output.append(mapping.get(char,char))
                 index+=1
