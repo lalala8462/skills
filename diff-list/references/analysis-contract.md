@@ -3,13 +3,15 @@
 ## analysis.json
 
 - schema_version=2
-- analyzer_version=2.2.0
+- analyzer_version=2.2.1
 
 analysis_id 由分析器版本、生效规则（含 limits 参数）和项目固定快照计算；显式调整 limits 会改变分析身份。
 
 每个 project 保存 repository、analysis_clone、snapshots、change_seeds、git、facts、relations、hard_errors 和 stats。`analysis_clone` 仅用于当前运行的固定快照取证，成功交付后脚本删除隔离 clone，路径作为来源记录保留；交付后不能继续通过该路径读取源码。
 
 facts 是静态事实底账，主要包括方法/字段/类变化、配置、参数来源、Mapper、字段来源、返回值、分支、集合判断、未解析关系、对象复制和构造映射等。
+
+当选中的 Java 方法直接调用能够唯一匹配到 MyBatis namespace/statement 的 Mapper 声明时，即使 Mapper 接口方法超出默认方法遍历深度（depth=1），也生成对应 `mapper_statement` 事实；这一关系仍标识为约定推断，不等于运行时调用证明。不扩大其它 Java 方法遍历范围，未绑定或有歧义的 Mapper 不凭名称生成 SQL 事实。
 
 relations 记录直接变化相关的解析关系及需要人工复核的未解析关系，状态包括 source_resolved、convention_inferred、unresolved。默认遍历 depth=1，可显式增至 3；回调对象来源传播独立固定为 4 轮。超限直接拒绝，不静默截断。跨项目关系记录在 cross_project_relations。
 
