@@ -493,7 +493,7 @@ class Handler {
         for line in (ROOT/'assets/diff-list-template.md').read_text(encoding='utf-8').splitlines():
             lines.append(line)
             if line.startswith('#'):lines.extend(['',content.get(line,'无')])
-        report=out/'report.md';report.write_text('\n'.join(lines),encoding='utf-8')
+        report=out/'report.md';report.write_text('\n'.join(lines).replace('【Agent填写：基于完整复核事实形成业务结论；无相关内容时填写“无”】','无'),encoding='utf-8')
         return report
 
     def test_direct_cases_integrate_with_excel_and_report(self):
@@ -512,7 +512,7 @@ class Handler {
             '--coverage-output',str(out/'coverage.json')]),0)
         coverage=json.loads((out/'coverage.json').read_text(encoding='utf-8'))
         self.assertGreaterEqual(coverage['summary']['unit_count'],1)
-        self.assertIn('uncovered_unit_ids',coverage)
+        self.assertIn('unreferenced_unit_ids',coverage)
         self.assertEqual(export_main(['--input',str(out/'cases.json'),'--output',str(out/'cases.xlsx'),
             '--analysis',str(out/'analysis.json'),'--review',str(out/'review.json')]),0)
         from validate_report import main as report_main
