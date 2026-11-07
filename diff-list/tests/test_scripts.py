@@ -617,9 +617,31 @@ class AdditionalRegressionTests(unittest.TestCase):
             self.assertEqual(access.decode_git_path(filename.encode('utf-8')),filename)
             self.assertEqual(collector.git_null_fields(b'normal'+bytes([10])+b'name.java'+bytes([0])),['normal'+chr(10)+'name.java'])
             self.assertNotIn('\ufffd',collector.paths(root,base,head)[0])
-            with mock.patch.object(access.os,'fsdecode',return_value=chr(0xdcff)):
-                with self.assertRaisesRegex(ValueError,'not UTF-8'):
-                    access.decode_git_path(bytes([255,46,106,97,118,97]))
+            invalid=bytes([255,46,106,97,118,97])
+            with mock.patch.object(access.os,'fsdecode',
+                                   side_effect=UnicodeDecodeError('utf-8',invalid,0,1,'invalid')):
+                with self.assertRaisesRegex(ValueError,'hex=ff2e6a617661'):
+                    access.decode_git_path(invalid)
+            if os.name=='nt':
+                # 在真实 Windows 文件系统编解码器下，不允许泄漏 UnicodeDecodeError。
+                try:
+                    decoded=access.decode_git_path(invalid)
+                    self.assertEqual(os.fsencode(decoded),invalid)
+                    decoded.encode('utf-8')
+                except ValueError as exc:
+                    self.assertIn('hex=ff2e6a617661',str(exc))
+
+    def test_final_evidence_verifier_rejects_unsafe_git_path(self):
+        verifier=module('validate_analysis')
+        sha='a'*40
+        invalid=(b'100644 blob '+b'b'*40+bytes([9,255])+b'.java'+bytes([0]))
+        with mock.patch.object(verifier,'git_bytes',
+                               side_effect=[(sha+'\\n').encode('ascii'),invalid]), \
+             mock.patch('repo_access.os.fsdecode',
+                        side_effect=UnicodeDecodeError('utf-8',bytes([255]),0,1,'invalid')):
+            with self.assertRaisesRegex(ValueError,'hex=ff2e6a617661'):
+                verifier.verify_evidence(
+                    dict(analysis_clone='unused',snapshots={'result':sha}),[])
 
     def test_xml_config_mapping_add_remove_is_not_ignored(self):
         config = module('config_changes')
