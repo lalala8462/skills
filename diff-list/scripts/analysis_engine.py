@@ -780,6 +780,28 @@ class ProjectAnalysis:
                     for edge in graph.edges:
                         if edge['field'] == key[0]+'#'+key[1] and edge['source'] not in ignored:
                             methods.add(edge['source'])
+        # Mapper XML 是独立的变更来源：纯 SQL 修改也必须进入主事实和复核单元。
+        # statement 由固定 Git 快照解析，保留原始 SQL 与动态标签供 Agent 判断。
+        mapper_sides={}
+        for side,graph in (('baseline',old),('result',new)):
+            mapper_sides[side]={
+                (row['owner'],row['name']):row
+                for row in graph.index['events'] if row['kind']=='mapper' and row.get('name')
+            }
+        for key in sorted(set(mapper_sides['baseline'])|set(mapper_sides['result'])):
+            a,b=mapper_sides['baseline'].get(key),mapper_sides['result'].get(key)
+            if a and b and a['source']==b['source']:
+                continue
+            linked=sorted({symbol for graph in (old,new) for symbol,method in graph.methods.items()
+                           if method['owner']==key[0] and method['name']==key[1]})
+            def details(row):
+                return (dict(statement=row['statement'],source=row['source'],
+                             dynamic=row['dynamic'],mappings=row['mappings']) if row else None)
+            self.fact('mapper_statement_change',dict(
+                namespace=key[0],name=key[1],
+                change='modified' if a and b else ('added' if b else 'deleted'),
+                before=details(a),after=details(b),linked_symbols=linked),
+                [('baseline',a),('result',b)])
         return methods, changed_fields
 
     def traverse(self, side, seeds):
