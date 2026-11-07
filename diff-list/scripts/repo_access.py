@@ -49,7 +49,7 @@ def run_git(*args):
         raise ValueError('Git failed: '+' '.join(map(str,args))+'\n'+
                          process.stderr.decode('utf-8','backslashreplace').strip())
     payload=process.stdout.rstrip(bytes([10,13]))
-    return decode_git_path(payload).strip()
+    return decode_git_path(payload)
 
 
 def decode_git_path(value):
