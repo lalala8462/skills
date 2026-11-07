@@ -249,6 +249,31 @@ class Handler {
         self.assertTrue(p['git']['commit_review']['review_required'])
         self.assertFalse(any(f['kind']=='method_change' for f in p['facts']))
 
+    def test_out_of_range_limits_fail_without_silent_clamping(self):
+        for invalid in ({'depth':4},{'methods':501},{'context_bytes':67108865},
+                        {'files':20001},{'total_bytes':536870913},{'file_bytes':4194305}):
+            with self.subTest(invalid=invalid):
+                with self.assertRaisesRegex(ValueError,'limits exceed'):
+                    self.analyze([self.after],limits=invalid)
+
+    def test_effective_limits_contribute_to_analysis_identity(self):
+        expanded,_=self.analyze([self.after],limits={'depth':3})
+        self.assertEqual(expanded['limits']['depth'],3)
+        self.assertNotEqual(self.analysis['analysis_id'],expanded['analysis_id'])
+        from source_index import stable
+        from analysis_engine import VERSION
+        project_keys=[(p['name'],p['repository'],p['snapshots']) for p in self.analysis['projects']]
+        self.assertEqual(self.analysis['analysis_id'],
+                         stable(VERSION,self.analysis['rules'],self.analysis['limits'],project_keys))
+        changed_limits=dict(self.analysis['limits'],depth=3)
+        self.assertNotEqual(
+            stable(VERSION,self.analysis['rules'],self.analysis['limits'],project_keys),
+            stable(VERSION,self.analysis['rules'],changed_limits,project_keys))
+        modified=copy.deepcopy(self.analysis)
+        modified['limits']['depth']=3
+        errors,_=validate(modified,[],{}, {},verify_sources=False)
+        self.assertIn('analysis snapshot identity mismatch',errors)
+
     def test_mapper_is_bound_but_dynamic_sql_not_executed(self):
         expanded,_=self.analyze([self.after],limits={'depth':3})
         statements=[fact for fact in expanded['projects'][0]['facts']
@@ -869,20 +894,12 @@ class First {Second s;void first(){s.second();}}
         self.assertNotIn('p.Fourth#fourth()',default.traverse('result',start))
         self.assertIn('p.Fourth#fourth()',expanded.traverse('result',start))
 
-    def test_explicit_limits_are_not_silently_clamped(self):
+    def test_project_analysis_preserves_valid_explicit_limits(self):
         graph=self.graph({'cap':'class A{void run(){}}'})
         engine=ProjectAnalysis('p','unused',graph.index,graph.index,COMMON_RULES,
                                dict(DEFAULT_LIMITS,depth=3,methods=500))
         self.assertEqual(engine.limits['depth'],3)
         self.assertEqual(engine.limits['methods'],500)
-        for invalid in ({'depth':4},{'methods':501},{'context_bytes':67108865},
-                        {'files':20001},{'total_bytes':536870913},{'file_bytes':4194305}):
-            with self.subTest(invalid=invalid):
-                with self.assertRaisesRegex(ValueError,'limits exceed'):
-                    self.analyze([self.after],limits=invalid)
-        expanded,_=self.analyze([self.after],limits={'depth':3})
-        self.assertEqual(expanded['limits']['depth'],3)
-        self.assertNotEqual(self.analysis['analysis_id'],expanded['analysis_id'])
 
     def test_builder_field_binding_is_covered_as_field_source_not_relation_review(self):
         graph=mock.Mock();graph.events={};graph.origins.return_value=[]
