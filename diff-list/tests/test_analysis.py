@@ -280,6 +280,25 @@ class Handler {
                     if fact['kind']=='mapper_statement']
         self.assertTrue(any(f['data']['name']=='list' and f['data']['dynamic'] for f in statements))
 
+    def test_mapper_only_change_creates_primary_review_unit(self):
+        from review_workbench import build_review
+        previous=MAPPER.replace('order_no = #{orderNo}', 'order_no = #{orderNo} /* before */')
+        updated=MAPPER.replace('order_no = #{orderNo}', 'trade_no = #{orderNo} /* after */')
+        commit(self.source,{'src/Store.xml':previous},'mapper-only baseline')
+        head=commit(self.source,{'src/Store.xml':updated},'mapper-only SQL change')
+        result,_=self.analyze([head])
+        project=result['projects'][0]
+        self.assertEqual(project['change_seeds'],[])
+        changes=[fact for fact in project['facts'] if fact['kind']=='mapper_statement_change']
+        self.assertEqual(len(changes),1)
+        self.assertEqual(changes[0]['data']['name'],'list')
+        self.assertIn('order_no',changes[0]['data']['before']['source'])
+        self.assertIn('trade_no',changes[0]['data']['after']['source'])
+        review=build_review(result)['projects'][0]
+        project_units=[unit for unit in review['review_units'] if unit['scope']=='project']
+        self.assertEqual(len(project_units),1)
+        self.assertIn(changes[0]['id'],project_units[0]['direct_fact_ids'])
+
     def test_configuration_file_change_is_captured_with_redacted_evidence(self):
         base=commit(self.source,{'application.properties':'feature=0\npassword=SENSITIVE_VALUE\n'},'config base')
         head=commit(self.source,{'application.properties':'feature=1\npassword=NEW_SENSITIVE_VALUE\n'},'config change')
