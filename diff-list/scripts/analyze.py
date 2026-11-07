@@ -12,6 +12,11 @@ from repo_access import prepare_repo, repository_name
 from source_index import DEFAULT_LIMITS, JavaParser, build_index, git_bytes, stable, source_lines
 
 
+# 明确拒绝超限，而不是静默修改用户输入。默认值仍由 DEFAULT_LIMITS 定义。
+MAX_LIMITS=dict(files=20000,file_bytes=4194304,total_bytes=536870912,
+                depth=3,methods=500,context_bytes=67108864)
+
+
 def load_rules(filename=None):
     rules = copy.deepcopy(COMMON_RULES)
     if filename:
@@ -30,8 +35,10 @@ def load_rules(filename=None):
     limits=dict(DEFAULT_LIMITS,**rules['limits'])
     if set(limits)!=set(DEFAULT_LIMITS) or any(type(v)!=int or v<1 for v in limits.values()):
         raise ValueError('Unknown limits or nonpositive limit')
-    limits['depth']=min(limits['depth'],1)
-    limits['methods']=min(limits['methods'],100)
+    exceeding=[key for key in DEFAULT_LIMITS if limits[key]>MAX_LIMITS[key]]
+    if exceeding:
+        raise ValueError('limits exceed supported maximum: '+', '.join(
+            '{}={} > {}'.format(key,limits[key],MAX_LIMITS[key]) for key in exceeding))
     if any(not isinstance(k,str) or not isinstance(v,str) for k,v in rules['config_scopes'].items()):
         raise ValueError('Config scope rules must map class names to scope strings')
     return rules,limits
