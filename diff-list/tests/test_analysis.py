@@ -928,7 +928,9 @@ class Flow { Store store; void run(){store.list(null);} }
         ambiguous=[edge for edge in engine.graphs['result'].edges
                    if edge['site']['name']=='list']
         self.assertTrue(ambiguous)
-        self.assertTrue(all(edge['status']=='unresolved' for edge in ambiguous))
+        self.assertTrue(all(edge['status']=='unresolved' and
+                            edge['reason']=='ambiguous_overload' and
+                            len(edge['targets'])==2 for edge in ambiguous))
         result,_=engine.run()
         self.assertFalse([fact for fact in result['facts']
                           if fact['kind']=='mapper_statement'])
