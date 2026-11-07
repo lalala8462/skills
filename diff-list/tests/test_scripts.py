@@ -252,7 +252,6 @@ class DiffListTest(unittest.TestCase):
         }
         report='\n'.join(line+'\n'+blocks.get(line,'') if line.startswith('#') else line
                          for line in template.splitlines())
-        report=report.replace("**既有功能影响：** 【Agent填写：基于完整复核事实形成业务结论；无相关内容时填写“无”】",'**既有功能影响：** 无')
         errors,_=val.validate(report,template,[])
         self.assertTrue(any('既有功能影响' in e for e in errors))
         corrected=report.replace('新增字段对旧调用方的影响。',
@@ -388,6 +387,7 @@ class DiffListTest(unittest.TestCase):
         }
         report='\n'.join(line+'\n'+blocks.get(line,'') if line.startswith('#') else line
                          for line in template.splitlines())
+        report=report.replace("**既有功能影响：** 【Agent填写：基于完整复核事实形成业务结论；无相关内容时填写“无”】",'**既有功能影响：** 无')
         errors,_=val.validate(report,template,['webapi='+sha])
         self.assertEqual(errors,[])
         errors,_=val.validate(report+'\nC:\\work\\Main.java',template,['webapi='+sha])
