@@ -132,46 +132,34 @@ def collect(project, capture_config=False, persist_snapshot=False):
             result['net_effect']['baseline_tree'] = git(root, 'rev-parse', a + '^{tree}').strip()
             result['net_effect']['result_tree'] = git(root, 'rev-parse', b + '^{tree}').strip()
         if capture_config:
-            rename_output = git(root, 'diff', '--name-status', '--find-renames', a, b)
-            rename_map, change_kinds = {}, {}
-            for line in rename_output.splitlines():
-                columns = line.split('\t')
-                if len(columns) < 2:
-                    continue
-                kind = columns[0][:1]
-                target = columns[2] if len(columns) == 3 else columns[1]
-                change_kinds[target] = kind
-                if len(columns) == 3 and kind == 'R':
-                    rename_map[target] = columns[1]
-        if capture_config:
-            from config_changes import SUPPORTED_EXTENSIONS
-            result['net_effect']['config_sources'] = []
-            result['net_effect']['config_skipped'] = []
-            selected = [name for name in changed if name.lower().endswith(SUPPORTED_EXTENSIONS)]
-            for name in selected[100:]:
-                result['net_effect']['config_skipped'].append({'path': name, 'reason': 'file count limit'})
-            for name in selected[:100]:
-                kind = change_kinds.get(name, 'M')
-                before, before_error = read_blob(root, a, rename_map.get(name, name))
-                after, after_error = read_blob(root, b, name)
-                if before_error and kind != 'A':
+            from config_changes import (SUPPORTED_EXTENSIONS,MAX_CONFIG_FILES,
+                                        config_name_changes,config_source)
+            rename_output=git(root,'diff','--name-status','--find-renames',a,b)
+            rename_map,change_kinds=config_name_changes(rename_output.splitlines())
+            result['net_effect']['config_sources']=[]
+            result['net_effect']['config_skipped']=[]
+            selected=[name for name in changed if name.lower().endswith(SUPPORTED_EXTENSIONS)]
+            for name in selected[MAX_CONFIG_FILES:]:
+                result['net_effect']['config_skipped'].append(
+                    {'path':name,'reason':'file count limit'})
+            for name in selected[:MAX_CONFIG_FILES]:
+                kind=change_kinds.get(name,'M')
+                before,before_error=read_blob(root,a,rename_map.get(name,name))
+                after,after_error=read_blob(root,b,name)
+                if before_error and kind!='A':
                     result['net_effect']['config_skipped'].append(
-                        {'path': name, 'reason': 'cannot read baseline blob: ' + before_error})
+                        {'path':name,'reason':'cannot read baseline blob: '+before_error})
                     continue
-                if after_error and kind != 'D':
+                if after_error and kind!='D':
                     result['net_effect']['config_skipped'].append(
-                        {'path': name, 'reason': 'cannot read target blob: ' + after_error})
+                        {'path':name,'reason':'cannot read target blob: '+after_error})
                     continue
-                before = b'' if before_error else before
-                after = b'' if after_error else after
-                if max(len(before), len(after)) > 300000:
-                    result['net_effect']['config_skipped'].append({'path': name, 'reason': 'file size limit'})
-                    continue
-                try:
-                    result['net_effect']['config_sources'].append({'path':name,
-                        'before':before.decode('utf-8'),'after':after.decode('utf-8')})
-                except UnicodeDecodeError:
-                    result['net_effect']['config_skipped'].append({'path':name,'reason':'non-UTF-8 source'})
+                entry,issue=config_source(name,b'' if before_error else before,
+                                           b'' if after_error else after)
+                if issue:
+                    result['net_effect']['config_skipped'].append(issue)
+                else:
+                    result['net_effect']['config_sources'].append(entry)
         result['commit_review'] = _range_commit_review(root, a, b,
             result['net_effect']['status'])
         return result
