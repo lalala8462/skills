@@ -231,6 +231,23 @@ class Handler {
         project=result['projects'][0]
         self.assertIn('changed Java source could not be fully indexed: src/Small.java',project['hard_errors'])
 
+    def test_unchanged_source_limit_is_a_hard_error(self):
+        commit(self.source,{'src/LimitFirst.java':'class LimitFirst {}',
+                            'src/LimitSecond.java':'class LimitSecond {}'},'limit background baseline')
+        head=commit(self.source,{'source-limit-note.txt':'change without Java edits'},'change text only')
+        result,_=self.analyze([head],limits={'files':1})
+        errors=result['projects'][0]['hard_errors']
+        self.assertTrue(any('source indexing limit exceeded' in message for message in errors))
+
+    def test_changed_mapper_parse_failure_is_a_hard_error(self):
+        commit(self.source,{'src/Store.xml':MAPPER},'valid XML baseline')
+        head=commit(self.source,{'src/Store.xml':'<mapper namespace="sample.Store"><select id="list">'},
+                    'invalid Mapper XML')
+        result,_=self.analyze([head])
+        errors=result['projects'][0]['hard_errors']
+        self.assertTrue(any('changed XML source could not be fully indexed: src/Store.xml' in message
+                            for message in errors))
+
     def test_non_utf8_file_is_reported(self):
         path=self.source/'src/Legacy.java';path.write_bytes(b'//\xff\xfe\nclass Legacy {}')
         git(self.source,'add','.');git(self.source,'commit','-qm','encoding fixture')
