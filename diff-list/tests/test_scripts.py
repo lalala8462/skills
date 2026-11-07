@@ -537,9 +537,9 @@ class AdditionalRegressionTests(unittest.TestCase):
             (r'folder\\=value',{'folder\\':'value'}),
             (r'name\ with\ spaces : ok',{'name with spaces':'ok'}),
             (r'code=\u4E2D\u6587',{'code':'中文'}),
-            ('join=first'+slash+'\\n second',{'join':'firstsecond'}),
-            ('join=first'+slash*2+'\\nother=value',{'join':'first'+slash,'other':'value'}),
-            ('join=first'+slash*3+'\\n second',{'join':'first'+slash+'second'}),
+            ('join=first'+slash+'\n second',{'join':'firstsecond'}),
+            ('join=first'+slash*2+'\nother=value',{'join':'first'+slash,'other':'value'}),
+            ('join=first'+slash*3+'\n second',{'join':'first'+slash+'second'}),
             ('\ufeffkey=value',{'key':'value'})
         ]
         for content,expected in cases:
