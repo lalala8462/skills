@@ -603,7 +603,7 @@ class AdditionalRegressionTests(unittest.TestCase):
             def git(*args):
                 return subprocess.check_output(['git','-C',str(root),*args],text=True).strip()
             git('init','-q');git('config','user.name','Test');git('config','user.email','test@example.com')
-            filename='中文'+chr(10)+'名称.java'
+            filename='中文名称.java' if os.name=='nt' else '中文'+chr(10)+'名称.java'
             (root/filename).write_text('class Source {}',encoding='utf-8')
             git('add','.');git('commit','-qm','initial')
             base=git('rev-parse','HEAD')
@@ -612,6 +612,7 @@ class AdditionalRegressionTests(unittest.TestCase):
             head=git('rev-parse','HEAD')
             self.assertEqual(collector.paths(root,base,head),[filename])
             self.assertEqual(access.decode_git_path(filename.encode('utf-8')),filename)
+            self.assertEqual(collector.git_null_fields(b'normal'+bytes([10])+b'name.java'+bytes([0])),['normal'+chr(10)+'name.java'])
             self.assertNotIn('\ufffd',collector.paths(root,base,head)[0])
             with self.assertRaisesRegex(ValueError,'not UTF-8'):
                 access.decode_git_path(bytes([255,46,106,97,118,97]))
