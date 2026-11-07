@@ -3,7 +3,6 @@ import collections
 import copy
 import json
 import re
-from functools import lru_cache
 from source_index import stable, source_lines
 
 VERSION = '2.1.0'
@@ -206,6 +205,7 @@ def clean(value):
 class Graph:
     def __init__(self, index, rules):
         self.index, self.rules = index, rules
+        self._type_owner_cache={}
         self.classes, self.methods, self.fields = {}, {}, {}
         self.events = collections.defaultdict(list)
         self.duplicates = set()
@@ -307,8 +307,14 @@ class Graph:
         positions.update(self.receiver_edges.get((owner, getter), ()))
         return (self.edges[position] for position in sorted(positions))
 
-    @lru_cache(maxsize=50000)
     def type_owner(self, name, current):
+        # 按原始调用实参作为 key；缓存只由 Graph 实例持有。
+        key=(name,current)
+        if key not in self._type_owner_cache:
+            self._type_owner_cache[key]=self._resolve_type_owner(name,current)
+        return self._type_owner_cache[key]
+
+    def _resolve_type_owner(self, name, current):
         name = re.sub(r'<.*>|\[\]', '', name or '').strip()
         if not name or not current:
             return None
