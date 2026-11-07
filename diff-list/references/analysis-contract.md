@@ -87,7 +87,7 @@ Agent 直接维护业务章节：
 
 pending_review 表示尚未被测试用例引用的 review unit，并提供 high_value_facets、candidate_case_ids、related_referenced_unit_ids 和完整 facet 引用。
 
-`referenced_unit_count` 为测试用例引用的单元数；`referenced_facet_count` 为至少一个成员单元被用例引用的 facet 数，`all_units_referenced_facet_count` 才表示成员单元全部被引用。不存在业务分支覆盖率指标。旧的 covered_* 字段不再输出。
+`referenced_unit_count` 为测试用例引用的单元数；`referenced_facet_count` 为至少一个成员单元被用例引用的 facet 数，`all_units_referenced_facet_count` 才表示成员单元全部被引用。该统计仅反映复核单元的引用情况，由 Agent 进一步判断业务分支覆盖。
 
 它用于提示尚待核实的引用关系；业务测试覆盖质量由 Agent 结合实际场景判断。
 
