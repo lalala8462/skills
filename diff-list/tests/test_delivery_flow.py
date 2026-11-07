@@ -481,6 +481,43 @@ class DeliveryFlowTest(unittest.TestCase):
         self.assertEqual(len(row['attempts']),2)
         self.assertEqual(row['status'],'completed')
 
+    def test_default_run_directory_is_outside_current_project(self):
+        with tempfile.TemporaryDirectory() as td:
+            with mock.patch.dict('os.environ',{'LOCALAPPDATA':td}), \
+                 mock.patch.object(delivery,'_prepare',return_value=0) as prepare:
+                self.assertEqual(delivery.main(['--repo','example','--rev','sha']),0)
+                args=prepare.call_args.args[0]
+                self.assertEqual(Path(args.runs_root),
+                                 Path(td)/'diff-list'/'deliveries')
+
+    def test_finalize_keeps_work_files_and_cleans_clones_after_success(self):
+        with tempfile.TemporaryDirectory() as td:
+            run=Path(td)/'result';work=run/'.work';work.mkdir(parents=True)
+            source_files={}
+            for name in ('coverage.json','test-cases.xlsx','report.md'):
+                path=work/name
+                path.write_bytes(('sample-'+name).encode('utf-8'))
+                source_files[name]=path
+            analysis=work/'analysis'/'analysis.json'
+            analysis.parent.mkdir()
+            analysis.write_text('{}',encoding='utf-8')
+            review=work/'review.json';cases=work/'test-cases.json'
+            state_path=work/'run-state.json'
+            state=dict(run_schema_version=delivery.RUN_SCHEMA_VERSION,
+                       run_dir=str(run.resolve()),status='resuming',stages={})
+            delivery._write_state(state_path,state)
+            with mock.patch.object(delivery.subprocess,'run',
+                                   return_value=SimpleNamespace(returncode=0)), \
+                 mock.patch.object(delivery,'cleanup_analysis_clones',return_value=2) as cleanup:
+                delivery._finalize_stage(state_path,state,run,analysis,review,cases)
+            cleanup.assert_called_once_with(analysis)
+            for name,source in source_files.items():
+                self.assertTrue(source.exists())
+                self.assertEqual((run/name).read_bytes(),source.read_bytes())
+            final=json.loads(state_path.read_text(encoding='utf-8'))
+            self.assertEqual(final['status'],'completed')
+            self.assertEqual(final['clones_cleaned'],2)
+
     def test_stage_timing_rejects_noncurrent_shape(self):
         state={'stages':{'coverage':{
             'started_at':'2026-11-06T00:00:00.000Z',
