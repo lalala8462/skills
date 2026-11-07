@@ -66,10 +66,10 @@ class DeliveryFlowTest(unittest.TestCase):
 
     def test_mixed_markdown_fences_and_unclosed_block_validation(self):
         from validate_report import fenced_blocks, unclosed_fences
-        good='~~~mermaid\\nflowchart TD\\n A-->B\\n~~~\\n' + chr(96)*3 + 'text\\nnotes\\n' + chr(96)*3
+        good='~~~mermaid\nflowchart TD\n A-->B\n~~~\n' + chr(96)*3 + 'text\nnotes\n' + chr(96)*3
         self.assertFalse(unclosed_fences(good))
         self.assertEqual(len(fenced_blocks(good)),2)
-        bad='~~~mermaid\\nflowchart TD\\n A-->B\\n'
+        bad='~~~mermaid\nflowchart TD\n A-->B\n'
         self.assertTrue(unclosed_fences(bad))
         with self.assertRaisesRegex(ValueError,'围栏未闭合'):
             fenced_blocks(bad,strict=True)
