@@ -36,7 +36,7 @@ def sections(text, headings):
             for i, (pos, title) in enumerate(located)}
 
 
-def fenced_blocks(text):
+def fenced_blocks(text, strict=False):
     """Return (language, body) for completed backtick/tilde fences."""
     blocks, marker, language, content = [], None, None, []
     for line in text.splitlines():
@@ -51,7 +51,17 @@ def fenced_blocks(text):
             marker = None
         else:
             content.append(line)
+    if strict and marker is not None:
+        raise ValueError('代码围栏未闭合')
     return blocks
+
+
+def unclosed_fences(text):
+    try:
+        fenced_blocks(text,strict=True)
+    except ValueError:
+        return True
+    return False
 
 
 def existing_impact_error(special):
@@ -134,7 +144,7 @@ def validate(text,template,expected):
         errors.append('包含禁止的占位或代码证据描述')
     if re.search(r'[A-Za-z]:\\[^\s\x60|)]+',text):
         errors.append('文档包含 Windows 本机绝对路径')
-    if text.count('```')%2:
+    if unclosed_fences(text):
         errors.append('代码围栏未闭合')
     flow=body.get('### 3.2 Mermaid 流程图','')
     if body.get('### 3.1 整体流程说明','')!='无' or flow!='无':
