@@ -8,12 +8,13 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
+from repo_access import decode_git_path
 
 
 def _run(cmd, *, stdin=None):
     process = subprocess.run(cmd, input=stdin, stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, check=False)
-    return process.returncode, process.stdout, process.stderr.decode('utf-8', 'replace').strip()
+    return process.returncode, process.stdout, process.stderr.decode('utf-8', 'backslashreplace').strip()
 
 
 def compose(repo, selected, capture_config=False, persist_snapshot=False):
@@ -69,20 +70,20 @@ def compose(repo, selected, capture_config=False, persist_snapshot=False):
             if apply.returncode:
                 result['reason'] = ('selected patch cannot be isolated at ' +
                                     item['sha'] + ': ' +
-                                    apply.stderr.decode('utf-8', 'replace').strip()[:600])
+                                    apply.stderr.decode('utf-8', 'backslashreplace').strip()[:600])
                 return result
             result['applied_commits'].append(item['sha'])
         diff_args = ('diff', '--cached', '--no-ext-diff', '--no-color',
                      '--binary', '--find-renames', baseline)
         diff = git(*diff_args)
-        names = git('diff', '--cached', '--name-only',
+        names = git('diff', '--cached', '--name-only', '-z',
                     '--no-ext-diff', '--find-renames', baseline)
         if diff.returncode or names.returncode:
             result['reason'] = 'cannot calculate net diff of isolated index'
             return result
-        result['net_diff'] = diff.stdout.decode('utf-8', 'replace')
-        result['changed_files'] = [line for line in
-                                   names.stdout.decode('utf-8', 'replace').splitlines() if line]
+        result['net_diff'] = diff.stdout.decode('utf-8', 'backslashreplace')
+        result['changed_files'] = [decode_git_path(raw) for raw in
+                                   names.stdout.split(bytes([0])) if raw]
         result['status'] = 'composed' if result['changed_files'] else 'no_net_change'
         if persist_snapshot:
             tree = git('write-tree')
@@ -98,12 +99,12 @@ def compose(repo, selected, capture_config=False, persist_snapshot=False):
         if capture_config:
             from config_changes import (SUPPORTED_EXTENSIONS,MAX_CONFIG_FILES,
                                         config_name_changes,config_source)
-            rename=git('diff','--cached','--name-status','--find-renames',baseline)
+            rename=git('diff','--cached','--name-status','-z','--find-renames',baseline)
             if rename.returncode:
                 raise ValueError('Git config rename diff failed: '+
                                  rename.stderr.decode('utf-8','replace').strip())
             rename_map,change_kinds=config_name_changes(
-                rename.stdout.decode('utf-8').splitlines())
+                [decode_git_path(raw) for raw in rename.stdout.split(bytes([0])) if raw])
             result['config_sources']=[]
             result['config_skipped']=[]
             config_names=[name for name in result['changed_files']
