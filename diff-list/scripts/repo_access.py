@@ -46,7 +46,7 @@ def run_git(*args):
     process=subprocess.run(['git',*map(str,args)],stdout=subprocess.PIPE,
                            stderr=subprocess.PIPE,check=False)
     if process.returncode:
-        raise ValueError('Git failed: '+' '.join(map(str,args))+'\\n'+
+        raise ValueError('Git failed: '+' '.join(map(str,args))+'\n'+
                          process.stderr.decode('utf-8','backslashreplace').strip())
     payload=process.stdout.rstrip(bytes([10,13]))
     return decode_git_path(payload).strip()
