@@ -774,6 +774,22 @@ class Consumer {ExampleAdapter adapter;
         self.assertFalse(relation_affects_review_scope(edge,graph))
         self.assertTrue(relation_affects_review_scope(edge,graph,('ExampleAdapter',)))
 
+    def test_inventory_and_access_checks_without_payment_names(self):
+        graph=self.graph({'inventory':'''package sample;
+class StockStore {String findById(String key){return key;} void save(String key){}}
+class StockService {StockStore store;String apply(String key){
+ String prior=store.findById(key);store.save(key);return prior;}}
+class AccessHelper {String getLabel(){return "ok";}}
+class AccessService {AccessHelper helper;String view(){return helper.getLabel();}}
+'''})
+        by_name={edge['site']['name']:edge for edge in graph.edges}
+        self.assertTrue(relation_affects_review_scope(
+            dict(by_name['save'],status='unresolved',requires_review=True),graph))
+        self.assertTrue(relation_affects_review_scope(
+            dict(by_name['findById'],status='unresolved',requires_review=True),graph))
+        self.assertFalse(relation_affects_review_scope(
+            dict(by_name['getLabel'],status='unresolved',requires_review=True),graph))
+
     def test_unresolved_relation_scope_keeps_database_effects_and_drops_plain_accessors(self):
         graph=self.graph({'scope':'''package p;
 class Helper {String getValue(){return "value";}String convert(String value){return value;}}
