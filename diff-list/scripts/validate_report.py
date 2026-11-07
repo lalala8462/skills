@@ -66,16 +66,22 @@ def unclosed_fences(text):
     return False
 
 
+def existing_impact_values(special):
+    """规范化解析已有功能影响行，兼容 Markdown 加粗与冒号后的空白。"""
+    matches=[]
+    for row in (special or '').splitlines():
+        line=row.strip().lstrip('*- ').replace('**','').strip()
+        if line.startswith('既有功能影响：') or line.startswith('既有功能影响:'):
+            matches.append(line.split('：',1)[1].strip() if '：' in line else line.split(':',1)[1].strip())
+    return matches
+
+
 def existing_impact_error(special):
     """特殊逻辑非“无”时，既有功能影响必须有实际可见的结论。"""
     special=(special or '').strip()
     if special=='无':
         return None
-    matches=[]
-    for row in special.splitlines():
-        line=row.strip().lstrip('*- ').replace('**','').strip()
-        if line.startswith('既有功能影响：') or line.startswith('既有功能影响:'):
-            matches.append(line.split('：',1)[1].strip() if '：' in line else line.split(':',1)[1].strip())
+    matches=existing_impact_values(special)
     if len(matches)!=1:
         return '特殊逻辑章节必须包含一条“既有功能影响：具体结论或无”'
     value=matches[0]
@@ -187,9 +193,7 @@ def validate(text,template,expected):
         errors.append(impact_error)
     field_change = (body.get('### 2.1 需求改动','') + '\n' +
                     body.get('### 2.2 表字段 DDL 修改',''))
-    impact_none = special=='无' or any(
-        line.strip().lstrip('*- ').replace('**','').strip() in ('既有功能影响：无','既有功能影响:无')
-        for line in special.splitlines())
+    impact_none = special.strip()=='无' or '无' in existing_impact_values(special)
     if re.search(r'(?:新增|增加|修改|调整|删除|废弃).{0,20}(?:对外报文|请求字段|响应字段|数据库字段|表字段|DTO字段|接口字段|消息字段)',field_change) and impact_none:
         errors.append('字段/接口契约变化时须在特殊逻辑章节说明既有功能影响')
     cfg=body.get('### 2.4 配置文件调整','')

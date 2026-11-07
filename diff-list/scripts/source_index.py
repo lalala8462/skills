@@ -188,7 +188,8 @@ def build_index(repo, tree, limits, parser, cache):
         files.append(dict(path=path, blob=oid, source=source, size=size))
         if path.lower().endswith('.java') and oid not in cache:
             new_sources[oid] = source
-    cache.update(parser.parse(new_sources))
+    if new_sources:
+        cache.update(parser.parse(new_sources))
     events = []
     for file in files:
         try:

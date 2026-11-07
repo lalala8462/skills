@@ -51,7 +51,7 @@ Agent 可以直接调用此脚本，不需要 MCP 服务或持久化查询缓存
 - `--audit`：原始分析事实相对于 review 的归属差异、unresolved、hard_errors、证据缺失及分析边界；
 - `--audit --view <类别>`：按类别分页读取审计问题明细。
 
-分页字段为 `page.total/returned/offset/complete/next_cursor`。游标绑定固定分析身份、视图、排序内容和页起点 offset；改动页起点、跨视图复用或数据变化均应拒绝。
+分页字段为 `page.total`、`page.returned`、`page.offset`、`page.complete`、`page.next_cursor`。游标绑定固定分析身份、视图、排序内容和页起点 offset；改动页起点、跨视图复用或数据变化均应拒绝。
 
 Audit 将未归属的真实直接变化与背景事实分开；`configuration` 的 `retained_or_consumers_changed` 属于背景提示，直接触及净变化的 unresolved 优先显示，但绝不删除原始关系。
 
