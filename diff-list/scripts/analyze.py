@@ -108,8 +108,7 @@ def analyze_project(spec,rules,limits,parser,cache):
                            if row['path'] in changed_java_paths}
     result['hard_errors']=sorted(set(
         [row['reason'] for index in (before,after) for row in index['issues']
-         if 'missing source blob' in row['reason'] or
-            row['reason'].startswith('invalid Git source path encoding:')]
+         if 'missing source blob' in row['reason']]
         +['changed Java source could not be fully indexed: '+path for path in changed_source_issues]
         +['critical changed evidence exceeded analysis context limits: '+marker for marker in evidence_omissions]
         +scope_errors))
