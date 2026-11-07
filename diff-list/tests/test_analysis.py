@@ -240,7 +240,8 @@ class Handler {
         self.assertTrue(any('source indexing limit exceeded' in message for message in errors))
 
     def test_changed_mapper_parse_failure_is_a_hard_error(self):
-        commit(self.source,{'src/Store.xml':MAPPER},'valid XML baseline')
+        valid=MAPPER.replace('select * from records','select * from records_before_invalid')
+        commit(self.source,{'src/Store.xml':valid},'valid XML baseline')
         head=commit(self.source,{'src/Store.xml':'<mapper namespace="sample.Store"><select id="list">'},
                     'invalid Mapper XML')
         result,_=self.analyze([head])
