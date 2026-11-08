@@ -61,23 +61,32 @@
       context.jsonl
     review.json
     test-cases.json
+    review-receipts.json
     report.md
     run-state.json
+    coverage.json
+    test-cases.xlsx
     query-metrics.jsonl
   test-cases.xlsx
   report.md
   coverage.json
 ~~~
 
-首次执行：`analyze → review_workbench → report_init → waiting_agent`。脚本在终端提供 `RUN_DIR`、查询命令和 `RESUME`。此时 `.work` 中的证据与用例骨架供 Agent 编辑；根部三个交付文件仅在成功后出现。
+首次执行：`analyze → review_workbench → report_init → waiting_agent`。脚本在终端提供 `RUN_DIR`、查询命令和 `RESUME`。此时 `.work` 中的证据与用例骨架供 Agent 编辑；`.work/coverage.json` 与临时 Excel 在恢复交付时产生，`query-metrics.jsonl` 在记录查询后才出现。根部三个交付文件仅在成功后出现。
 
-Agent 完成复核并填写 `.work/test-cases.json`、`.work/report.md` 后：
+Agent 完成复核并填写 `.work/test-cases.json`、`.work/report.md`、`.work/review-receipts.json` 后：
 
 ~~~powershell
 py -3 .\scripts\run_delivery.py --resume "<run>"
 ~~~
 
-交付链：`preflight → coverage`，preflight **强制要求** `--receipts`；类继承、注解等结构变化若仅使未修改的方法成为复核种子，这些方法作为项目级主变化的上下文登记，不制造无法填写 `unit_assertions` 的独立 method unit；类结构变化主事实由项目级 unit 唯一直接持有，方法级 unit 只能作为上下文引用；若 `pending_review > 0` 则进入 `waiting_coverage_review`；核对 `.work/coverage.json` 中的 `candidate_case_ids`、相关主事实与可观察断言，补充真实的 `unit_assertions` 或测试后再次 resume。没有待复核单元则依次 `excel → report → finalize`。真正无净变化（Git 结果树等于基线树，且没有事实、变化种子、关系与 hard_errors）时，允许四类用例均为空，四个 Excel 工作表只有表头；报告及回执仍需由 Agent 明确填写“无”，不得把解析遗漏冒充无净变化。成功时清理本次建立的分析 clone。
+恢复交付先进行 `preflight`（报告、用例、回执的结构和身份检查）和 `coverage`（用例与改动主事实的关联核查）。**单独执行预检脚本时必须传 `--receipts`**，指定 `.work/review-receipts.json`。
+
+若 `pending_review > 0`，流程会停在 `waiting_coverage_review`，需要根据 `.work/coverage.json` 中的 `candidate_case_ids`、直接主事实和可观察断言，补充 `unit_assertions` 或新增测试用例，再次执行 `--resume`。待补充测试关联的单元为零时继续 `excel → report → finalize`，成功后清理隔离 clone。
+
+类继承、注解等结构变化若仅关联未修改的方法，这些方法作为项目级主变化的上下文登记，不制造无主事实的独立方法级复核单元；类结构主事实由项目级单元唯一持有，方法级单元仅能引用其上下文。
+
+真正无净变化（Git 结果树与基线树一致，且没有事实、变化种子、关系与 `hard_errors`）时，允许四类用例为空，Excel 的四个工作表只有表头；报告及回执仍需由 Agent 明确填写“无”，不得将解析遗漏当作无净变化。
 
 **设计约束**：脚本不猜业务用途或风险，直接相关的 `unresolved` 关系不按名称过滤；YAML 解析失败保留解析边界，不根据路径猜测是否运行配置。普通关键词搜索只用于定位材料，不用于判断结论。
 
