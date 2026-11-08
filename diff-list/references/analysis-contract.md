@@ -29,12 +29,12 @@ relations 记录直接变化相关的解析关系及需要人工复核的未解�
 
 当前 review_schema_version=5（增加 `context_seed_symbols` 与 `review_summary.context_only_seed_count` 的结构化语义，旧 review v4 不兼容）。
 
-- review_units：变化方法或项目级变化的最小复核单元；每个 unit 必须包含真实主变化事实。**`class_binding_change` 由项目级 unit 唯一持有 `direct_fact_ids`**；即使关联多个方法，方法级 unit 只能通过 `context_fact_ids` 阅读该事实，不能重复声明为主变化。因类继承/注解变化而扩展的未修改方法，仅在存在**同 owner 的 `class_binding_change`** 时登记到项目级 `context_seed_symbols` 与 `context_fact_ids`，`review_summary.context_only_seed_count` 记录数量。依据取自全量 class-binding 主事实，不能随意挂接到其它配置/SQL 变化。无法归属的种子报错时最多展示前五项及剩余数量，完整种子列表仍保留在 `analysis.json`。
+- review_units：变化方法或项目级变化的最小复核单元；每个 unit 必须包含真实主变化事实。**同一项目中的多个不相关类结构变化也会归入同一个项目级 unit，不按 owner 拆分项目级 unit**；`class_binding_change` 由该项目级 unit 唯一持有 `direct_fact_ids`；即使关联多个方法，方法级 unit 只能通过 `context_fact_ids` 阅读该事实，不能重复声明为主变化。因类继承/注解变化而扩展的未修改方法，仅在存在**同 owner 的 `class_binding_change`** 时登记到项目级 `context_seed_symbols` 与 `context_fact_ids`，`review_summary.context_only_seed_count` 记录数量。依据取自全量 class-binding 主事实，不能随意挂接到其它配置/SQL 变化。无法归属的种子报错时最多展示前五项及剩余数量，完整种子列表仍保留在 `analysis.json`。
 - review_facets：按精确结构锚点形成的完整关系索引；
 - navigation_facets：review_facets 的高价值阅读排序子集；
 - fact_catalog：本轮复核相关 fact 预览；完整关系通过原始 analysis.json 或 `--view relations` 查看。
 
-change_summary 只压缩直接事实。
+change_summary 只压缩直接事实。`analyze.py` 输出的 `analysis.json.projects[].facts` 已按 fact ID 排序；`build_review` 保持输入次序，不进行第二次重排。
 
 navigation_facets **只用于阅读排序，不得据此裁剪复核范围**；`navigation_priority` 不是业务风险评分，`priority_kind=reading_order_heuristic`；完整复核范围来自 review_units、review_facets 与底账事实。facet 表示精确结构关联，业务需求归属由 Agent 判断。
 

@@ -602,9 +602,27 @@ class Flow { Store store; void process(){ store.list("old"); } }
         self.assertEqual(audit['counts']['missing_seeds'],0)
         self.assertEqual(audit['counts']['unassigned_primary_facts'],0)
 
-    def test_project_primary_fact_summaries_preserve_input_order(self):
+    def test_unrelated_class_changes_share_one_project_review_unit(self):
         from analysis_engine import VERSION
         from review_workbench import build_review
+        facts=[
+            dict(id='F-A',kind='class_binding_change',classification='source_fact',
+                 data=dict(owner='p.A'),evidence_ids=[]),
+            dict(id='F-B',kind='class_binding_change',classification='source_fact',
+                 data=dict(owner='p.B'),evidence_ids=[])]
+        analysis=dict(schema_version=2,analyzer_version=VERSION,analysis_id='class-group',
+            projects=[dict(name='sample',change_seeds=[],facts=facts,relations=[],
+                           hard_errors=[],stats={})],cross_project_relations=[])
+        units=build_review(analysis)['projects'][0]['review_units']
+        self.assertEqual(len(units),1)
+        self.assertEqual(units[0]['scope'],'project')
+        self.assertEqual(units[0]['direct_fact_ids'],['F-A','F-B'])
+
+    def test_build_review_does_not_resort_supplied_project_facts(self):
+        from analysis_engine import VERSION
+        from review_workbench import build_review
+        # 此处故意构造未按 fact ID 排序的输入，只验证 build_review 不额外重排。
+        # 真实 analyze.py 已先按 fact ID 排序，不能据此推断生产存在另一种顺序。
         facts=[
             dict(id='z-configuration',kind='configuration_file_change',
                  classification='source_fact',data=dict(path='config.yml',change='modified'),

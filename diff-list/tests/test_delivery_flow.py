@@ -161,7 +161,7 @@ class DeliveryFlowTest(unittest.TestCase):
                        status='waiting_agent',stages={})
             state_path.write_text(json.dumps(state),encoding='utf-8')
             with mock.patch.object(delivery,'_run_stage') as stage:
-                with self.assertRaisesRegex(ValueError,'schema 版本不匹配；请重新执行'):
+                with self.assertRaisesRegex(ValueError,'schema 版本不匹配；请重新执行首次分析以重建运行目录'):
                     delivery._resume(str(run))
                 stage.assert_not_called()
             # 旧运行不能在入口被悄悄改成当前版本。

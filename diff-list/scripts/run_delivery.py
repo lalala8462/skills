@@ -42,7 +42,7 @@ def _read_state(run_dir):
         raise ValueError('run 目录缺少 .work/{}'.format(STATE_NAME))
     state=json.loads(state_path.read_text(encoding='utf-8-sig'))
     if state.get('run_schema_version')!=RUN_SCHEMA_VERSION:
-        raise ValueError('run-state schema 版本不匹配；请重新执行当前流程')
+        raise ValueError('run-state schema 版本不匹配；请重新执行首次分析以重建运行目录')
     if state.get('run_dir')!=str(run_dir):
         raise ValueError('run-state.json 与当前 run 目录不匹配')
     return run_dir,state_path,state
