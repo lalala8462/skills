@@ -355,6 +355,27 @@ def _finalize_stage(state_path,state,run_dir,analysis,review,cases):
         raise RuntimeError('finalize 阶段失败，returncode={}'.format(returncode))
 
 
+def _review_delivery_summary(analysis,receipts):
+    """汇总原始未解析关系与显式延期回执；不评价业务是否已核实。"""
+    from review_receipts import receipt_counts
+    counts=receipt_counts(receipts)
+    unresolved={relation['id'] for project in analysis.get('projects',[])
+                for relation in project.get('relations',[])
+                if relation.get('status')=='unresolved'}
+    deferred_relations={rid for row in receipts['audit_unresolved_by_unit'].values()
+                        if row['status']=='deferred' for rid in row['relation_ids']}
+    return dict(unresolved_relations=len(unresolved),
+                deferred_units=counts['audit_unresolved_unit_deferred'],
+                deferred_relations=len(deferred_relations))
+
+
+def _print_delivery_review_summary(summary):
+    print('DELIVERY_STATUS: COMPLETED (交付成功，不代表业务问题全部核实)')
+    print('REVIEW_STATUS: '+('DEFERRED' if summary['deferred_units'] else 'NO_DEFERRED'))
+    print('REVIEW_COUNTS: unresolved_relations={} deferred_relations={} deferred_units={}'.format(
+        summary['unresolved_relations'],summary['deferred_relations'],summary['deferred_units']))
+
+
 def _resume(run_dir_value):
     run_dir,state_path,state=_read_state(run_dir_value)
     if state.get('status')=='completed':
@@ -415,9 +436,15 @@ def _resume(run_dir_value):
             '--excel',str(excel),'--report',str(report)]
         _run_stage(state_path,state,'report',[report_command])
 
+        # 在发布前读取已通过预检的材料；回执关系按 ID 去重，
+        # 不把全量 unresolved 与延期回执中的关系数混为一谈。
+        summary=_review_delivery_summary(
+            json.loads(analysis.read_text(encoding='utf-8-sig')),
+            json.loads(receipts.read_text(encoding='utf-8-sig')))
         _finalize_stage(state_path,state,run_dir,analysis,review,cases)
         state=json.loads(state_path.read_text(encoding='utf-8-sig'))
         _print_timings(state)
+        _print_delivery_review_summary(summary)
         print('DELIVERY: '+str(run_dir))
         print('OUTPUT: '+str(run_dir/'test-cases.xlsx'))
         print('OUTPUT: '+str(run_dir/'report.md'))

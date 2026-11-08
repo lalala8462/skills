@@ -121,7 +121,7 @@ py -3 .\scripts\review_query.py --analysis $a --review $r --evidence E-xxxx --so
 
 `.work/test-cases.json` 的四类固定为 `acceptance`、`core_regression`、`related_regression`、`boundary`。每条用例具有 `case_id`、`title`、`preconditions`、`steps`、`expected`、`observable_evidence`、`review_unit_ids`、`unit_assertions`（每个 unit 显式绑定所属直接主事实 `direct_fact_ids` 与 `observable_evidence` 的 0 起始 `observation_indexes`）。`observable_evidence` 必须为非空数组；每一项**恰好**有三个非空字符串字段：`surface`（观察渠道）、`target`（观察对象）、`assertion`（可判定结果）。
 
-Agent 负责报告的需求、DDL、DML、流程、Mermaid、特殊逻辑与既有功能影响。机器章节与精确标题统一见[分析契约](../references/analysis-contract.md)。
+Agent 负责报告的需求、DDL、DML、流程、Mermaid、特殊逻辑与既有功能影响。**Markdown 正文不附加 `fact_id`/`evidence_id` 编号串**；用类名、方法名、字段名或相对路径说明来源，追溯 ID 保存在 JSON/回执/Coverage。机器章节与精确标题统一见[分析契约](../references/analysis-contract.md)。
 
 **Agent 回执**：首次运行自动生成 `.work/review-receipts.json`。六个 Agent 章节加 `existing_impact` 分别填写 `status` 和对应 `unit_ids/fact_ids/evidence_ids`；无相关变更的章节填 `not_applicable` 且不强造引用，其他章节填 `assessed` 并关联实际复核过的来源。`audit_unresolved_by_unit` 逐 unit 列出未解析关系，记录 `assessed`（必须关联 fact/evidence）或 `deferred`（明确未核实，只记录状态及自动列出的关系 ID，fact/evidence 为空）；概览单独统计 deferred 数量。初始 `pending` 阻止交付。脚本只检查 ID 存在、与对应 unit/关系一致，不判业务解释是否真实。查看 `--overview` 的 `receipt_status` 可了解仍未处理或延期的数量。
 
@@ -136,6 +136,8 @@ Agent 负责报告的需求、DDL、DML、流程、Mermaid、特殊逻辑与既�
 **Agent 业务约定（脚本不做语义校验）：**
 - 请求、响应、DTO 或数据库字段/接口契约变化时，Agent 应说明既有功能影响；不能未经核实直接写 `既有功能影响：无`。脚本仅检查既有功能影响字段存在且非空，不检查这一业务判断是否合理。
 - 断言应包含可观察、可判定的结果，不能仅凭格式校验通过就认为用例充分。
+
+交付终端中的 `DELIVERY_STATUS: COMPLETED` 只表示产物完成；`REVIEW_STATUS` 与 `REVIEW_COUNTS` 分别输出延期状态、全部 unresolved 关系数、去重后的 deferred 关系数和 deferred unit 数，不表示业务已全部核实。
 
 当前 `test-cases.json schema_version=5`，`coverage.json coverage_schema_version=5`，`run-state.json run_schema_version=8`。旧 run-state v7 在 `_read_state` 入口即被拒绝，必须重新执行首次分析生成 Review v5；不能直接恢复旧运行。回执校验不替代测试质量判断：一条用例可以关联多个 unit，但必须逐 unit 建立明确的主事实—断言位置引用。**即使全部关联也不证明业务覆盖**。`coverage.json` 的 `primary_assertion_links` 列出每个 unit 对应的用例 ID、主事实 ID 和可观察断言下标，供 Agent 逐项复核。手工运行 `delivery_preflight.py` 必须传入 `--receipts .work/review-receipts.json`，无有效回执不能通过预检。报告 Markdown 结构错误优先归入报告结构检查，不归为回执错误。
 

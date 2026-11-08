@@ -83,6 +83,11 @@ class DocsContractTest(unittest.TestCase):
                 self.assertIn(chr(96)+'agent_'+phase+chr(96),self.contract)
         self.assertIn('page.offset',self.contract)
 
+    def test_human_report_is_separate_from_machine_sources(self):
+        self.assertIn('正文不附加 `fact_id`/`evidence_id` 编号串',self.guide)
+        self.assertIn('不展示 fact/evidence ID',self.skill)
+        self.assertIn('DELIVERY_STATUS: COMPLETED',self.guide)
+
     def test_report_headings_and_hard_rules_are_grounded(self):
         for heading in generate_report.AGENT_HEADINGS+generate_report.MACHINE_HEADINGS:
             with self.subTest(heading=heading):

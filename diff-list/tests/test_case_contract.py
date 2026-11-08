@@ -131,7 +131,7 @@ class CaseContractTest(unittest.TestCase):
             validate_cases(data,analysis(),review())
         case['unit_assertions'].append(
             dict(unit_id='RU-2',direct_fact_ids=['fact-1'],observation_indexes=[0]))
-        with self.assertRaisesRegex(ValueError,'direct primary facts'):
+        with self.assertRaisesRegex(ValueError,'事实不属于该 unit'):
             validate_cases(data,analysis(),review())
         case['unit_assertions'][-1]['direct_fact_ids']=['fact-2']
         case['unit_assertions'][-1]['observation_indexes']=[9]
@@ -145,14 +145,49 @@ class CaseContractTest(unittest.TestCase):
     def test_supporting_fact_is_not_a_primary_change_link(self):
         source=analysis()
         source['projects'][0]['facts'][0]['kind']='branch'
-        with self.assertRaisesRegex(ValueError,'direct primary facts'):
+        with self.assertRaisesRegex(ValueError,'事实类型或变化状态不是 primary'):
             validate_cases(cases(),source,review())
+
+    def test_invalid_unit_assertion_reports_actionable_fact_details(self):
+        source=analysis()
+        expected=review()
+        source['projects'][0]['facts'].append(dict(
+            id='branch-fact',kind='branch',data={'symbol':'sample.Flow#run()'},
+            evidence_ids=['branch-evidence']))
+        unit=expected['projects'][0]['review_units'][0]
+        unit['context_fact_ids']=['branch-fact']
+        unit['fact_ids'].append('branch-fact')
+        expected['projects'][0]['fact_catalog'].append(
+            dict(id='branch-fact',kind='branch',evidence_ids=['branch-evidence']))
+        data=cases()
+        data['purpose_cases']['acceptance'][0]['case_id']='DL-009'
+        data['purpose_cases']['acceptance'][0]['unit_assertions'][0]['direct_fact_ids']=['branch-fact']
+        with self.assertRaises(ValueError) as captured:
+            validate_cases(data,source,expected)
+        detail=str(captured.exception)
+        for value in ('DL-009','RU-1','branch-fact','kind=branch',
+                      '事实类型或变化状态不是 primary','fact-1(method_change)'):
+            self.assertIn(value,detail)
+        data['purpose_cases']['acceptance'][0]['unit_assertions'][0]['direct_fact_ids']=['fact-2']
+        with self.assertRaises(ValueError) as captured:
+            validate_cases(data,source,expected)
+        detail=str(captured.exception)
+        for value in ('DL-009','RU-1','fact-2','kind=method_change',
+                      '事实不属于该 unit','fact-1(method_change)'):
+            self.assertIn(value,detail)
+        # 类型是 primary，但该 fact 仅作为此 unit 的上下文，也不能当作直接变化。
+        unit['context_fact_ids'].append('fact-2')
+        unit['fact_ids'].append('fact-2')
+        with self.assertRaisesRegex(ValueError,'不是其直接主事实'):
+            validate_cases(data,source,expected)
+        data['purpose_cases']['acceptance'][0]['unit_assertions'][0]['direct_fact_ids']=['fact-1']
+        self.assertEqual(len(validate_cases(data,source,expected)),1)
 
     def test_unchanged_configuration_consumer_is_not_primary_change(self):
         source=analysis()
         source['projects'][0]['facts'][0].update(kind='configuration',
             data=dict(change='retained_or_consumers_changed'))
-        with self.assertRaisesRegex(ValueError,'direct primary facts'):
+        with self.assertRaisesRegex(ValueError,'事实类型或变化状态不是 primary'):
             validate_cases(cases(),source,review())
 
     def test_old_fact_and_evidence_fields_are_rejected(self):

@@ -152,6 +152,34 @@ class DeliveryFlowTest(unittest.TestCase):
                 delivery._switch_agent_phase(str(run),'source_review')
             self.assertEqual(delivery._switch_agent_phase(str(run),'analysis_authoring'),0)
 
+    def test_delivery_summary_separates_all_unresolved_from_deferred_receipts(self):
+        analysis=dict(projects=[dict(relations=[
+            dict(id='R-1',status='unresolved'),dict(id='R-2',status='unresolved'),
+            dict(id='R-3',status='unresolved'),dict(id='R-4',status='unresolved'),
+            dict(id='R-resolved',status='source_resolved')])])
+        receipts=dict(sections={},audit_unresolved_by_unit={
+            'RU-1':dict(status='deferred',relation_ids=['R-1','R-2']),
+            'RU-2':dict(status='deferred',relation_ids=['R-2','R-3']),
+            'RU-3':dict(status='assessed',relation_ids=['R-4'])})
+        summary=delivery._review_delivery_summary(analysis,receipts)
+        self.assertEqual(summary,dict(unresolved_relations=4,deferred_units=2,
+                                      deferred_relations=3))
+        out=io.StringIO()
+        with contextlib.redirect_stdout(out):
+            delivery._print_delivery_review_summary(summary)
+        self.assertIn('DELIVERY_STATUS: COMPLETED',out.getvalue())
+        self.assertIn('REVIEW_STATUS: DEFERRED',out.getvalue())
+        self.assertIn('unresolved_relations=4 deferred_relations=3 deferred_units=2',out.getvalue())
+        for entry in receipts['audit_unresolved_by_unit'].values():
+            entry['status']='assessed'
+        summary=delivery._review_delivery_summary(analysis,receipts)
+        self.assertEqual(summary['unresolved_relations'],4)
+        self.assertEqual(summary['deferred_relations'],0)
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            delivery._print_delivery_review_summary(summary)
+        self.assertIn('REVIEW_STATUS: NO_DEFERRED',out.getvalue())
+        self.assertNotIn('REVIEW_STATUS: DEFERRED',out.getvalue())
+
     def test_old_run_v7_is_rejected_before_any_resume_stage(self):
         self.assertEqual(delivery.RUN_SCHEMA_VERSION,8)
         with tempfile.TemporaryDirectory() as td:

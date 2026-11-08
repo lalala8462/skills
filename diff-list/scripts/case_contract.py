@@ -91,8 +91,9 @@ def validate_cases(data,analysis,review):
     if review.get('analysis_id')!=analysis_id:
         raise ValueError('test cases belong to a different review')
     units=review_unit_index(review)
-    primary_fact_ids={fact['id'] for project in analysis.get('projects',[])
-                      for fact in project.get('facts',[])
+    facts_by_id={fact['id']:fact for project in analysis.get('projects',[])
+                 for fact in project.get('facts',[])}
+    primary_fact_ids={identifier for identifier,fact in facts_by_id.items()
                       if is_direct_primary_change_fact(fact)}
     groups=data.get('purpose_cases')
     if not isinstance(groups,dict) or set(groups)!=set(PURPOSES):
@@ -139,8 +140,26 @@ def validate_cases(data,analysis,review):
                     raise ValueError('unit_assertions unit_id must be unique and belong to review_unit_ids: '+unit_id)
                 linked.add(unit_id)
                 linked_facts=_strings(link['direct_fact_ids'],'unit_assertions.direct_fact_ids',True)
-                if not set(linked_facts)<=set(units[unit_id]['direct_fact_ids']) or not set(linked_facts)<=primary_fact_ids:
-                    raise ValueError('unit_assertions must reference direct primary facts of the unit: '+unit_id)
+                unit_facts=set(units[unit_id]['fact_ids'])
+                unit_direct=set(units[unit_id]['direct_fact_ids'])
+                allowed=sorted(unit_direct & primary_fact_ids)
+                for fact_id in linked_facts:
+                    if fact_id in allowed:
+                        continue
+                    kind=(facts_by_id.get(fact_id) or {}).get('kind','unknown')
+                    if fact_id not in unit_facts:
+                        reason='事实不属于该 unit'
+                    elif fact_id not in primary_fact_ids:
+                        reason='事实类型或变化状态不是 primary'
+                    else:
+                        reason='事实属于该 unit，但不是其直接主事实'
+                    examples=', '.join('{}({})'.format(fid,(facts_by_id.get(fid) or {}).get('kind','unknown'))
+                                       for fid in allowed[:10])
+                    if len(allowed)>10:
+                        examples+='，其余 {} 项'.format(len(allowed)-10)
+                    raise ValueError('unit_assertions 用例 {} / unit {} / fact {} (kind={}): {}；'
+                                     '允许的直接主事实: {}'.format(
+                                         case_id,unit_id,fact_id,kind,reason,examples or '无'))
                 indexes=link['observation_indexes']
                 if (not isinstance(indexes,list) or not indexes or
                         any(type(index)!=int or index<0 or index>=len(observations) for index in indexes) or

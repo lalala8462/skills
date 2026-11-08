@@ -71,15 +71,15 @@ branch、switch、contains、集合数量等源码事实由 Agent 结合业务�
 - 写清配置和数据前提；
 - 步骤可执行；
 - 结果可观察；
-- 只引用实际支撑该场景的 `review_unit_ids`；fact/evidence 由脚本自动展开。
+- 每个 `review_unit_id` 必须有 `unit_assertions` 绑定直接主事实与可观察断言；脚本只展开所引用事实的证据。
 
 正常逻辑已在需求验收中覆盖时，不在回归或边界 sheet 重复。
 
-`coverage.json` 的 `pending_review` 只用于发现尚未绑定测试场景的 review unit。优先查看 `candidate_case_ids` 判断现有场景是否已经实际覆盖；能覆盖则补充 `review_unit_id` 绑定，不能覆盖才新增用例。新增用例以实际业务风险和测试价值为依据，已覆盖的单元使用现有用例建立引用。
+`coverage.json` 的 `pending_review` 只用于发现尚未绑定测试场景的 review unit。优先查看 `candidate_case_ids` 判断现有场景是否已经实际覆盖；能覆盖则补充 unit 与主事实—断言绑定，不能覆盖才新增用例。新增用例以实际业务风险和测试价值为依据，已覆盖的单元使用现有用例建立引用。
 
 ## 7. 报告
 
-第 4 章写清既有功能影响：受影响流程、触发条件、原因和可观察后果。
+第 4 章写清既有功能影响：受影响流程、触发条件、原因和可观察后果。正文不罗列 fact/evidence 机器编号，完整来源保留在结构化文件。
 
 第 6 章严格区分：
 
