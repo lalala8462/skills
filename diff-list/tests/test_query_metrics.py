@@ -119,6 +119,89 @@ class QueryMetricsTest(unittest.TestCase):
             self.assertEqual(status,2)
             self.assertIn('ERROR',error.getvalue())
 
+    def test_commit_review_is_paginated_without_business_interpretation(self):
+        with tempfile.TemporaryDirectory() as td:
+            _,analysis,review,_=self._fixture(td)
+            data=json.loads(analysis.read_text(encoding='utf-8'))
+            data['projects'][0]['git']={'commit_review':dict(
+                scope='first_parent_range',net_status='composed',
+                omitted_commits=2,review_required=True,
+                review_reasons=['history truncated by configured limit'],
+                textual_reverse_candidate_count=1,
+                repeated_files=[dict(path='Service.java',touch_count=3)],
+                commits=[
+                    dict(sha='a'*40,parent='0'*40,subject='Add check',body='original request',
+                         files=['Service.java'],merge_commit=False,message_truncated=False),
+                    dict(sha='b'*40,parent='a'*40,subject='Remove check',body='second request',
+                         files=['Service.java'],merge_commit=False,message_truncated=False),
+                    dict(sha='c'*40,parent='b'*40,subject='Unrelated',body='keep original order',
+                         files=['Other.java'],merge_commit=False,message_truncated=False)])}
+            analysis.write_text(json.dumps(data),encoding='utf-8')
+            base=['--analysis',str(analysis),'--review',str(review),'--overview',
+                  '--view','commits','--limit','2']
+            def query(extra=()):
+                stdout,stderr=io.StringIO(),io.StringIO()
+                with contextlib.redirect_stdout(stdout),contextlib.redirect_stderr(stderr):
+                    status=review_query.main(base+list(extra))
+                self.assertEqual(status,0,stderr.getvalue())
+                return json.loads(stdout.getvalue())
+            first=query()
+            self.assertEqual(first['mode'],'overview')
+            self.assertEqual(first['view'],'commits')
+            self.assertEqual([row['sha'] for row in first['items']],['a'*40,'b'*40])
+            self.assertEqual([row['position'] for row in first['items']],[1,2])
+            self.assertEqual(first['items'][0]['body'],'original request')
+            self.assertEqual(first['page']['total'],3)
+            self.assertFalse(first['page']['complete'])
+            summary=first['commit_review_summaries'][0]
+            self.assertTrue(summary['available'])
+            self.assertEqual(summary['scope'],'first_parent_range')
+            self.assertEqual(summary['omitted_commits'],2)
+            self.assertEqual(summary['repeated_file_count'],1)
+            self.assertTrue(summary['review_required'])
+            second=query(['--cursor',first['page']['next_cursor']])
+            self.assertEqual([row['sha'] for row in second['items']],['c'*40])
+            self.assertTrue(second['page']['complete'])
+            self.assertEqual(second['page']['offset'],2)
+            # 游标不能跨视图，且提交说明被修改后不能复用旧游标。
+            with contextlib.redirect_stdout(io.StringIO()),contextlib.redirect_stderr(io.StringIO()) as error:
+                status=review_query.main([
+                    '--analysis',str(analysis),'--review',str(review),
+                    '--overview','--limit','2','--cursor',first['page']['next_cursor']])
+            self.assertEqual(status,2)
+            self.assertIn('cursor',error.getvalue())
+            data['projects'][0]['git']['commit_review']['commits'][0]['subject']='Edited'
+            analysis.write_text(json.dumps(data),encoding='utf-8')
+            with contextlib.redirect_stdout(io.StringIO()),contextlib.redirect_stderr(io.StringIO()) as error:
+                status=review_query.main(base+['--cursor',first['page']['next_cursor']])
+            self.assertEqual(status,2)
+            self.assertIn('cursor',error.getvalue())
+
+    def test_missing_commit_history_is_not_silently_treated_as_empty(self):
+        with tempfile.TemporaryDirectory() as td:
+            _,analysis,review,_=self._fixture(td)
+            stdout=io.StringIO()
+            with contextlib.redirect_stdout(stdout),contextlib.redirect_stderr(io.StringIO()):
+                status=review_query.main(['--analysis',str(analysis),'--review',str(review),
+                                          '--overview','--view','commits'])
+            self.assertEqual(status,0)
+            output=json.loads(stdout.getvalue())
+            self.assertEqual(output['page']['total'],0)
+            self.assertFalse(output['commit_review_summaries'][0]['available'])
+
+    def test_commits_view_does_not_override_query_or_audit_scopes(self):
+        with tempfile.TemporaryDirectory() as td:
+            _,analysis,review,_=self._fixture(td)
+            for args in (['--query','test','--view','commits'],
+                         ['--audit','--view','commits']):
+                with self.subTest(args=args):
+                    stderr=io.StringIO()
+                    with contextlib.redirect_stdout(io.StringIO()),contextlib.redirect_stderr(stderr):
+                        status=review_query.main(['--analysis',str(analysis),
+                                                  '--review',str(review)]+args)
+                    self.assertEqual(status,2)
+                    self.assertIn('ERROR',stderr.getvalue())
+
     def test_repeat_identity_accounts_for_cursor_and_view(self):
         args=SimpleNamespace(
             overview=False,audit=False,query='fieldFromSource',unit=None,
