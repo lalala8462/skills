@@ -546,7 +546,7 @@ class ProjectAnalysis:
                 new_method and self.context_methods[side] >= self.limits['methods']):
             critical=(row['kind']=='method' and row.get('method') in self.critical_symbols[side])
             critical|=row['kind']=='field' and (row.get('owner'),row.get('name')) in self.critical_fields
-            critical|=row['kind']=='class' and row.get('owner') in self.critical_classes
+            critical|=row['kind'] in ('class','initializer') and row.get('owner') in self.critical_classes
             if critical:
                 marker='{}:{}:{}'.format(side,row['path'],row.get('method') or row.get('owner') or row.get('name','<source>'))
                 self.critical_evidence_omissions.add(marker)
@@ -627,6 +627,30 @@ class ProjectAnalysis:
                     for edge in graph.edges:
                         if edge['field'] == key[0]+'#'+key[1] and edge['source'] not in ignored:
                             methods.add(edge['source'])
+        # Class-level static/instance initializer blocks are independent primary changes.
+        # Preserve the current whitespace-insensitive comparison for formatting-only edits.
+        def initializer_blocks(graph):
+            grouped=collections.defaultdict(list)
+            for row in graph.index['events']:
+                if row['kind']=='initializer':
+                    grouped[(row['owner'],row['static'])].append(row)
+            return grouped
+        previous_blocks,current_blocks=initializer_blocks(old),initializer_blocks(new)
+        for key in sorted(set(previous_blocks)|set(current_blocks)):
+            before_blocks=previous_blocks.get(key,[])
+            after_blocks=current_blocks.get(key,[])
+            for position in range(max(len(before_blocks),len(after_blocks))):
+                a=before_blocks[position] if position<len(before_blocks) else None
+                b=after_blocks[position] if position<len(after_blocks) else None
+                if compact(a['source'] if a else '')==compact(b['source'] if b else ''):
+                    continue
+                self.critical_classes.add(key[0])
+                self.fact('initializer_block_change',dict(
+                    owner=key[0],is_static=key[1],index=position,
+                    change='modified' if a and b else ('added' if b else 'deleted'),
+                    before_digest=stable(compact(a['source'])) if a else None,
+                    after_digest=stable(compact(b['source'])) if b else None),
+                    [('baseline',a),('result',b)])
         # Mapper XML 是独立的变更来源：纯 SQL 修改也必须进入主事实和复核单元。
         # statement 由固定 Git 快照解析，保留原始 SQL 与动态标签供 Agent 判断。
         mapper_sides={}

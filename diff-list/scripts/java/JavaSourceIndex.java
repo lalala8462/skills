@@ -139,6 +139,16 @@ public final class JavaSourceIndex {
                 "implements",interfaces,"annotations",annotations(n.getModifiers())));
             out(m); super.visitClass(n,p); owners.removeLast(); method = previous; return null;
         }
+        @Override public Void visitBlock(BlockTree n, Void p) {
+            // Only class-level static/instance initializers; method bodies remain method facts.
+            TreePath parent = getCurrentPath().getParentPath();
+            if (parent != null && parent.getLeaf() instanceof ClassTree) {
+                Map<String,Object> m = event("initializer", n);
+                m.putAll(map("source", text(n), "static", n.isStatic()));
+                out(m);
+            }
+            return super.visitBlock(n, p);
+        }
         @Override public Void visitMethod(MethodTree n, Void p) {
             String old = method;
             List<Object> params = new ArrayList<Object>(); List<String> types = new ArrayList<String>();

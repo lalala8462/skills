@@ -6,7 +6,7 @@ SCHEMA_VERSION=5
 REVIEW_SCHEMA_VERSION=5
 PRIMARY_CHANGE_KINDS=frozenset(('method_change','field_change','class_binding_change',
     'configuration','configuration_file_change','configuration_parse_boundary',
-    'argument_source_change','mapper_statement_change'))
+    'argument_source_change','mapper_statement_change','initializer_block_change','xml_file_change'))
 
 
 def is_direct_primary_change_fact(fact):
@@ -14,6 +14,18 @@ def is_direct_primary_change_fact(fact):
     if fact.get('kind')=='configuration':
         return (fact.get('data') or {}).get('change') in ('added','removed')
     return fact.get('kind') in PRIMARY_CHANGE_KINDS
+
+
+def is_no_net_change(analysis):
+    """Only a verified identical Git baseline/result supports zero units."""
+    projects=analysis.get('projects') or []
+    return bool(projects) and all(
+        ((project.get('git') or {}).get('net_effect') or {}).get('status')=='no_net_change'
+        and not ((project.get('git') or {}).get('net_effect') or {}).get('changed_files')
+        and bool((project.get('snapshots') or {}).get('baseline'))
+        and (project.get('snapshots') or {}).get('baseline')==(project.get('snapshots') or {}).get('result')
+        and not any(project.get(key) for key in ('change_seeds','facts','relations','hard_errors'))
+        for project in projects)
 
 
 def empty_cases(analysis_id):
@@ -74,8 +86,7 @@ def review_unit_index(review):
                 raise ValueError('review unit change_summary references non-direct facts: '+identifier)
             index[identifier]=dict(project=project.get('name'),unit=unit,fact_ids=fact_ids,
                                    direct_fact_ids=direct_fact_ids,context_fact_ids=context_fact_ids)
-    if not index:
-        raise ValueError('review contains no review units')
+    # validate_cases checks whether an empty review is a true no-net-change analysis.
     return index
 
 
@@ -98,6 +109,8 @@ def validate_cases(data,analysis,review):
     groups=data.get('purpose_cases')
     if not isinstance(groups,dict) or set(groups)!=set(PURPOSES):
         raise ValueError('purpose_cases requires exactly four purpose arrays')
+    if not units and not is_no_net_change(analysis):
+        raise ValueError('review contains no review units outside a verified no-net-change analysis')
     seen=set();result=[]
     for purpose in PURPOSES:
         if not isinstance(groups[purpose],list):

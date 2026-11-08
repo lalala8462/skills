@@ -126,6 +126,16 @@ def analyze_project(spec,rules,limits,parser,cache):
         +limit_errors+scope_errors))
     relevant=configs+[r for r in config_errors+skipped if r.get('review_required',True)
                       and r['path'].lower().endswith(('.properties','.yaml','.yml','.xml'))]
+    # Keep XML net changes not covered by recognized Mapper/config facts.
+    # Do not duplicate already represented Mapper statements or key-value configuration.
+    covered_xml={row['path'] for row in relevant if row['path'].lower().endswith('.xml')}
+    for fact in engine.facts:
+        if fact['kind']=='mapper_statement_change':
+            covered_xml.update(engine.context[eid]['path'] for eid in fact['evidence_ids']
+                               if eid in engine.context)
+    for path in sorted(changed_xml_paths-covered_xml):
+        relevant.append(dict(path=path,kind='xml_file_change',
+                             reason='XML net change not covered by recognized Mapper/config mappings'))
     if relevant:
         tree_files={}
         for side,tree in result['snapshots'].items():
@@ -160,9 +170,13 @@ def analyze_project(spec,rules,limits,parser,cache):
             if not refs:
                 result['hard_errors'].append('configuration change has no source evidence: '+candidate['path']);continue
             data=clean(candidate)
-            kind='configuration_file_change' if 'key' in candidate else 'configuration_parse_boundary'
+            kind=('configuration_file_change' if 'key' in candidate else
+                  'xml_file_change' if candidate.get('kind')=='xml_file_change' else
+                  'configuration_parse_boundary')
             identifier=stable(name,kind,data,sorted(refs))
-            fact=dict(id=identifier,kind=kind,classification='source_fact' if 'key' in candidate else 'review_boundary',data=data,evidence_ids=sorted(refs))
+            fact=dict(id=identifier,kind=kind,
+                      classification='source_fact' if kind!='configuration_parse_boundary' else 'review_boundary',
+                      data=data,evidence_ids=sorted(refs))
             if identifier not in engine.fact_ids:engine.facts.append(fact);engine.fact_ids.add(identifier)
     result['facts']=sorted(engine.facts,key=lambda f:f['id'])
     context=list(engine.context.values())

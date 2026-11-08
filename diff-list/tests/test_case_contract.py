@@ -56,6 +56,25 @@ def cases():
 
 
 class CaseContractTest(unittest.TestCase):
+    def test_zero_unit_cases_require_true_no_net_change(self):
+        from case_contract import empty_cases
+        empty_analysis=dict(analysis_id='zero',projects=[dict(
+            name='service',snapshots={'baseline':'tree','result':'tree'},
+            git={'net_effect':{'status':'no_net_change','changed_files':[]}},
+            change_seeds=[],facts=[],relations=[],hard_errors=[])])
+        empty_review=dict(analysis_id='zero',review_schema_version=5,projects=[dict(
+            name='service',review_units=[],fact_catalog=[],review_facets=[],navigation_facets=[])])
+        data=empty_cases('zero')
+        self.assertEqual(validate_cases(data,empty_analysis,empty_review),[])
+        self.assertEqual(coverage_matrix(data,empty_analysis,empty_review)['summary']['unit_count'],0)
+        modified=copy.deepcopy(empty_analysis)
+        modified['projects'][0]['git']['net_effect']['status']='composed'
+        with self.assertRaisesRegex(ValueError,'outside a verified no-net-change'):
+            validate_cases(data,modified,empty_review)
+        data['purpose_cases']['acceptance']=[cases()['purpose_cases']['acceptance'][0]]
+        with self.assertRaisesRegex(ValueError,'unknown review unit'):
+            validate_cases(data,empty_analysis,empty_review)
+
     def test_four_purposes_are_fixed(self):
         self.assertEqual(PURPOSES,('acceptance','core_regression','related_regression','boundary'))
         self.assertEqual(len(PURPOSE_NAMES),4)

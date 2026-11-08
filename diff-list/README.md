@@ -28,7 +28,7 @@
 1. **首次运行** `run_delivery.py`：生成事实底账、复核索引和报告草稿，随后停在 `waiting_agent`。
 2. **Agent 复核**：先用 `review_query.py --overview`、`--audit` 查看全局单元与异常；提交说明另用 `--overview --view commits --limit 10` 按需分页读取，**该子视图不包含全局统计与回执状态**，且单条提交正文可能较长。随后按 unit / fact / evidence 回查源码，编辑 `.work/test-cases.json`、`.work/report.md` 和 `.work/review-receipts.json`。用例的 `unit_assertions` **必填**：为每个 `review_unit_id` 显式绑定该单元的主事实 `direct_fact_ids` 和 `observable_evidence` 数组下标（详见[使用指南](docs/usage-guide.md#5-用例与报告硬约束)）。
 3. **恢复交付** `--resume`：依次执行格式及回执身份预检、用例引用复核、Excel 导出、报告机器章节刷新与证据身份校验。若 `coverage.pending_review` 未清零，会进入 `waiting_coverage_review`，补充 `unit_assertions` 的主事实和断言关联或新增用例后再次 resume；**手工调用 `delivery_preflight.py` 必须指定 `--receipts .work/review-receipts.json`**。本次运行契约升级为 v8（Review v5），旧 run-state v7 在恢复入口即被拦截，不能直接 `--resume`，需重新执行首次分析以重建 review unit。
-4. **最终交付**：运行目录根部只发布 `report.md`、`test-cases.xlsx`、`coverage.json`；`.work/` 保留完整事实底账与运行状态，成功后自动清理隔离 clone。
+4. **最终交付**：运行目录根部只发布 `report.md`、`test-cases.xlsx`、`coverage.json`；`.work/` 保留完整事实底账与运行状态，成功后自动清理隔离 clone。若选中提交最终完全撤销、结果树与基线树一致，允许零 review unit、零用例，仍交付四个空 Excel 工作表与 coverage.json；其它情况不得绕过主事实约束。
 
 只修改类继承、注解等结构而方法体不变时，相关方法保留为项目级主变化的上下文，不强制为缺少主事实的方法单独生成测试单元。类结构变化的主事实由项目级 unit 唯一持有；方法级 unit 仍可读取该事实作为上下文，但不能重复声明为主事实。无法归属的变化会明确报错。
 

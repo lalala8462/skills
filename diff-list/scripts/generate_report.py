@@ -61,7 +61,7 @@ def configuration_section(analysis):
             if fact.get('kind')=='configuration_file_change':
                 changes.append(dict(project=project.get('name'),path=data.get('path'),key=data.get('key'),
                     change=data.get('change'),before=data.get('before'),after=data.get('after')))
-            elif fact.get('kind')=='configuration_parse_boundary':
+            elif fact.get('kind') in ('configuration_parse_boundary','xml_file_change'):
                 boundaries.append(dict(project=project.get('name'),path=data.get('path'),
                                        reason=data.get('reason') or data.get('kind') or '无法结构化解析'))
     if not changes and not boundaries:

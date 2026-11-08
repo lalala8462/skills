@@ -82,8 +82,7 @@ def _normalize_validated(data):
         for item in sorted(data['purpose_cases'][purpose], key=lambda c: c.get('case_id', '')):
             rows.append(_case(item, ids))
         groups[purpose] = rows
-    if not any(groups.values()):
-        raise ValueError('no test cases to export')
+    # An empty workbook is valid only after verified no-net-change case validation.
     if sum(map(len, groups.values())) > 10000:
         raise ValueError('too many test cases')
     return {'purposes': groups}

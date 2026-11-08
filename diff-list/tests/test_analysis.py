@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -272,6 +273,72 @@ class Handler {
         self.assertEqual(len(p['git']['commit_review']['commits']),2)
         self.assertTrue(p['git']['commit_review']['review_required'])
         self.assertFalse(any(f['kind']=='method_change' for f in p['facts']))
+        # A true zero-net-change selection must still produce the normal delivery artifacts.
+        from review_workbench import build_review
+        from case_contract import empty_cases, validate_cases, coverage_matrix
+        from export_test_cases import normalize, export
+        review=build_review(result)
+        self.assertEqual(review['projects'][0]['review_units'],[])
+        cases=empty_cases(result['analysis_id'])
+        self.assertEqual(validate_cases(cases,result,review),[])
+        self.assertEqual(coverage_matrix(cases,result,review)['pending_review'],[])
+        with tempfile.TemporaryDirectory() as td:
+            output=Path(td)/'no-change.xlsx'
+            counts=export(normalize(cases,result,review),output)
+            self.assertEqual(counts['total'],0)
+            with zipfile.ZipFile(output) as workbook:
+                self.assertEqual(len([name for name in workbook.namelist()
+                                      if name.startswith('xl/worksheets/sheet')]),4)
+
+    def test_initializer_blocks_are_primary_changes(self):
+        from review_workbench import build_review
+        before='''package p;
+class Init {
+    static { System.setProperty("mode", "old"); }
+    { System.setProperty("instance", "old"); }
+}
+'''
+        after=before.replace('"old"','"new"')
+        commit(self.source,{'src/Init.java':before},'initial initializer')
+        change=commit(self.source,{'src/Init.java':after},'change initializer')
+        result,_=self.analyze([change])
+        facts=[fact for fact in result['projects'][0]['facts']
+               if fact['kind']=='initializer_block_change']
+        self.assertEqual(len(facts),2)
+        self.assertEqual({fact['data']['is_static'] for fact in facts},{True,False})
+        self.assertTrue(all(fact['evidence_ids'] for fact in facts))
+        review=build_review(result)
+        self.assertTrue(all(any(fact['id'] in unit['direct_fact_ids']
+                                for unit in review['projects'][0]['review_units']) for fact in facts))
+        formatted=after.replace('static { ', 'static {\n        ')
+        formatted_commit=commit(self.source,{'src/Init.java':formatted},'format initializer')
+        formatted_result,_=self.analyze([formatted_commit])
+        self.assertFalse([fact for fact in formatted_result['projects'][0]['facts']
+                          if fact['kind']=='initializer_block_change'])
+
+    def test_unmapped_xml_change_is_primary_but_mapper_is_not_duplicated(self):
+        from review_workbench import build_review
+        before='<beans><bean id="receiver" class="sample.Before"/></beans>'
+        after='<beans><bean id="receiver" class="sample.After"/></beans>'
+        commit(self.source,{'src/context.xml':before},'base XML config')
+        change=commit(self.source,{'src/context.xml':after},'change XML config')
+        result,context=self.analyze([change])
+        facts=[fact for fact in result['projects'][0]['facts']
+               if fact['kind']=='xml_file_change']
+        self.assertEqual(len(facts),1)
+        self.assertEqual(facts[0]['data']['path'],'src/context.xml')
+        identifiers={row['id'] for row in context}
+        self.assertTrue(all(eid in identifiers for eid in facts[0]['evidence_ids']))
+        review=build_review(result)
+        self.assertTrue(any(facts[0]['id'] in unit['direct_fact_ids']
+                            for unit in review['projects'][0]['review_units']))
+        changed_mapper=MAPPER.replace('order_no = #{orderNo}', 'trade_no = #{orderNo}')
+        change=commit(self.source,{'src/Store.xml':changed_mapper},'change Mapper')
+        mapper_result,_=self.analyze([change])
+        self.assertTrue([f for f in mapper_result['projects'][0]['facts']
+                         if f['kind']=='mapper_statement_change'])
+        self.assertFalse([f for f in mapper_result['projects'][0]['facts']
+                          if f['kind']=='xml_file_change' and f['data']['path']=='src/Store.xml'])
 
     def test_out_of_range_limits_fail_without_silent_clamping(self):
         for invalid in ({'depth':4},{'methods':501},{'context_bytes':67108865},

@@ -11,6 +11,8 @@ analysis_id 由分析器版本、生效规则（含 limits 参数）和项目固
 
 facts 是静态事实底账，主要包括方法/字段/类变化、配置、参数来源、Mapper、字段来源、返回值、分支、集合判断、未解析关系、对象复制和构造映射等。`mapper_statement_change` 是 Mapper XML 中 SQL 语句新增、修改、删除的主事实；即使只有 XML 发生变化，也生成对应的项目级复核单元。
 
+类级 static/实例初始化块的变化形成 `initializer_block_change` 主事实；非 Mapper/配置映射能覆盖的 XML 净变化形成 `xml_file_change` 主事实，均保留源码证据。初始化块仍按去空白方式比较，纯格式化不生成主事实。
+
 当选中的 Java 方法直接调用能够唯一匹配到 MyBatis namespace/statement 的 Mapper 声明时，即使 Mapper 接口方法超出默认方法遍历深度（depth=1），也生成对应 `mapper_statement` 事实；这一关系仍标识为约定推断，不等于运行时调用证明。不扩大其它 Java 方法遍历范围，未绑定或有歧义的 Mapper 不凭名称生成 SQL 事实。
 
 relations 记录直接变化相关的解析关系及需要人工复核的未解析关系，状态包括 source_resolved、convention_inferred、unresolved。默认遍历 depth=1，可显式增至 3；回调对象来源传播独立固定为 4 轮。规则上限和源码索引预算通过明确报错阻断不完整交付；变化 Java/XML 源码解析失败同样形成 hard_errors。跨项目关系记录在 cross_project_relations。
@@ -64,7 +66,7 @@ Audit 将未归属的真实直接变化与背景事实分开；`configuration` �
 
 ## test-cases.json
 
-当前 schema_version=5。
+当前 schema_version=5。仅在全部项目的 Git 净状态为 `no_net_change`、结果树与基线树一致、无主事实、变化种子、关系及 hard_errors 时，允许零 review unit 和四类空用例；其它场景不允许空复核范围。
 
 每条用例保留 `review_unit_ids`，并**必须**提供与其逐项一一对应的 `unit_assertions`：
 - `unit_id`：明确指向该复核单元；

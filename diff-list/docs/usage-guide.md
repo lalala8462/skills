@@ -77,7 +77,7 @@ Agent 完成复核并填写 `.work/test-cases.json`、`.work/report.md` 后：
 py -3 .\scripts\run_delivery.py --resume "<run>"
 ~~~
 
-交付链：`preflight → coverage`，preflight **强制要求** `--receipts`；类继承、注解等结构变化若仅使未修改的方法成为复核种子，这些方法作为项目级主变化的上下文登记，不制造无法填写 `unit_assertions` 的独立 method unit；类结构变化主事实由项目级 unit 唯一直接持有，方法级 unit 只能作为上下文引用；若 `pending_review > 0` 则进入 `waiting_coverage_review`；核对 `.work/coverage.json` 中的 `candidate_case_ids`、相关主事实与可观察断言，补充真实的 `unit_assertions` 或测试后再次 resume。没有待复核单元则依次 `excel → report → finalize`。成功时清理本次建立的分析 clone。
+交付链：`preflight → coverage`，preflight **强制要求** `--receipts`；类继承、注解等结构变化若仅使未修改的方法成为复核种子，这些方法作为项目级主变化的上下文登记，不制造无法填写 `unit_assertions` 的独立 method unit；类结构变化主事实由项目级 unit 唯一直接持有，方法级 unit 只能作为上下文引用；若 `pending_review > 0` 则进入 `waiting_coverage_review`；核对 `.work/coverage.json` 中的 `candidate_case_ids`、相关主事实与可观察断言，补充真实的 `unit_assertions` 或测试后再次 resume。没有待复核单元则依次 `excel → report → finalize`。真正无净变化（Git 结果树等于基线树，且没有事实、变化种子、关系与 hard_errors）时，允许四类用例均为空，四个 Excel 工作表只有表头；报告及回执仍需由 Agent 明确填写“无”，不得把解析遗漏冒充无净变化。成功时清理本次建立的分析 clone。
 
 **设计约束**：脚本不猜业务用途或风险，直接相关的 `unresolved` 关系不按名称过滤；YAML 解析失败保留解析边界，不根据路径猜测是否运行配置。普通关键词搜索只用于定位材料，不用于判断结论。
 
