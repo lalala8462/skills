@@ -226,6 +226,7 @@ def _unit_index(row,indexes):
         direct_fact_ids=direct_fact_ids,
         direct_evidence_ids=sorted(direct_evidence_ids),
         context_fact_count=len(context_fact_ids),
+        context_seed_count=len(row.get('context_seed_symbols') or []),
         invalid_reference_count=len(missing_refs),
         fact_count=len(fact_ids),relation_count=len(relation_ids),
         evidence_count=len(evidence_ids),facet_count=len(row.get('facet_ids') or []),
@@ -272,6 +273,8 @@ def _audit_rows(analysis,indexes):
            for symbol in p.get('change_seeds',[])}
     indexed={(row['_project'],row.get('symbol')) for row in all_units.values()
              if row.get('scope')=='method'}
+    indexed.update((row['_project'],symbol) for row in all_units.values()
+                   for symbol in row.get('context_seed_symbols') or [])
     result={key:[] for key in AUDIT_VIEWS}
     result['missing_seeds']=[dict(project=name,symbol=symbol)
                              for name,symbol in sorted(seeds-indexed)]
@@ -410,13 +413,19 @@ def _commit_review_material(analysis):
         repeated=material.get('repeated_files') or []
         if not isinstance(repeated,list):
             raise ValueError('git.commit_review.repeated_files 必须为数组: '+name)
+        omitted=material.get('omitted_commits',0)
+        reverse_count=material.get('textual_reverse_candidate_count',0)
+        for field,value in (('omitted_commits',omitted),
+                            ('textual_reverse_candidate_count',reverse_count)):
+            if type(value) is not int or value<0:
+                raise ValueError('git.commit_review.'+field+' 必须为非负整数: '+name)
         summaries.append(dict(
             project=name,available=True,scope=material.get('scope'),
             net_status=material.get('net_status'),
             recorded_commit_count=len(commits),
-            omitted_commits=material.get('omitted_commits',0),
+            omitted_commits=omitted,
             repeated_file_count=len(repeated),
-            textual_reverse_candidate_count=material.get('textual_reverse_candidate_count',0),
+            textual_reverse_candidate_count=reverse_count,
             review_required=material.get('review_required',False),
             review_reasons=material.get('review_reasons') or [],
             note=material.get('note')))
@@ -501,10 +510,12 @@ def _render_request(args,analysis,review,context,receipts=None):
     elif args.view=='conditions':
         items=[indexes['facts'][i] for i in sorted(expanded['facts'])
                if i in indexes['facts'] and indexes['facts'][i].get('kind') in CONDITION_KINDS]
-    else:
+    elif args.view=='all':
         # 完整展开仅当 Agent 明确指定 --view all 时提供；大型范围应优先分页视图。
         return dict(mode='lookup',view='all',analysis_id=analysis['analysis_id'],
                     complete=True,**query_material(analysis,review,context,args.query,args.unit))
+    else:
+        raise ValueError('查询范围不支持 --view '+str(args.view))
     selected,page=_paginate(items,analysis['analysis_id'],
         'lookup:{}:{}:{}:{}'.format(args.unit or '',args.query or '',args.view,matched_only),
         args.limit,args.cursor)

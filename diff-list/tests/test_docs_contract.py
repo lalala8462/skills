@@ -69,7 +69,7 @@ class DocsContractTest(unittest.TestCase):
         self.assertIn('schema_version=2',self.contract)
         self.assertIn('review_schema_version='+str(case_contract.REVIEW_SCHEMA_VERSION),self.contract)
         self.assertIn('schema_version='+str(case_contract.SCHEMA_VERSION),self.contract)
-        self.assertIn('coverage_schema_version=4',self.contract)
+        self.assertIn('coverage_schema_version=5',self.contract)
         self.assertEqual(query_metrics.RUN_SCHEMA_VERSION,run_delivery.RUN_SCHEMA_VERSION)
         self.assertIn('run_schema_version='+str(run_delivery.RUN_SCHEMA_VERSION),self.contract)
 

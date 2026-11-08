@@ -81,6 +81,7 @@ class CaseContractTest(unittest.TestCase):
         self.assertEqual(matrix['summary']['unit_count'],2)
         self.assertEqual(matrix['summary']['referenced_unit_count'],1)
         self.assertEqual(matrix['unit_case_references'][0]['referenced_by_cases'],True)
+        self.assertNotIn('declared_case_ids',matrix['unit_case_references'][0])
         self.assertEqual(matrix['unit_case_references'][0]['primary_assertion_links'],[
             dict(case_id='A-001',direct_fact_ids=['fact-1'],observation_indexes=[0])])
         self.assertEqual(matrix['summary']['referenced_facet_count'],1)
@@ -113,7 +114,7 @@ class CaseContractTest(unittest.TestCase):
 
     def test_coverage_matrix_has_current_schema_identity(self):
         matrix=coverage_matrix(cases(),analysis(),review())
-        self.assertEqual(matrix['coverage_schema_version'],4)
+        self.assertEqual(matrix['coverage_schema_version'],5)
         self.assertEqual(matrix['review_schema_version'],4)
         self.assertEqual(matrix['analysis_id'],'analysis-1')
 

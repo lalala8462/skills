@@ -29,7 +29,7 @@ relations 记录直接变化相关的解析关系及需要人工复核的未解�
 
 当前 review_schema_version=4。
 
-- review_units：变化方法或项目级变化的最小复核单元；
+- review_units：变化方法或项目级变化的最小复核单元；每个 unit 必须包含真实主变化事实。因类继承/注解变化而扩展的未修改方法仅在存在**同 owner 的 `class_binding_change`** 时作为项目级主变化的 `context_seed_symbols`、`context_fact_ids` 保存，`review_summary.context_only_seed_count` 记录数量；不生成缺少主事实的独立 method unit。没有可核验归属的变化种子明确报错，不擅自关联到其它配置/SQL 变化。
 - review_facets：按精确结构锚点形成的完整关系索引；
 - navigation_facets：review_facets 的高价值阅读排序子集；
 - fact_catalog：本轮复核相关 fact 预览；完整关系通过原始 analysis.json 或 `--view relations` 查看。
@@ -47,7 +47,7 @@ navigation_facets **只用于阅读排序，不得据此裁剪复核范围**；`
 Agent 可以直接调用此脚本，不需要 MCP 服务或持久化查询缓存：
 
 - `--overview`：默认提供全部 review unit 的分页索引和全局异常计数，复用 audit 的 `audit_scope_tiers`（包括 `change_touched_unresolved` 与 `supporting_unresolved`），如有回执还输出 `receipt_status`（待回执数），不打业务风险分；
-- `--overview --view commits`：按项目名称和采集顺序分页提供 `projects[].git.commit_review.commits` 原始提交元数据；每页 `items` 中包含 `project`、`position`、`sha`、`parent`、`subject`、`body`、`files` 等提交字段。`commit_review_summaries` 保留每个项目的 `scope`、`recorded_commit_count`、`omitted_commits`、`review_required`、`review_reasons`、`repeated_file_count` 和文本反向候选计数。缺失历史材料标记 `available=false`，不假装提交数为零。仅提供资料，不推断业务意图；
+- `--overview --view commits`：**仅提供 Git 提交材料的按需子视图，不提供**默认概览的 `totals`、`audit_counts` 或 `receipt_status`；建议 `--limit 10` 起步，长正文和文件列表在高 limit 时输出可能较大。按项目名称和采集顺序分页提供 `projects[].git.commit_review.commits` 原始提交元数据；每页 `items` 中包含 `project`、`position`、`sha`、`parent`、`subject`、`body`、`files` 等提交字段。`commit_review_summaries` 保留每个项目的 `scope`、`recorded_commit_count`、`omitted_commits`、`review_required`、`review_reasons`、`repeated_file_count` 和文本反向候选计数。缺失历史材料标记 `available=false`，不假装提交数为零。仅提供资料，不推断业务意图；
 - `--unit / --query`：按变化单元或关键词获取索引，unit 直接给出 `direct_fact_ids/direct_evidence_ids`；
 - `--query --view facts --matched-only`：只返回直接匹配事实，不扩大到 unit 所有事实；默认查询行为不变；
 - `--view facts/relations/evidence/db/conditions`：仅显式展开所选类别，分类不代表全部业务影响；
@@ -105,7 +105,7 @@ Audit 将未归属的真实直接变化与背景事实分开；`configuration` �
 
 ## coverage.json
 
-当前 coverage_schema_version=4。
+当前 coverage_schema_version=5。`unit_case_references[].case_ids` 是合法 `unit_assertions` 对应的用例清单；旧的 `declared_case_ids` 与它在严格契约下相同，已删除。
 
 pending_review 表示尚无符合 `unit_assertions` 契约的显式主事实—可观察断言关联的 review unit，并提供 high_value_facets、candidate_case_ids、related_referenced_unit_ids 和完整 facet 引用。`unit_case_references[].primary_assertion_links` 逐条列出 `case_id`、`direct_fact_ids`、`observation_indexes`，可人工定位到具体断言；`has_explicit_primary_assertion_link` 仅表示建立了结构化链接。
 
@@ -115,7 +115,7 @@ pending_review 表示尚无符合 `unit_assertions` 契约的显式主事实—�
 
 ## run-state.json 与查询计量
 
-当前 `run_schema_version=6`，只支持本版状态结构；回执文件与测试用例 `schema_version=5` 均为必需，旧 run 不可直接混用。CLI 的 `AGENT_PHASES` 是 `source_review`、`analysis_authoring`、`rework`；在 `run-state.json.stages` 中存储键名增加 `agent_` 前缀：
+当前 `run_schema_version=7`，只支持本版状态结构；回执文件与测试用例 `schema_version=5` 均为必需，旧 run 不可直接混用。CLI 的 `AGENT_PHASES` 是 `source_review`、`analysis_authoring`、`rework`；在 `run-state.json.stages` 中存储键名增加 `agent_` 前缀：
 
 - `agent_source_review`：源码查证；
 - `agent_analysis_authoring`：综合业务分析、用例设计、报告编写；

@@ -259,13 +259,10 @@ def coverage_matrix(data,analysis,review):
     navigation_facets=navigation_facet_index(review)
     cases_by_unit={unit_id:[] for unit_id in units}
     links_by_unit={unit_id:[] for unit_id in units}
-    declared_by_unit={unit_id:[] for unit_id in units}
     purposes_by_unit={unit_id:set() for unit_id in units}
     for purpose in PURPOSES:
         for case in data['purpose_cases'][purpose]:
             case_id=case['case_id']
-            for unit_id in case['review_unit_ids']:
-                declared_by_unit[unit_id].append(case_id)
             for link in case['unit_assertions']:
                 unit_id=link['unit_id']
                 cases_by_unit[unit_id].append(case_id)
@@ -291,7 +288,6 @@ def coverage_matrix(data,analysis,review):
             referenced_by_cases=bool(case_ids),
             has_explicit_primary_assertion_link=bool(links_by_unit[unit_id]),
             primary_assertion_links=sorted(links_by_unit[unit_id],key=lambda x:x['case_id']),
-            declared_case_ids=sorted(set(declared_by_unit[unit_id])),
             case_ids=case_ids,
             purposes=sorted(purposes_by_unit[unit_id])))
 
@@ -358,7 +354,7 @@ def coverage_matrix(data,analysis,review):
             all_facet_ids=row['facet_ids'],
             decision='待 Agent 判断：补充用例或为当前用例明确绑定该 unit 的主事实与可观察断言；脚本不判断业务覆盖'))
     return dict(
-        coverage_schema_version=4,
+        coverage_schema_version=5,
         analysis_id=data['analysis_id'],
         review_schema_version=REVIEW_SCHEMA_VERSION,
         summary=dict(

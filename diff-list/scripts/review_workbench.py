@@ -7,7 +7,7 @@ from pathlib import Path
 
 from analysis_engine import VERSION
 from source_index import stable
-from case_contract import PRIMARY_CHANGE_KINDS
+from case_contract import is_direct_primary_change_fact, PRIMARY_CHANGE_KINDS
 
 
 def fact_symbols(fact):
@@ -228,14 +228,13 @@ def build_review(analysis):
         raise ValueError('unsupported analysis schema/analyzer version')
     projects=[]
     selected_relation_ids=set()
-    primary_kinds=PRIMARY_CHANGE_KINDS
     supporting_kinds={
         'branch','switch_branch','membership_filter','return_sources','return_assignment_sites',
         'field_source','flow_boundary','mapper_statement','unresolved_relation',
         'annotation_binding_unconfigured','entrypoint','constant_or_collection',
         'object_copy','constructor_mapping'
     }
-    allowed_kinds=primary_kinds|supporting_kinds
+    allowed_kinds=PRIMARY_CHANGE_KINDS|supporting_kinds
 
     for source in analysis['projects']:
         facts=[fact for fact in source['facts'] if fact.get('kind') in allowed_kinds]
@@ -248,6 +247,9 @@ def build_review(analysis):
         units=[]
         selected_fact_ids=set()
         selected_relations={}
+        context_only_seeds=[]
+        context_only_fact_ids=set()
+        context_only_relation_ids=set()
         for symbol in change_seeds:
             touching=[relation for relation in relations
                       if relation.get('source')==symbol or symbol in (relation.get('targets') or [])]
@@ -261,6 +263,15 @@ def build_review(analysis):
             unit_facts=[fact for fact in facts if symbols_by_fact[fact['id']] & local_symbols]
             direct_facts=[fact for fact in unit_facts if symbol in symbols_by_fact[fact['id']]]
             context_facts=[fact for fact in unit_facts if fact not in direct_facts]
+            # 类结构变化会让未修改的方法成为复核种子，但它们可能只有
+            # branch/field_source 等背景事实。没有主变化事实就不能构造
+            # unit_assertions；将这些方法作为项目级主变化的上下文保留。
+            if not any(is_direct_primary_change_fact(fact) for fact in direct_facts):
+                context_only_seeds.append(symbol)
+                context_only_fact_ids.update(fact['id'] for fact in unit_facts)
+                context_only_relation_ids.update(
+                    relation['id'] for relation in touching if relation.get('id'))
+                continue
             unit_fact_ids=sorted(fact['id'] for fact in unit_facts)
             selected_fact_ids.update(unit_fact_ids)
             units.append(dict(
@@ -278,28 +289,41 @@ def build_review(analysis):
                 relation_ids=sorted(relation['id'] for relation in touching if relation.get('id'))))
 
         project_facts=[fact for fact in facts
-                       if fact.get('kind') in primary_kinds
+                       if is_direct_primary_change_fact(fact)
                        and (not symbols_by_fact[fact['id']] or
                             (fact.get('kind')=='mapper_statement_change' and
-                             fact['id'] not in selected_fact_ids))
-                       and not (fact.get('kind')=='configuration' and
-                                (fact.get('data') or {}).get('change')=='retained_or_consumers_changed')]
+                             fact['id'] not in selected_fact_ids))]
+        # 项目同时可能含不相关的配置/SQL 改动；不能随意把背景方法
+        # 挂到任意 project 事实。只允许归属到同类 owner 的类结构变化。
+        structural_owners={fact.get('data',{}).get('owner') for fact in project_facts
+                           if fact.get('kind')=='class_binding_change'}
+        unanchored=[symbol for symbol in context_only_seeds
+                    if symbol.split('#',1)[0] not in structural_owners]
+        if unanchored:
+            raise ValueError('复核种子缺少可归属的主变化事实，不能生成无主事实 unit: '+
+                             source['name']+' '+','.join(unanchored))
         if project_facts:
             project_unit_fact_ids=sorted(fact['id'] for fact in project_facts)
+            context_ids=sorted(context_only_fact_ids-set(project_unit_fact_ids))
+            project_unit_facts=[facts_by_id[fid] for fid in
+                                sorted(set(project_unit_fact_ids)|set(context_ids))]
+            context_facts=[facts_by_id[fid] for fid in context_ids]
             units.append(dict(
                 id='RU-'+stable(source['name'],'project',project_unit_fact_ids)[:12],
                 scope='project',
                 symbol=None,
-                related_symbols=[],
+                related_symbols=sorted(context_only_seeds),
+                context_seed_symbols=sorted(context_only_seeds),
                 change_summary=summarize_facts(project_facts),
                 direct_fact_ids=project_unit_fact_ids,
-                context_fact_ids=[],
+                context_fact_ids=context_ids,
                 direct_fact_groups=fact_group_summary(project_facts),
-                context_fact_groups={},
-                fact_groups=fact_group_summary(project_facts),
-                fact_ids=project_unit_fact_ids,
-                relation_ids=[]))
+                context_fact_groups=fact_group_summary(context_facts),
+                fact_groups=fact_group_summary(project_unit_facts),
+                fact_ids=sorted(set(project_unit_fact_ids)|set(context_ids)),
+                relation_ids=sorted(context_only_relation_ids)))
             selected_fact_ids.update(project_unit_fact_ids)
+            selected_fact_ids.update(context_ids)
 
         fact_catalog=[fact_preview(facts_by_id[identifier]) for identifier in sorted(selected_fact_ids)]
         selected_relation_ids.update(selected_relations)
@@ -313,6 +337,7 @@ def build_review(analysis):
             name=source['name'],
             review_summary=dict(
                 change_seed_count=len(change_seeds),
+                context_only_seed_count=len(context_only_seeds),
                 review_unit_count=len(units),
                 review_facet_count=len(facets),
                 navigation_facet_count=len(navigation_facets),

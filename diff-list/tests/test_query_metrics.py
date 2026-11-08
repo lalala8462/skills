@@ -177,6 +177,34 @@ class QueryMetricsTest(unittest.TestCase):
             self.assertEqual(status,2)
             self.assertIn('cursor',error.getvalue())
 
+    def test_invalid_commit_summary_counts_and_implicit_view_fallback_are_rejected(self):
+        with tempfile.TemporaryDirectory() as td:
+            _,analysis,review,_=self._fixture(td)
+            data=json.loads(analysis.read_text(encoding='utf-8'))
+            data['projects'][0]['git']={'commit_review':dict(
+                commits=[dict(sha='a'*40)],repeated_files=[],
+                omitted_commits=0,textual_reverse_candidate_count=0)}
+            base=['--analysis',str(analysis),'--review',str(review),
+                  '--overview','--view','commits']
+            for field,value in (('omitted_commits',-1),('omitted_commits','5'),
+                                ('omitted_commits',True),
+                                ('textual_reverse_candidate_count','invalid')):
+                with self.subTest(field=field,value=value):
+                    review_data=data['projects'][0]['git']['commit_review']
+                    review_data[field]=value
+                    analysis.write_text(json.dumps(data),encoding='utf-8')
+                    with contextlib.redirect_stdout(io.StringIO()),contextlib.redirect_stderr(io.StringIO()) as err:
+                        status=review_query.main(base)
+                    self.assertEqual(status,2)
+                    self.assertIn(field+' 必须为非负整数',err.getvalue())
+                    review_data[field]=0
+            analysis.write_text(json.dumps(data),encoding='utf-8')
+            args=SimpleNamespace(fact=None,evidence=None,audit=False,overview=False,
+                                 query='anything',unit=None,view='commits',matched_only=False)
+            with self.assertRaisesRegex(ValueError,'查询范围不支持 --view commits'):
+                review_query._render_request(args,json.loads(analysis.read_text(encoding='utf-8')),
+                                             json.loads(review.read_text(encoding='utf-8')),[])
+
     def test_missing_commit_history_is_not_silently_treated_as_empty(self):
         with tempfile.TemporaryDirectory() as td:
             _,analysis,review,_=self._fixture(td)

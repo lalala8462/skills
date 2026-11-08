@@ -458,6 +458,69 @@ class Flow { Store store; void process(){ store.list("old"); } }
                          {fact['id'] for fact in facts})
         self.assertNotIn('relation_catalog',compact)
 
+    def test_structure_only_method_seeds_are_kept_as_project_context(self):
+        from analysis_engine import VERSION
+        from review_workbench import build_review
+        from review_query import audit_material
+        symbol='p.Flow#run()'
+        facts=[
+            dict(id='class-change',kind='class_binding_change',
+                 classification='source_fact',data=dict(owner='p.Flow',before={'extends':'p.A'},
+                                                        after={'extends':'p.B'}),evidence_ids=[]),
+            dict(id='support-branch',kind='branch',classification='source_fact',
+                 data=dict(symbol=symbol,condition='ready'),evidence_ids=[])
+        ]
+        relations=[dict(id='relation-1',source=symbol,targets=[],status='unresolved',
+                        reason='unbound',evidence_ids=[])]
+        analysis=dict(schema_version=2,analyzer_version=VERSION,analysis_id='structure-only',
+                      projects=[dict(name='sample',change_seeds=[symbol],facts=facts,
+                                     relations=relations,hard_errors=[],stats={})],
+                      cross_project_relations=[])
+        compact=build_review(analysis)
+        project=compact['projects'][0]
+        self.assertEqual(len(project['review_units']),1)
+        self.assertEqual(project['review_summary']['context_only_seed_count'],1)
+        unit=project['review_units'][0]
+        self.assertEqual(unit['scope'],'project')
+        self.assertEqual(unit['direct_fact_ids'],['class-change'])
+        self.assertEqual(unit['context_fact_ids'],['support-branch'])
+        self.assertEqual(unit['context_seed_symbols'],[symbol])
+        self.assertEqual(unit['relation_ids'],['relation-1'])
+        self.assertEqual({fact['id'] for fact in project['fact_catalog']},
+                         {'class-change','support-branch'})
+        self.assertEqual(audit_material(analysis,compact,[])['counts']['missing_seeds'],0)
+        self.assertEqual(audit_material(analysis,compact,[])['counts']['unindexed_facts'],0)
+        # 项目级主事实允许正常建立用例关联，不会永久卡在 pending_review。
+        from case_contract import PURPOSES, coverage_matrix
+        cases=dict(schema_version=5,analysis_id='structure-only',
+                   purpose_cases={purpose:[] for purpose in PURPOSES})
+        cases['purpose_cases']['acceptance'].append(dict(
+            case_id='A-1',title='验证结构变化',preconditions='准备相关实例',
+            steps=['执行对应调用'],expected=['检查调用结果'],
+            observable_evidence=[dict(surface='接口',target='调用结果',assertion='收到指定响应')],
+            review_unit_ids=[unit['id']],unit_assertions=[dict(
+                unit_id=unit['id'],direct_fact_ids=['class-change'],observation_indexes=[0])]))
+        self.assertEqual(coverage_matrix(cases,analysis,compact)['summary']['pending_review_count'],0)
+
+    def test_unanchored_structure_only_seed_fails_instead_of_disappearing(self):
+        from analysis_engine import VERSION
+        from review_workbench import build_review
+        symbol='p.Flow#run()'
+        analysis=dict(schema_version=2,analyzer_version=VERSION,analysis_id='missing-primary',
+                      projects=[dict(name='sample',change_seeds=[symbol],facts=[
+                          dict(id='only-branch',kind='branch',classification='source_fact',
+                               data=dict(symbol=symbol,condition='ready'),evidence_ids=[])],
+                          relations=[],hard_errors=[],stats={})],cross_project_relations=[])
+        with self.assertRaisesRegex(ValueError,'缺少可归属的主变化事实'):
+            build_review(analysis)
+        # 即使存在另一条配置主变化，也不能把它误当该方法的类结构依据。
+        analysis['projects'][0]['facts'].append(dict(
+            id='unrelated-config',kind='configuration_file_change',
+            classification='source_fact',data=dict(path='application.yml',change='modified'),
+            evidence_ids=[]))
+        with self.assertRaisesRegex(ValueError,'缺少可归属的主变化事实'):
+            build_review(analysis)
+
     def test_nonpayment_review_does_not_infer_business_and_ignores_retained_config_as_project_change(self):
         from analysis_engine import VERSION
         from review_workbench import build_review
@@ -898,6 +961,27 @@ class Task implements Runnable{@Override public void run(){System.out.println("p
         callbacks=[e for e in graph.edges if e['reason']=='constructed_object_passed_to_call_not_runtime_dispatch']
         self.assertEqual(len(callbacks),2)
         self.assertTrue(all(e['status']=='convention_inferred' for e in callbacks))
+
+    def test_real_class_inheritance_change_keeps_unchanged_method_as_context(self):
+        from analysis_engine import VERSION
+        from review_workbench import build_review
+        before='package p; class BaseA {} class BaseB {} class Flow extends BaseA { void run(){int value=1;} }'
+        after=before.replace('extends BaseA','extends BaseB')
+        engine=ProjectAnalysis('sample','unused',self.graph({'flow':before}).index,
+                               self.graph({'flow':after}).index,COMMON_RULES,DEFAULT_LIMITS)
+        project,_=engine.run()
+        self.assertTrue(any(fact['kind']=='class_binding_change' for fact in project['facts']))
+        self.assertFalse(any(fact['kind']=='method_change' for fact in project['facts']))
+        analysis=dict(schema_version=2,analyzer_version=VERSION,analysis_id='class-only',
+                      projects=[project],cross_project_relations=[])
+        review=build_review(analysis)
+        units=review['projects'][0]['review_units']
+        self.assertEqual(len(units),1)
+        self.assertEqual(units[0]['scope'],'project')
+        self.assertTrue(any(symbol.endswith('Flow#run()')
+                            for symbol in units[0]['context_seed_symbols']))
+        self.assertTrue(all(fact['kind']=='class_binding_change'
+                            for fact in project['facts'] if fact['id'] in units[0]['direct_fact_ids']))
 
     def test_return_assignment_sites_record_structure_without_risk_verdict(self):
         before='package p; class Flow { int run(boolean flag){int value=1; return value;} }'

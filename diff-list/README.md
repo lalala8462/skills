@@ -26,9 +26,11 @@
 ~~~
 
 1. **首次运行** `run_delivery.py`：生成事实底账、复核索引和报告草稿，随后停在 `waiting_agent`。
-2. **Agent 复核**：用 `review_query.py --overview`、`--audit` 掌握全局，通过 `--overview --view commits` 按需分页阅读提交说明，再按 unit / fact / evidence 回查固定快照中的 before/after 源码；据此编辑 `.work/test-cases.json`、`.work/report.md` 和 `.work/review-receipts.json`（六个业务章节、既有功能影响及直接未解析关系的处理回执）。
-3. **恢复交付** `--resume`：依次执行格式及回执身份预检、用例引用复核、Excel 导出、报告机器章节刷新与证据身份校验。若 `coverage.pending_review` 未清零，会进入 `waiting_coverage_review`，补充 `unit_assertions` 的主事实和断言关联或新增用例后再次 resume。
+2. **Agent 复核**：先用 `review_query.py --overview`、`--audit` 查看全局单元与异常；提交说明另用 `--overview --view commits --limit 10` 按需分页读取，**该子视图不包含全局统计与回执状态**，且单条提交正文可能较长。随后按 unit / fact / evidence 回查源码，编辑 `.work/test-cases.json`、`.work/report.md` 和 `.work/review-receipts.json`。用例的 `unit_assertions` **必填**：为每个 `review_unit_id` 显式绑定该单元的主事实 `direct_fact_ids` 和 `observable_evidence` 数组下标（详见[使用指南](docs/usage-guide.md#5-用例与报告硬约束)）。
+3. **恢复交付** `--resume`：依次执行格式及回执身份预检、用例引用复核、Excel 导出、报告机器章节刷新与证据身份校验。若 `coverage.pending_review` 未清零，会进入 `waiting_coverage_review`，补充 `unit_assertions` 的主事实和断言关联或新增用例后再次 resume；**手工调用 `delivery_preflight.py` 必须指定 `--receipts .work/review-receipts.json`**。本次运行契约升级为 v7，旧运行目录不能直接 `--resume`，需重新执行首次分析以重建 review unit。
 4. **最终交付**：运行目录根部只发布 `report.md`、`test-cases.xlsx`、`coverage.json`；`.work/` 保留完整事实底账与运行状态，成功后自动清理隔离 clone。
+
+只修改类继承、注解等结构而方法体不变时，相关方法保留为项目级主变化的上下文，不强制为缺少主事实的方法单独生成测试单元；无法归属的变化会明确报错。
 
 脚本提供静态事实、具有明确依据的有限候选推导和未解析边界，并负责结构与身份校验；业务语义、既有功能影响与测试设计由 Agent 判断。`navigation_facets` 只用于阅读排序、`coverage.pending_review` 只表示复核单元尚未形成显式用例—主事实—断言关联，都不构成业务覆盖结论。
 
