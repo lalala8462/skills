@@ -26,7 +26,7 @@
 ~~~
 
 1. **首次运行** `run_delivery.py`：生成事实底账、复核索引和报告草稿，随后停在 `waiting_agent`。
-2. **Agent 复核**：用 `review_query.py --overview`、`--audit` 掌握全局，再按 unit / fact / evidence 回查固定快照中的 before/after 源码；据此编辑 `.work/test-cases.json`、`.work/report.md` 和 `.work/review-receipts.json`（六个业务章节、既有功能影响及直接未解析关系的处理回执）。
+2. **Agent 复核**：用 `review_query.py --overview`、`--audit` 掌握全局，通过 `--overview --view commits` 按需分页阅读提交说明，再按 unit / fact / evidence 回查固定快照中的 before/after 源码；据此编辑 `.work/test-cases.json`、`.work/report.md` 和 `.work/review-receipts.json`（六个业务章节、既有功能影响及直接未解析关系的处理回执）。
 3. **恢复交付** `--resume`：依次执行格式及回执身份预检、用例引用复核、Excel 导出、报告机器章节刷新与证据身份校验。若 `coverage.pending_review` 未清零，会进入 `waiting_coverage_review`，补充 `unit_assertions` 的主事实和断言关联或新增用例后再次 resume。
 4. **最终交付**：运行目录根部只发布 `report.md`、`test-cases.xlsx`、`coverage.json`；`.work/` 保留完整事实底账与运行状态，成功后自动清理隔离 clone。
 
