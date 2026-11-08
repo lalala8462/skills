@@ -43,8 +43,8 @@ class DocsContractTest(unittest.TestCase):
                     self.assertIn(requirement,document)
 
     def test_nonsemantic_script_boundary_is_documented(self):
-        self.assertIn('脚本不做业务语义判断',self.readme)
-        self.assertIn('不通过类名、方法名、路径或自然语言',self.readme)
+        self.assertIn('脚本不判断业务含义、业务风险和测试是否充分',self.readme)
+        self.assertIn('基于 Java 语言规则、AST、框架约定及明确 API 契约',self.readme)
         self.assertIn('reading_order_heuristic',self.readme)
         self.assertIn('脚本非语义原则',self.contract)
 
@@ -53,6 +53,12 @@ class DocsContractTest(unittest.TestCase):
             self.assertIn('review-receipts.json',doc)
         self.assertIn('audit_scope_tiers',self.guide)
         self.assertIn('audit_scope_tiers',self.contract)
+
+    def test_commit_review_pagination_is_documented(self):
+        self.assertIn('commits',review_query.VIEW_CHOICES)
+        for document in (self.guide,self.contract,self.skill,self.readme):
+            self.assertIn('--view commits',document)
+        self.assertIn('commit_review_summaries',self.contract)
 
     def test_navigation_and_coverage_are_not_business_scope_filters(self):
         self.assertIn('不得据此裁剪复核范围',self.contract)
