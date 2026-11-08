@@ -386,15 +386,16 @@ class Flow { Store store; void process(){ store.list("old"); } }
             self.assertEqual(project['snapshots']['result'],git(self.source,'rev-parse',self.after+'^{tree}'))
 
     def direct_cases(self,fact=None):
-        from case_contract import PURPOSES
+        from case_contract import PURPOSES, is_direct_primary_change_fact
         from review_workbench import build_review
         groups={purpose:[] for purpose in PURPOSES}
         if fact is None:
             fact=next(f for f in self.analysis['projects'][0]['facts']
                       if f['kind']=='method_change' and f['evidence_ids'])
         review=build_review(self.analysis)
+        self.assertTrue(is_direct_primary_change_fact(fact))
         unit=next(unit for project in review['projects'] for unit in project['review_units']
-                  if fact['id'] in unit['fact_ids'])
+                  if fact['id'] in unit['direct_fact_ids'])
         groups['acceptance'].append(dict(
             case_id='DIRECT-001',
             title='验证本次方法行为变化',
@@ -403,8 +404,10 @@ class Flow { Store store; void process(){ store.list("old"); } }
             expected=['本次修改后的行为生效，且相关业务结果可观察'],
             observable_evidence=[dict(surface='接口',target='业务响应',
                                       assertion='响应字段与本次修改后的源码行为一致')],
-            review_unit_ids=[unit['id']]))
-        return dict(schema_version=4,analysis_id=self.analysis['analysis_id'],purpose_cases=groups),review
+            review_unit_ids=[unit['id']],
+            unit_assertions=[dict(unit_id=unit['id'],direct_fact_ids=[fact['id']],
+                                  observation_indexes=[0])]))
+        return dict(schema_version=5,analysis_id=self.analysis['analysis_id'],purpose_cases=groups),review
 
     def test_direct_cases_expand_review_unit_source_evidence(self):
         from case_contract import resolve_case_sources
@@ -476,8 +479,13 @@ class Flow { Store store; void process(){ store.list("old"); } }
                       projects=[dict(name='sample',change_seeds=[symbol],facts=facts,
                                      relations=relations,hard_errors=[],stats={})],
                       cross_project_relations=[])
+        # 健壮性：未带 analyze 聚合阶段诊断字段时，也能正常生成 review。
+        del analysis['projects'][0]['hard_errors']
+        del analysis['projects'][0]['stats']
         compact=build_review(analysis)
         project=compact['projects'][0]
+        self.assertEqual(project['hard_errors'],[])
+        self.assertEqual(project['stats'],{})
         self.assertEqual(len(project['review_units']),1)
         self.assertEqual(project['review_summary']['context_only_seed_count'],1)
         unit=project['review_units'][0]
@@ -520,6 +528,98 @@ class Flow { Store store; void process(){ store.list("old"); } }
             evidence_ids=[]))
         with self.assertRaisesRegex(ValueError,'缺少可归属的主变化事实'):
             build_review(analysis)
+
+    def test_many_unanchored_seeds_have_bounded_error_message(self):
+        from analysis_engine import VERSION
+        from review_workbench import build_review
+        symbols=['p.Flow#method{}()'.format(i) for i in range(9)]
+        analysis=dict(schema_version=2,analyzer_version=VERSION,
+                      analysis_id='unanchored-many',projects=[dict(
+                          name='sample',change_seeds=symbols,facts=[],relations=[],
+                          hard_errors=[],stats={})],cross_project_relations=[])
+        with self.assertRaisesRegex(ValueError,'共 9 项') as caught:
+            build_review(analysis)
+        self.assertIn('其余 4 项见 analysis.json',str(caught.exception))
+        self.assertNotIn('p.Flow#method8()',str(caught.exception))
+
+    def test_class_binding_linked_to_other_method_still_anchors_context(self):
+        from analysis_engine import VERSION
+        from review_workbench import build_review
+        from review_query import audit_material
+        current='p.Flow#run()'
+        other='p.Flow#helper()'
+        analysis=dict(schema_version=2,analyzer_version=VERSION,
+            analysis_id='linked-class-change',projects=[dict(
+                name='sample',change_seeds=[current],facts=[
+                    dict(id='F-class',kind='class_binding_change',classification='source_fact',
+                         data=dict(owner='p.Flow',linked_symbols=[other]),evidence_ids=[]),
+                    dict(id='F-branch',kind='branch',classification='source_fact',
+                         data=dict(symbol=current,condition='value != null'),evidence_ids=[])],
+                relations=[],hard_errors=[],stats={})],cross_project_relations=[])
+        review=build_review(analysis)
+        unit=review['projects'][0]['review_units'][0]
+        self.assertEqual(unit['scope'],'project')
+        self.assertEqual(unit['direct_fact_ids'],['F-class'])
+        self.assertEqual(unit['context_fact_ids'],['F-branch'])
+        self.assertEqual(unit['context_seed_symbols'],[current])
+        self.assertEqual(audit_material(analysis,review,[])['counts']['missing_seeds'],0)
+        self.assertEqual(audit_material(analysis,review,[])['counts']['unassigned_primary_facts'],0)
+
+    def test_class_binding_primary_fact_is_not_duplicated_across_units(self):
+        from analysis_engine import VERSION
+        from review_workbench import build_review
+        from review_query import audit_material
+        changed='p.Flow#changed()'
+        another='p.Flow#another()'
+        context='p.Flow#unchanged()'
+        facts=[
+            dict(id='F-class',kind='class_binding_change',classification='source_fact',
+                 data=dict(owner='p.Flow',linked_symbols=[changed,another,context]),
+                 evidence_ids=[]),
+            dict(id='F-method-1',kind='method_change',classification='source_fact',
+                 data=dict(symbol=changed,change='modified'),evidence_ids=[]),
+            dict(id='F-method-2',kind='method_change',classification='source_fact',
+                 data=dict(symbol=another,change='modified'),evidence_ids=[]),
+            dict(id='F-branch',kind='branch',classification='source_fact',
+                 data=dict(symbol=context,condition='flag'),evidence_ids=[])]
+        analysis=dict(schema_version=2,analyzer_version=VERSION,analysis_id='class-owner',
+                      projects=[dict(name='sample',change_seeds=[changed,another,context],
+                                     facts=facts,relations=[],hard_errors=[],stats={})],
+                      cross_project_relations=[])
+        review=build_review(analysis)
+        units=review['projects'][0]['review_units']
+        self.assertEqual(len(units),3)
+        project=next(unit for unit in units if unit['scope']=='project')
+        methods=[unit for unit in units if unit['scope']=='method']
+        self.assertEqual(project['direct_fact_ids'],['F-class'])
+        self.assertEqual(project['context_fact_ids'],['F-branch'])
+        self.assertEqual(project['context_seed_symbols'],[context])
+        self.assertTrue(all('F-class' in unit['context_fact_ids'] for unit in methods))
+        self.assertTrue(all('F-class' not in unit['direct_fact_ids'] for unit in methods))
+        self.assertEqual(sum('F-class' in unit['direct_fact_ids'] for unit in units),1)
+        self.assertEqual(review['projects'][0]['review_summary']['context_only_seed_count'],1)
+        audit=audit_material(analysis,review,[])
+        self.assertEqual(audit['counts']['missing_seeds'],0)
+        self.assertEqual(audit['counts']['unassigned_primary_facts'],0)
+
+    def test_project_primary_fact_summaries_preserve_input_order(self):
+        from analysis_engine import VERSION
+        from review_workbench import build_review
+        facts=[
+            dict(id='z-configuration',kind='configuration_file_change',
+                 classification='source_fact',data=dict(path='config.yml',change='modified'),
+                 evidence_ids=[]),
+            dict(id='a-class',kind='class_binding_change',
+                 classification='source_fact',data=dict(owner='p.Flow'),evidence_ids=[])]
+        analysis=dict(schema_version=2,analyzer_version=VERSION,analysis_id='fact-order',
+                      projects=[dict(name='sample',change_seeds=[],facts=facts,
+                                     relations=[],hard_errors=[],stats={})],
+                      cross_project_relations=[])
+        review=build_review(analysis)
+        project=review['projects'][0]['review_units'][0]
+        self.assertEqual(project['direct_fact_ids'],['a-class','z-configuration'])
+        self.assertEqual([row['fact_id'] for row in project['change_summary']],
+                         ['z-configuration','a-class'])
 
     def test_nonpayment_review_does_not_infer_business_and_ignores_retained_config_as_project_change(self):
         from analysis_engine import VERSION
@@ -970,6 +1070,10 @@ class Task implements Runnable{@Override public void run(){System.out.println("p
         engine=ProjectAnalysis('sample','unused',self.graph({'flow':before}).index,
                                self.graph({'flow':after}).index,COMMON_RULES,DEFAULT_LIMITS)
         project,_=engine.run()
+        # ProjectAnalysis.run 返回原始项目事实；build_review 对完整分析项目
+        # 使用的 hard_errors/stats 由 analyze 汇总阶段补齐。
+        project.setdefault('hard_errors',[])
+        project.setdefault('stats',{})
         self.assertTrue(any(fact['kind']=='class_binding_change' for fact in project['facts']))
         self.assertFalse(any(fact['kind']=='method_change' for fact in project['facts']))
         analysis=dict(schema_version=2,analyzer_version=VERSION,analysis_id='class-only',

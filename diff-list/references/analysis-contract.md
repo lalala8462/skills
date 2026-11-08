@@ -27,9 +27,9 @@ relations 记录直接变化相关的解析关系及需要人工复核的未解�
 
 ## review.json
 
-当前 review_schema_version=4。
+当前 review_schema_version=5（增加 `context_seed_symbols` 与 `review_summary.context_only_seed_count` 的结构化语义，旧 review v4 不兼容）。
 
-- review_units：变化方法或项目级变化的最小复核单元；每个 unit 必须包含真实主变化事实。因类继承/注解变化而扩展的未修改方法仅在存在**同 owner 的 `class_binding_change`** 时作为项目级主变化的 `context_seed_symbols`、`context_fact_ids` 保存，`review_summary.context_only_seed_count` 记录数量；不生成缺少主事实的独立 method unit。没有可核验归属的变化种子明确报错，不擅自关联到其它配置/SQL 变化。
+- review_units：变化方法或项目级变化的最小复核单元；每个 unit 必须包含真实主变化事实。**`class_binding_change` 由项目级 unit 唯一持有 `direct_fact_ids`**；即使关联多个方法，方法级 unit 只能通过 `context_fact_ids` 阅读该事实，不能重复声明为主变化。因类继承/注解变化而扩展的未修改方法，仅在存在**同 owner 的 `class_binding_change`** 时登记到项目级 `context_seed_symbols` 与 `context_fact_ids`，`review_summary.context_only_seed_count` 记录数量。依据取自全量 class-binding 主事实，不能随意挂接到其它配置/SQL 变化。无法归属的种子报错时最多展示前五项及剩余数量，完整种子列表仍保留在 `analysis.json`。
 - review_facets：按精确结构锚点形成的完整关系索引；
 - navigation_facets：review_facets 的高价值阅读排序子集；
 - fact_catalog：本轮复核相关 fact 预览；完整关系通过原始 analysis.json 或 `--view relations` 查看。
@@ -53,7 +53,7 @@ Agent 可以直接调用此脚本，不需要 MCP 服务或持久化查询缓存
 - `--view facts/relations/evidence/db/conditions`：仅显式展开所选类别，分类不代表全部业务影响；
 - `--fact`：完整事实及相关 evidence ID；
 - `--evidence --source-lines N`：校验固定 tree/blob 后返回脱敏源码上下文；
-- `--audit`：原始分析事实相对于 review 的归属差异、unresolved、hard_errors、证据缺失及分析边界；
+- `--audit`：原始分析事实相对于 review 的归属差异、unresolved、hard_errors、证据缺失及分析边界；`missing_seeds` 统计既未被独立 method unit 索引、也未通过项目级 `context_seed_symbols` 登记的变化方法种子。登记为上下文不代表该方法单独发生了净变化；
 - `--audit --view <类别>`：按类别分页读取审计问题明细。
 
 分页字段为 `page.total`、`page.returned`、`page.offset`、`page.complete`、`page.next_cursor`。游标绑定固定分析身份、视图、排序内容和页起点 offset；改动页起点、跨视图复用或数据变化均应拒绝。
@@ -115,7 +115,7 @@ pending_review 表示尚无符合 `unit_assertions` 契约的显式主事实—�
 
 ## run-state.json 与查询计量
 
-当前 `run_schema_version=7`，只支持本版状态结构；回执文件与测试用例 `schema_version=5` 均为必需，旧 run 不可直接混用。CLI 的 `AGENT_PHASES` 是 `source_review`、`analysis_authoring`、`rework`；在 `run-state.json.stages` 中存储键名增加 `agent_` 前缀：
+当前 `run_schema_version=8`，只支持本版状态结构（Review v5，旧 run-state v7 在入口 `_read_state` 即被拒绝并提示重新执行首次分析）；回执文件与测试用例 `schema_version=5` 均为必需，旧 run 不可直接混用。CLI 的 `AGENT_PHASES` 是 `source_review`、`analysis_authoring`、`rework`；在 `run-state.json.stages` 中存储键名增加 `agent_` 前缀：
 
 - `agent_source_review`：源码查证；
 - `agent_analysis_authoring`：综合业务分析、用例设计、报告编写；

@@ -33,7 +33,7 @@ class QueryMetricsTest(unittest.TestCase):
             cross_project_relations=[],context_file='context.jsonl'
         )),encoding='utf-8')
         review.write_text(json.dumps(dict(
-            review_schema_version=4,analysis_id='analysis-fixture',
+            review_schema_version=5,analysis_id='analysis-fixture',
             projects=[dict(name='sample',review_units=[dict(
                 id='RU-1',scope='method',symbol='demo.Service#pay()',
                 fact_ids=[],relation_ids=[],facet_ids=[],change_summary=[])],

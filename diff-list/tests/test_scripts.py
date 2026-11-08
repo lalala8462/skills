@@ -20,7 +20,7 @@ def fixture_analysis():
 
 
 def fixture_review():
-    return dict(analysis_id='fixture-analysis',review_schema_version=4,projects=[dict(
+    return dict(analysis_id='fixture-analysis',review_schema_version=5,projects=[dict(
         name='sample',
         fact_catalog=[dict(id='fact-1',kind='method_change',evidence_ids=['evidence-1'])],
         review_units=[dict(id='RU-1',scope='method',symbol='sample.Flow#run()',
@@ -99,7 +99,7 @@ class DiffListTest(unittest.TestCase):
                 '--cases-template',str(cases_path),
                 '--receipts-template',str(receipts_path)]),0)
             self.assertTrue(review_path.is_file())
-            self.assertEqual(json.loads(review_path.read_text(encoding='utf-8'))['review_schema_version'],4)
+            self.assertEqual(json.loads(review_path.read_text(encoding='utf-8'))['review_schema_version'],5)
             self.assertEqual(json.loads(cases_path.read_text(encoding='utf-8'))['analysis_id'],'analysis-1')
             receipts=json.loads(receipts_path.read_text(encoding='utf-8'))
             self.assertEqual(receipts['schema_version'],1)

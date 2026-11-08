@@ -152,6 +152,21 @@ class DeliveryFlowTest(unittest.TestCase):
                 delivery._switch_agent_phase(str(run),'source_review')
             self.assertEqual(delivery._switch_agent_phase(str(run),'analysis_authoring'),0)
 
+    def test_old_run_v7_is_rejected_before_any_resume_stage(self):
+        self.assertEqual(delivery.RUN_SCHEMA_VERSION,8)
+        with tempfile.TemporaryDirectory() as td:
+            run=Path(td)/'run';work=run/'.work';work.mkdir(parents=True)
+            state_path=work/'run-state.json'
+            state=dict(run_schema_version=7,run_dir=str(run.resolve()),
+                       status='waiting_agent',stages={})
+            state_path.write_text(json.dumps(state),encoding='utf-8')
+            with mock.patch.object(delivery,'_run_stage') as stage:
+                with self.assertRaisesRegex(ValueError,'schema 版本不匹配；请重新执行'):
+                    delivery._resume(str(run))
+                stage.assert_not_called()
+            # 旧运行不能在入口被悄悄改成当前版本。
+            self.assertEqual(json.loads(state_path.read_text(encoding='utf-8'))['run_schema_version'],7)
+
     def test_manual_preflight_requires_receipts_and_report_errors_stay_report_errors(self):
         with contextlib.redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit) as cm:
@@ -164,7 +179,7 @@ class DeliveryFlowTest(unittest.TestCase):
                        cases=root/'cases.json',report=root/'report.md',template=root/'template.md',
                        receipts=root/'review-receipts.json')
             files['analysis'].write_text(json.dumps(dict(analysis_id='a',projects=[])),encoding='utf-8')
-            files['review'].write_text(json.dumps(dict(analysis_id='a',review_schema_version=4,
+            files['review'].write_text(json.dumps(dict(analysis_id='a',review_schema_version=5,
                                                        projects=[])),encoding='utf-8')
             files['cases'].write_text(json.dumps(dict(schema_version=5,analysis_id='a',
                 purpose_cases=dict(acceptance=[],core_regression=[],related_regression=[],boundary=[]))),
@@ -207,7 +222,7 @@ class DeliveryFlowTest(unittest.TestCase):
             'cross_project_relations':[]
         }
         review={
-            'review_schema_version':4,
+            'review_schema_version':5,
             'analysis_id':'fixture-analysis',
             'projects':[{
                 'name':'sample',
@@ -289,7 +304,7 @@ class DeliveryFlowTest(unittest.TestCase):
                          evidence_ids=['E-1'],reason='unknown_receiver')],
                 hard_errors=['changed evidence limit exceeded'])],
             cross_project_relations=[])
-        review=dict(review_schema_version=4,analysis_id='a1',
+        review=dict(review_schema_version=5,analysis_id='a1',
             projects=[dict(name='sample',review_units=[dict(
                 id='RU-1',scope='method',symbol='sample.Service#changed()',
                 fact_ids=['F-1'],relation_ids=['R-1'],facet_ids=[])],
@@ -332,7 +347,7 @@ class DeliveryFlowTest(unittest.TestCase):
                          targets=[],status='unresolved',reason='unknown',
                          evidence_ids=['E-1'])],hard_errors=[])],
             cross_project_relations=[])
-        review=dict(review_schema_version=4,analysis_id='a1',
+        review=dict(review_schema_version=5,analysis_id='a1',
             projects=[dict(name='sample',review_units=[],review_facets=[],
                            navigation_facets=[])])
         context=[dict(id='E-1',project='sample',snippet='configuration')]
@@ -360,7 +375,7 @@ class DeliveryFlowTest(unittest.TestCase):
                 relations=[dict(id='R-context',status='unresolved',
                     source='sample.Other#read()',targets=[],evidence_ids=['E-1'])],
                 hard_errors=[])],cross_project_relations=[])
-        review=dict(review_schema_version=4,analysis_id='a2',
+        review=dict(review_schema_version=5,analysis_id='a2',
             projects=[dict(name='sample',review_units=[],review_facets=[],
                            navigation_facets=[])])
         context=[dict(id='E-1',project='sample',snippet='existing read')]
@@ -373,7 +388,7 @@ class DeliveryFlowTest(unittest.TestCase):
         analysis=dict(schema_version=2,analyzer_version=VERSION,analysis_id='a1',
             projects=[dict(name='sample',facts=[],relations=[],change_seeds=[])],
             cross_project_relations=[])
-        review=dict(review_schema_version=4,analysis_id='a1',
+        review=dict(review_schema_version=5,analysis_id='a1',
             projects=[dict(name='sample',review_facets=[],navigation_facets=[],
                            review_units=[dict(id='RU-1',scope='method',
                            symbol='sample.Service#run()',fact_ids=['F-missing'],

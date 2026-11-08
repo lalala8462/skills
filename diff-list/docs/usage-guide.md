@@ -77,7 +77,7 @@ Agent 完成复核并填写 `.work/test-cases.json`、`.work/report.md` 后：
 py -3 .\scripts\run_delivery.py --resume "<run>"
 ~~~
 
-交付链：`preflight → coverage`，preflight **强制要求** `--receipts`；类继承、注解等结构变化若仅使未修改的方法成为复核种子，这些方法作为项目级主变化的上下文登记，不制造无法填写 `unit_assertions` 的独立 method unit；若 `pending_review > 0` 则进入 `waiting_coverage_review`；核对 `.work/coverage.json` 中的 `candidate_case_ids`、相关主事实与可观察断言，补充真实的 `unit_assertions` 或测试后再次 resume。没有待复核单元则依次 `excel → report → finalize`。成功时清理本次建立的分析 clone。
+交付链：`preflight → coverage`，preflight **强制要求** `--receipts`；类继承、注解等结构变化若仅使未修改的方法成为复核种子，这些方法作为项目级主变化的上下文登记，不制造无法填写 `unit_assertions` 的独立 method unit；类结构变化主事实由项目级 unit 唯一直接持有，方法级 unit 只能作为上下文引用；若 `pending_review > 0` 则进入 `waiting_coverage_review`；核对 `.work/coverage.json` 中的 `candidate_case_ids`、相关主事实与可观察断言，补充真实的 `unit_assertions` 或测试后再次 resume。没有待复核单元则依次 `excel → report → finalize`。成功时清理本次建立的分析 clone。
 
 **设计约束**：脚本不猜业务用途或风险，直接相关的 `unresolved` 关系不按名称过滤；YAML 解析失败保留解析边界，不根据路径猜测是否运行配置。普通关键词搜索只用于定位材料，不用于判断结论。
 
@@ -113,7 +113,7 @@ py -3 .\scripts\review_query.py --analysis $a --review $r --evidence E-xxxx --so
 
 `AUDIT_VIEWS` 11 个分类：
 
-`missing_seeds`、`unassigned_primary_facts`、`unindexed_facts`、`unindexed_relations`、`unresolved_relations`、`missing_evidence`、`unreferenced_evidence`、`evidence_project_mismatch`、`hard_errors`、`invalid_unit_references`、`cross_source_missing`。
+`missing_seeds`、`unassigned_primary_facts`、`unindexed_facts`、`unindexed_relations`、`unresolved_relations`、`missing_evidence`、`unreferenced_evidence`、`evidence_project_mismatch`、`hard_errors`、`invalid_unit_references`、`cross_source_missing`。其中 `missing_seeds` 表示既不在 method unit 中、也未登记到项目级 `context_seed_symbols` 的变化种子。作为上下文登记的方法不必单独拥有主变化事实；其 `context_fact_ids` 仍可查询，但不能当作 `unit_assertions.direct_fact_ids` 使用，后者只能绑定实际主变化事实。
 
 分页字段为 `page.total`、`page.returned`、`page.offset`、`page.complete`、`page.next_cursor`。当 `complete=false` 时依据 `next_cursor` 逐页查询，直到完整。`--overview --view commits` 读取的是现有 Git 取证结果而不是重新执行 Git；按项目名称及提交采集顺序分页，`commit_review_summaries` 显示范围、截断数量、重复修改数量与待复核提示。缺失历史显示 `available=false`。**建议从 `--limit 10` 开始**：每条提交可能包含长正文和修改文件列表，使用 100 条上限可能产生较大的单页输出。该查询仅整理材料，不根据提交说明推断业务实现或优先级。
 
@@ -137,7 +137,7 @@ Agent 负责报告的需求、DDL、DML、流程、Mermaid、特殊逻辑与既�
 - 请求、响应、DTO 或数据库字段/接口契约变化时，Agent 应说明既有功能影响；不能未经核实直接写 `既有功能影响：无`。脚本仅检查既有功能影响字段存在且非空，不检查这一业务判断是否合理。
 - 断言应包含可观察、可判定的结果，不能仅凭格式校验通过就认为用例充分。
 
-当前 `test-cases.json schema_version=5`，`coverage.json coverage_schema_version=5`，`run-state.json run_schema_version=7`。旧运行目录的 `review.json` 不会自动重建；采用本次结构单元修复需要重新启动分析，不能直接恢复旧运行。回执校验不替代测试质量判断：一条用例可以关联多个 unit，但必须逐 unit 建立明确的主事实—断言位置引用。**即使全部关联也不证明业务覆盖**。`coverage.json` 的 `primary_assertion_links` 列出每个 unit 对应的用例 ID、主事实 ID 和可观察断言下标，供 Agent 逐项复核。手工运行 `delivery_preflight.py` 必须传入 `--receipts .work/review-receipts.json`，无有效回执不能通过预检。报告 Markdown 结构错误优先归入报告结构检查，不归为回执错误。
+当前 `test-cases.json schema_version=5`，`coverage.json coverage_schema_version=5`，`run-state.json run_schema_version=8`。旧 run-state v7 在 `_read_state` 入口即被拒绝，必须重新执行首次分析生成 Review v5；不能直接恢复旧运行。回执校验不替代测试质量判断：一条用例可以关联多个 unit，但必须逐 unit 建立明确的主事实—断言位置引用。**即使全部关联也不证明业务覆盖**。`coverage.json` 的 `primary_assertion_links` 列出每个 unit 对应的用例 ID、主事实 ID 和可观察断言下标，供 Agent 逐项复核。手工运行 `delivery_preflight.py` 必须传入 `--receipts .work/review-receipts.json`，无有效回执不能通过预检。报告 Markdown 结构错误优先归入报告结构检查，不归为回执错误。
 
 静态证据、实际测试执行、数据库验证和外部联调结果应区分；静态分析不足以证明的行为在业务结论中明确验证范围。
 

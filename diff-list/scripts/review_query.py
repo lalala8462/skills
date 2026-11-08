@@ -12,7 +12,7 @@ from analysis_engine import VERSION, redact
 from source_index import git_bytes, source_lines
 from validate_analysis import verify_evidence
 from query_metrics import RUN_SCHEMA_VERSION, metrics_path, record_query
-from case_contract import PRIMARY_CHANGE_KINDS, is_direct_primary_change_fact
+from case_contract import PRIMARY_CHANGE_KINDS, is_direct_primary_change_fact, REVIEW_SCHEMA_VERSION
 
 PRIMARY_KINDS=PRIMARY_CHANGE_KINDS
 CONDITION_KINDS={'branch','switch_branch','membership_filter'}
@@ -79,7 +79,7 @@ def _unique_rows(rows,label):
 def _indexes(analysis,review,context):
     if analysis.get('schema_version')!=2 or analysis.get('analyzer_version')!=VERSION:
         raise ValueError('analysis schema/analyzer version mismatch')
-    if review.get('review_schema_version')!=4 or review.get('analysis_id')!=analysis.get('analysis_id'):
+    if review.get('review_schema_version')!=REVIEW_SCHEMA_VERSION or review.get('analysis_id')!=analysis.get('analysis_id'):
         raise ValueError('review schema 或 analysis_id 不匹配')
     if not analysis.get('projects'):
         raise ValueError('analysis missing projects')

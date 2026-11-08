@@ -17,7 +17,7 @@ def analysis():
 
 
 def review():
-    return dict(analysis_id='analysis-1',review_schema_version=4,projects=[dict(
+    return dict(analysis_id='analysis-1',review_schema_version=5,projects=[dict(
         name='sample',
         fact_catalog=[
             dict(id='fact-1',kind='method_change',evidence_ids=['evidence-1']),
@@ -72,8 +72,8 @@ class CaseContractTest(unittest.TestCase):
             validate_cases(data,analysis(),review())
 
     def test_old_review_schema_is_rejected(self):
-        old=copy.deepcopy(review());old['review_schema_version']=2
-        with self.assertRaisesRegex(ValueError,'review_schema_version=4'):
+        old=copy.deepcopy(review());old['review_schema_version']=4
+        with self.assertRaisesRegex(ValueError,'review_schema_version=5'):
             validate_cases(cases(),analysis(),old)
 
     def test_coverage_matrix_reports_uncovered_units_without_failing_cases(self):
@@ -115,7 +115,7 @@ class CaseContractTest(unittest.TestCase):
     def test_coverage_matrix_has_current_schema_identity(self):
         matrix=coverage_matrix(cases(),analysis(),review())
         self.assertEqual(matrix['coverage_schema_version'],5)
-        self.assertEqual(matrix['review_schema_version'],4)
+        self.assertEqual(matrix['review_schema_version'],5)
         self.assertEqual(matrix['analysis_id'],'analysis-1')
 
     def test_unknown_review_unit_is_rejected(self):

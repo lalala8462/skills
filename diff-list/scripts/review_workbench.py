@@ -7,7 +7,7 @@ from pathlib import Path
 
 from analysis_engine import VERSION
 from source_index import stable
-from case_contract import is_direct_primary_change_fact, PRIMARY_CHANGE_KINDS
+from case_contract import is_direct_primary_change_fact, PRIMARY_CHANGE_KINDS, REVIEW_SCHEMA_VERSION
 
 
 def fact_symbols(fact):
@@ -261,7 +261,12 @@ def build_review(analysis):
                 if relation.get('id'):
                     selected_relations[relation['id']]=relation
             unit_facts=[fact for fact in facts if symbols_by_fact[fact['id']] & local_symbols]
-            direct_facts=[fact for fact in unit_facts if symbol in symbols_by_fact[fact['id']]]
+            # 类结构变化属于类/项目级主事实。即使通过 linked_symbols
+            # 关联了方法，也不能让多个 method unit 重复认领其 direct_fact_ids。
+            # 方法可以继续把该事实作为上下文查询。
+            direct_facts=[fact for fact in unit_facts
+                          if symbol in symbols_by_fact[fact['id']]
+                          and fact.get('kind')!='class_binding_change']
             context_facts=[fact for fact in unit_facts if fact not in direct_facts]
             # 类结构变化会让未修改的方法成为复核种子，但它们可能只有
             # branch/field_source 等背景事实。没有主变化事实就不能构造
@@ -288,20 +293,32 @@ def build_review(analysis):
                 fact_ids=unit_fact_ids,
                 relation_ids=sorted(relation['id'] for relation in touching if relation.get('id'))))
 
+        # 先从全部直接主变化事实按 owner 建立结构锚点，而不是从
+        # project_facts（它还要求事实没有绑定到其它方法符号）反查。
+        # 这样结构事实即使关联了另一个方法，也不会让同类背景方法误判无归属。
+        structural_facts_by_owner={}
+        for fact in facts:
+            if fact.get('kind')=='class_binding_change' and is_direct_primary_change_fact(fact):
+                owner=(fact.get('data') or {}).get('owner')
+                if isinstance(owner,str) and owner:
+                    structural_facts_by_owner.setdefault(owner,[]).append(fact)
+        unanchored=[symbol for symbol in context_only_seeds
+                    if symbol.split('#',1)[0] not in structural_facts_by_owner]
+        # 类结构变化的主事实统一归项目级 unit，其它事实沿用原筛选。
+        # 保留 facts 原顺序；direct_fact_ids 另行排序保证 unit ID 稳定。
         project_facts=[fact for fact in facts
                        if is_direct_primary_change_fact(fact)
-                       and (not symbols_by_fact[fact['id']] or
-                            (fact.get('kind')=='mapper_statement_change' and
-                             fact['id'] not in selected_fact_ids))]
-        # 项目同时可能含不相关的配置/SQL 改动；不能随意把背景方法
-        # 挂到任意 project 事实。只允许归属到同类 owner 的类结构变化。
-        structural_owners={fact.get('data',{}).get('owner') for fact in project_facts
-                           if fact.get('kind')=='class_binding_change'}
-        unanchored=[symbol for symbol in context_only_seeds
-                    if symbol.split('#',1)[0] not in structural_owners]
+                       and (fact.get('kind')=='class_binding_change'
+                            or not symbols_by_fact[fact['id']]
+                            or (fact.get('kind')=='mapper_statement_change'
+                                and fact['id'] not in selected_fact_ids))]
         if unanchored:
+            sample=','.join(unanchored[:5])
+            remaining=len(unanchored)-5
+            suffix=('，其余 {} 项见 analysis.json 的 change_seeds'.format(remaining)
+                    if remaining else '')
             raise ValueError('复核种子缺少可归属的主变化事实，不能生成无主事实 unit: '+
-                             source['name']+' '+','.join(unanchored))
+                             source['name']+'，共 {} 项：'.format(len(unanchored))+sample+suffix)
         if project_facts:
             project_unit_fact_ids=sorted(fact['id'] for fact in project_facts)
             context_ids=sorted(context_only_fact_ids-set(project_unit_fact_ids))
@@ -355,15 +372,15 @@ def build_review(analysis):
             navigation_facets=navigation_facets,
             review_units=units,
             fact_catalog=fact_catalog,
-            hard_errors=source['hard_errors'],
-            stats=source['stats']
+            hard_errors=source.get('hard_errors') or [],
+            stats=source.get('stats') or {}
         ))
 
     cross=[row for row in analysis['cross_project_relations']
            if row.get('source_relation') in selected_relation_ids]
     return dict(
         analysis_id=analysis['analysis_id'],
-        review_schema_version=4,
+        review_schema_version=REVIEW_SCHEMA_VERSION,
         projects=projects,
         cross_project_relations=cross,
         note='review_facets 保留完整精确结构关系；navigation_facets 只调整阅读顺序，不定义或过滤复核范围。change_summary 只压缩直接事实，完整事实始终保留。业务结论由 Agent 判断。'

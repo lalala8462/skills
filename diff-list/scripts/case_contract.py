@@ -3,7 +3,7 @@
 PURPOSES=('acceptance','core_regression','related_regression','boundary')
 PURPOSE_NAMES=('需求验收','既有核心流程回归','关联回归','业务规则与边界验证')
 SCHEMA_VERSION=5
-REVIEW_SCHEMA_VERSION=4
+REVIEW_SCHEMA_VERSION=5
 PRIMARY_CHANGE_KINDS=frozenset(('method_change','field_change','class_binding_change',
     'configuration','configuration_file_change','configuration_parse_boundary',
     'argument_source_change','mapper_statement_change'))
