@@ -90,6 +90,7 @@ $a = "<run>\.work\analysis\analysis.json"
 $r = "<run>\.work\review.json"
 py -3 .\scripts\review_query.py --analysis $a --review $r --overview
 py -3 .\scripts\review_query.py --analysis $a --review $r --audit
+py -3 .\scripts\review_query.py --analysis $a --review $r --overview --view commits --limit 10
 py -3 .\scripts\review_query.py --analysis $a --review $r --query originalTradeNo
 py -3 .\scripts\review_query.py --analysis $a --review $r --query originalTradeNo --view facts --matched-only
 py -3 .\scripts\review_query.py --analysis $a --review $r --unit RU-xxxx --view relations
@@ -100,7 +101,7 @@ py -3 .\scripts\review_query.py --analysis $a --review $r --evidence E-xxxx --so
 | 参数 | 精确约束 |
 | --- | --- |
 | `--overview`、`--audit`、`--query`、`--unit`、`--fact`、`--evidence` | 六种互斥入口，必须指定一种；overview 同时展示 `audit_scope_tiers` 和可选的 `receipt_status` |
-| `--view` | `index`、`facts`、`relations`、`evidence`、`db`、`conditions`、`all` |
+| `--view` | `index`、`facts`、`relations`、`evidence`、`db`、`conditions`、`all`；`commits` 仅可配合 `--overview` |
 | `--limit` | 默认 10；有效范围 **1–100** |
 | `--source-lines` | 默认 8；取证行数 **0–100** |
 | `--cursor` | 从当前页 `next_cursor` 获取；绑定分析、视图、返回内容与 offset |
@@ -114,7 +115,7 @@ py -3 .\scripts\review_query.py --analysis $a --review $r --evidence E-xxxx --so
 
 `missing_seeds`、`unassigned_primary_facts`、`unindexed_facts`、`unindexed_relations`、`unresolved_relations`、`missing_evidence`、`unreferenced_evidence`、`evidence_project_mismatch`、`hard_errors`、`invalid_unit_references`、`cross_source_missing`。
 
-分页字段为 `page.total`、`page.returned`、`page.offset`、`page.complete`、`page.next_cursor`。当 `complete=false` 时依据 `next_cursor` 逐页查询，直到完整。
+分页字段为 `page.total`、`page.returned`、`page.offset`、`page.complete`、`page.next_cursor`。当 `complete=false` 时依据 `next_cursor` 逐页查询，直到完整。`--overview --view commits` 读取的是现有 Git 取证结果而不是重新执行 Git；按项目名称及提交采集顺序分页，`commit_review_summaries` 显示范围、截断数量、重复修改数量与待复核提示。缺失历史显示 `available=false`。该查询仅整理材料，不根据提交说明推断业务实现或优先级。
 
 ## 5. 用例与报告硬约束
 
