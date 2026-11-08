@@ -46,7 +46,8 @@ navigation_facets **只用于阅读排序，不得据此裁剪复核范围**；`
 
 Agent 可以直接调用此脚本，不需要 MCP 服务或持久化查询缓存：
 
-- `--overview`：全部 review unit 的分页索引和全局异常计数，复用 audit 的 `audit_scope_tiers`（包括 `change_touched_unresolved` 与 `supporting_unresolved`），如有回执还输出 `receipt_status`（待回执数），不打业务风险分；
+- `--overview`：默认提供全部 review unit 的分页索引和全局异常计数，复用 audit 的 `audit_scope_tiers`（包括 `change_touched_unresolved` 与 `supporting_unresolved`），如有回执还输出 `receipt_status`（待回执数），不打业务风险分；
+- `--overview --view commits`：按项目名称和采集顺序分页提供 `projects[].git.commit_review.commits` 原始提交元数据；每页 `items` 中包含 `project`、`position`、`sha`、`parent`、`subject`、`body`、`files` 等提交字段。`commit_review_summaries` 保留每个项目的 `scope`、`recorded_commit_count`、`omitted_commits`、`review_required`、`review_reasons`、`repeated_file_count` 和文本反向候选计数。缺失历史材料标记 `available=false`，不假装提交数为零。仅提供资料，不推断业务意图；
 - `--unit / --query`：按变化单元或关键词获取索引，unit 直接给出 `direct_fact_ids/direct_evidence_ids`；
 - `--query --view facts --matched-only`：只返回直接匹配事实，不扩大到 unit 所有事实；默认查询行为不变；
 - `--view facts/relations/evidence/db/conditions`：仅显式展开所选类别，分类不代表全部业务影响；
