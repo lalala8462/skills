@@ -63,20 +63,20 @@ class DiffListTest(unittest.TestCase):
                 errors,_=validator.validate(template+'\n'+path,template,[])
                 self.assertTrue(any('Unix 或 UNC 本机绝对路径' in error for error in errors))
 
-    def test_vague_english_assertions_are_rejected(self):
+    def test_assertion_validation_is_structural_not_semantic(self):
         exporter=module('export_test_cases')
-        for statement in ('OK','success','operation successful','as expected'):
+        for statement in ('OK','success','operation successful','as expected','HTTP 200 OK'):
             with self.subTest(statement=statement):
-                with self.assertRaisesRegex(ValueError,'not an observable'):
-                    exporter._observable_evidence([
-                        dict(surface='接口',target='支付响应',assertion=statement)],'C-1')
-        self.assertTrue(exporter._observable_evidence([
-            dict(surface='HTTP',target='响应状态',assertion='HTTP 200 OK')],'C-2'))
+                self.assertTrue(exporter._observable_evidence([
+                    dict(surface='接口',target='支付响应',assertion=statement)],'C-1'))
+        with self.assertRaises(ValueError):
+            exporter._observable_evidence([
+                dict(surface='接口',target='支付响应',assertion='')],'C-2')
 
     def test_generated_input_skeletons_use_current_contracts(self):
         contract=module('case_contract')
         data=contract.empty_cases('analysis-1')
-        self.assertEqual(data['schema_version'],4)
+        self.assertEqual(data['schema_version'],5)
         self.assertEqual(data['analysis_id'],'analysis-1')
         self.assertEqual(set(data['purpose_cases']),set(contract.PURPOSES))
         self.assertTrue(all(value==[] for value in data['purpose_cases'].values()))
@@ -94,11 +94,18 @@ class DiffListTest(unittest.TestCase):
             source.write_text(json.dumps(analysis),encoding='utf-8')
             review_path=root/'review.json'
             cases_path=root/'cases.json'
+            receipts_path=root/'review-receipts.json'
             self.assertEqual(review.main(['--analysis',str(source),'--output',str(review_path),
-                '--cases-template',str(cases_path)]),0)
+                '--cases-template',str(cases_path),
+                '--receipts-template',str(receipts_path)]),0)
             self.assertTrue(review_path.is_file())
             self.assertEqual(json.loads(review_path.read_text(encoding='utf-8'))['review_schema_version'],4)
             self.assertEqual(json.loads(cases_path.read_text(encoding='utf-8'))['analysis_id'],'analysis-1')
+            receipts=json.loads(receipts_path.read_text(encoding='utf-8'))
+            self.assertEqual(receipts['schema_version'],1)
+            self.assertEqual(receipts['analysis_id'],'analysis-1')
+            self.assertEqual(len(receipts['sections']),7)
+            self.assertEqual(receipts['audit_unresolved_by_unit'],{})
 
     def test_template_heading_only(self):
         template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
@@ -280,7 +287,7 @@ class DiffListTest(unittest.TestCase):
         self.assertEqual(errors, [])
         invalid=corrected.replace('旧调用方可能忽略该字段，需验证已有调用方行为。','无')
         errors,_=val.validate(invalid,template,[])
-        self.assertTrue(any('字段/接口契约变化' in issue for issue in errors))
+        self.assertEqual(errors, [])
 
 
     def test_existing_impact_no_normalizes_markdown_and_whitespace(self):
@@ -545,14 +552,14 @@ class AdditionalRegressionTests(unittest.TestCase):
         self.assertEqual(secret['before'],'<redacted>')
         self.assertNotIn('abc123',str(findings))
 
-    def test_config_unknown_yaml_is_skipped_not_silent(self):
+    def test_yaml_parse_failure_kept_without_filename_guessing(self):
         config = module('config_changes')
         findings, skipped = config.extract_config_changes([{'path':'app.yml',
           'before':'urls:\n - http://localhost\n', 'after':'urls:\n - http://example.com\n'}])
         self.assertEqual(findings,[])
         self.assertEqual(len(skipped),1)
-        self.assertFalse(skipped[0]['review_required'])
-        self.assertEqual(skipped[0]['kind'],'non_runtime_yaml')
+        self.assertTrue(skipped[0]['review_required'])
+        self.assertEqual(skipped[0]['kind'],'parse_failure')
 
     def test_invalid_new_xml_is_not_masked_by_unmapped_old_xml(self):
         config=module('config_changes')
@@ -768,8 +775,9 @@ class AdditionalRegressionTests(unittest.TestCase):
                 steps=['发起请求','检查响应'],
                 expected=['接口返回退款结果'],
                 observable_evidence=[dict(surface='接口',target='返回体',assertion='refundStatus=SUCCESS')],
-                review_unit_ids=['RU-1']))
-        return dict(schema_version=4,analysis_id='fixture-analysis',purpose_cases=groups)
+                review_unit_ids=['RU-1'],
+                unit_assertions=[dict(unit_id='RU-1',direct_fact_ids=['fact-1'],observation_indexes=[0])]))
+        return dict(schema_version=5,analysis_id='fixture-analysis',purpose_cases=groups)
 
     def test_export_test_cases_xlsx_structure(self):
         import zipfile
@@ -855,11 +863,12 @@ class AdditionalRegressionTests(unittest.TestCase):
             data=self.export_input();data['purpose_cases']['acceptance'][0]['observable_evidence']=incomplete
             with self.assertRaises(ValueError):exporter.normalize(data,fixture_analysis(),fixture_review())
 
-    def test_vague_assertions_rejected(self):
+    def test_vague_assertions_are_left_to_agent(self):
         exporter=module('export_test_cases')
-        for phrase in ('符合预期','处理成功','系统正常','接口成功','退款成功','状态正确','库存正常','权限校验成功','文件上传成功'):
-            data=self.export_input();data['purpose_cases']['acceptance'][0]['observable_evidence'][0]['assertion']=phrase
-            with self.assertRaisesRegex(ValueError,'not an observable'):exporter.normalize(data,fixture_analysis(),fixture_review())
+        for phrase in ('符合预期','处理成功','系统正常','接口成功','退款成功'):
+            data=self.export_input()
+            data['purpose_cases']['acceptance'][0]['observable_evidence'][0]['assertion']=phrase
+            self.assertTrue(exporter.normalize(data,fixture_analysis(),fixture_review()))
 
     def test_nonpayment_observable_assertions_are_specific(self):
         exporter=module('export_test_cases')

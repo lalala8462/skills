@@ -46,21 +46,6 @@ class NoConfigMapping(ValueError):
     """XML 合法但不包含当前可识别的配置键值映射。"""
 
 
-def _likely_runtime_yaml(path):
-    """Return whether a YAML file is likely application/runtime configuration.
-
-    Generic YAML such as CI workflow files is still visible in the Git diff, but
-    it is not a target of this scalar configuration parser and should not by
-    itself force the whole analysis into review_required.
-    """
-    normalized = path.replace(chr(92), '/').lower()
-    parts = [part for part in normalized.split('/') if part]
-    name = parts[-1] if parts else normalized
-    if name.startswith(('application.', 'application-', 'bootstrap.', 'bootstrap-')):
-        return True
-    if any(part in ('config', 'profile', 'resources') for part in parts[:-1]):
-        return True
-    return False
 SENSITIVE = re.compile(r'(password|secret|token|api.?key|private.?key|credential|cert|sign)', re.I)
 
 
@@ -265,9 +250,6 @@ def extract_config_changes(pairs):
         if reasons:
             review_required=True
             kind='parse_failure'
-            if lower.endswith(('.yaml','.yml')) and not _likely_runtime_yaml(path):
-                review_required=False
-                kind='non_runtime_yaml'
             issues.append({'path':path,'reason':'; '.join(reasons),'kind':kind,
                            'review_required':review_required})
             continue

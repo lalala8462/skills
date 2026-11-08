@@ -14,11 +14,25 @@
 ~~~
 
 1. **首次运行** `run_delivery.py`：生成事实底账、复核索引和报告草稿，随后停在 `waiting_agent`。
-2. **Agent 复核**：用 `review_query.py --overview`、`--audit` 掌握全局，再按 unit / fact / evidence 回查固定快照中的 before/after 源码；据此直接编辑 `.work/test-cases.json`（四类用例，引用 `review_unit_ids`）和 `.work/report.md` 的业务章节。
-3. **恢复交付** `--resume`：依次执行格式预检、用例引用复核、Excel 导出、报告机器章节刷新与证据身份校验。若 `coverage.pending_review` 未清零，会进入 `waiting_coverage_review`，补充引用或用例后再次 resume。
+2. **Agent 复核**：用 `review_query.py --overview`、`--audit` 掌握全局，再按 unit / fact / evidence 回查固定快照中的 before/after 源码；据此编辑 `.work/test-cases.json`、`.work/report.md` 和 `.work/review-receipts.json`（六个业务章节、既有功能影响及直接未解析关系的处理回执）。
+3. **恢复交付** `--resume`：依次执行格式及回执身份预检、用例引用复核、Excel 导出、报告机器章节刷新与证据身份校验。若 `coverage.pending_review` 未清零，会进入 `waiting_coverage_review`，补充 `unit_assertions` 的主事实和断言关联或新增用例后再次 resume。
 4. **最终交付**：运行目录根部只发布 `report.md`、`test-cases.xlsx`、`coverage.json`；`.work/` 保留完整事实底账与运行状态，成功后自动清理隔离 clone。
 
-脚本只产出确定性的静态事实与结构校验，业务语义、既有功能影响与测试设计由 Agent 判断。`navigation_facets` 只用于阅读排序、`coverage.pending_review` 只表示复核单元尚未被用例引用，都不构成业务覆盖结论。
+脚本只产出确定性的静态事实与结构校验，业务语义、既有功能影响与测试设计由 Agent 判断。`navigation_facets` 只用于阅读排序、`coverage.pending_review` 只表示复核单元尚未形成显式用例—主事实—断言关联，都不构成业务覆盖结论。
+
+
+## 脚本与 Agent 的职责边界（强制约束）
+
+**脚本不做业务语义判断，也不通过类名、方法名、路径或自然语言中的关键词猜测业务风险、功能用途、覆盖情况或实现意图。** 后续新增脚本规则同样必须遵守。
+
+- **脚本只做可重复核验的固定工作**：固定 Git 修订与最终净差异、解析 Java/XML/配置的明确结构、记录事实和证据、建立 ID 引用、统计未处理事项、分页展示与结构校验。
+- **直接关联不漏记**：凡直接触及变化的调用无法解析时，一律保留为 `unresolved`，不能依据 `status`、`save`、`dao` 等名字决定是否保留；大量材料按需分页，不一次塞给 Agent。
+- **约定推断必须标清边界**：JavaBean、MyBatis 等明确协议约定产生的候选关系可以记录为 `convention_inferred`，不能当作已证明的运行时关系；不能靠任意名字猜测用途。
+- **业务判断归 Agent 或人工**：提交说明与实现是否一致、哪些测试有效、既有功能影响和业务优先级由 Agent 结合源码证据判断。回执只检查处理状态及 fact/evidence ID 的真实归属，不证明业务理解或用例有效；脚本不根据“成功”“字段”“退款”等关键词猜测结论。
+- **导航排序不是风险评级**：`navigation_priority` 只影响阅读顺序，`priority_kind=reading_order_heuristic`；`navigation_facets` 不允许裁剪复核范围，`pending_review` 只代表 unit 缺少显式主事实—断言关联，不代表测试覆盖。
+- **无法确定就保留边界**：无法解析的配置或调用留有明确的未解析记录，不通过文件名推测其业务用途、再将其静默忽略。
+
+上述原则不限制 Git/AST/XML 的确定性语法解析，也不禁止 `--query` 进行普通文本检索；检索命中不能作为业务结论。
 
 ## 快速使用
 
@@ -28,7 +42,7 @@
 py -3 .\scripts\run_delivery.py --repo G:\Code\project --rev FULL_SHA
 ~~~
 
-首次执行输出 `RUN_DIR` 和查询命令。Agent 复核并填写 `.work/test-cases.json`、`.work/report.md`，之后执行：
+首次执行输出 `RUN_DIR` 和查询命令。Agent 复核并填写 `.work/test-cases.json`、`.work/report.md` 和 `.work/review-receipts.json`，之后执行：
 
 ~~~powershell
 py -3 .\scripts\run_delivery.py --resume "<RUN_DIR>"

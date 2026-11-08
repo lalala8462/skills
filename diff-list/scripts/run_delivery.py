@@ -270,12 +270,14 @@ def _prepare(args):
     analysis=analysis_dir/'analysis.json'
     review=work/'review.json'
     cases=work/'test-cases.json'
+    receipts=work/'review-receipts.json'
     report=work/'report.md'
     review_command=[
         sys.executable,'-B',str(SCRIPT_DIR/'review_workbench.py'),
         '--analysis',str(analysis),
         '--output',str(review),
-        '--cases-template',str(cases)]
+        '--cases-template',str(cases),
+        '--receipts-template',str(receipts)]
     _run_stage(state_path,state,'review_workbench',[review_command])
 
     report_init=[
@@ -287,6 +289,7 @@ def _prepare(args):
     _begin_agent_wait(state_path,state,'waiting_agent','initial_business_review','source_review')
     print('RUN_DIR: '+str(run_dir))
     print('AGENT_INPUT: '+str(cases))
+    print('AGENT_INPUT: '+str(receipts))
     print('AGENT_INPUT: '+str(report))
     print('REVIEW: '+str(review))
     print('OVERVIEW: {} -B {} --analysis {} --review {} --overview'.format(
@@ -369,6 +372,7 @@ def _resume(run_dir_value):
         analysis=work/'analysis'/'analysis.json'
         review=work/'review.json'
         cases=work/'test-cases.json'
+        receipts=work/'review-receipts.json'
         coverage=work/'coverage.json'
         excel=work/'test-cases.xlsx'
         report=work/'report.md'
@@ -376,7 +380,8 @@ def _resume(run_dir_value):
         preflight=[
             sys.executable,'-B',str(SCRIPT_DIR/'delivery_preflight.py'),
             '--analysis',str(analysis),'--review',str(review),
-            '--cases',str(cases),'--report',str(report)]
+            '--cases',str(cases),'--report',str(report),
+            '--receipts',str(receipts)]
         _run_stage(state_path,state,'preflight',[preflight])
 
         coverage_command=[
@@ -392,7 +397,7 @@ def _resume(run_dir_value):
             print('COVERAGE_REVIEW: {} pending unit(s)'.format(len(pending)))
             print('COVERAGE: '+str(coverage))
             print('PENDING: '+','.join(row.get('unit_id','') for row in pending))
-            print('说明：已有场景确实覆盖时，把对应 review_unit_id 加到该用例；否则补充新用例。')
+            print('说明：逐 unit 复核主事实和可观察断言，补齐 unit_assertions 的显式关系或新增测试；引用不证明业务覆盖。')
             print('RESUME: {} -B {} --resume {}'.format(sys.executable,SCRIPT_DIR/'run_delivery.py',run_dir))
             state=json.loads(state_path.read_text(encoding='utf-8-sig'))
             _print_timings(state)

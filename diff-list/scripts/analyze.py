@@ -28,7 +28,7 @@ def load_rules(filename=None):
                 if not isinstance(value,dict):
                     raise ValueError('Rule '+key+' must be an object')
                 rules[key].update(value)
-            elif key in ('config_annotations','aliases','relation_review_tokens'):
+            elif key in ('config_annotations','aliases'):
                 if not isinstance(value,list) or any(not isinstance(v,str) or not v for v in value):
                     raise ValueError('List rules must be nonempty strings')
                 rules[key]=sorted(set(rules[key]+value))
@@ -162,7 +162,7 @@ def analyze_project(spec,rules,limits,parser,cache):
             data=clean(candidate)
             kind='configuration_file_change' if 'key' in candidate else 'configuration_parse_boundary'
             identifier=stable(name,kind,data,sorted(refs))
-            fact=dict(id=identifier,kind=kind,classification='source_fact' if 'key' in candidate else 'risk_candidate',data=data,evidence_ids=sorted(refs))
+            fact=dict(id=identifier,kind=kind,classification='source_fact' if 'key' in candidate else 'review_boundary',data=data,evidence_ids=sorted(refs))
             if identifier not in engine.fact_ids:engine.facts.append(fact);engine.fact_ids.add(identifier)
     result['facts']=sorted(engine.facts,key=lambda f:f['id'])
     context=list(engine.context.values())

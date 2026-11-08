@@ -11,7 +11,7 @@ LOG_NAME='query-metrics.jsonl'
 QUERY_METRICS_VERSION=1
 
 
-RUN_SCHEMA_VERSION=4
+RUN_SCHEMA_VERSION=6
 
 
 def metrics_path(analysis_path,review_path,run_schema_version):

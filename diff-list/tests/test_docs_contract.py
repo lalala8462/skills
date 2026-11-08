@@ -42,6 +42,18 @@ class DocsContractTest(unittest.TestCase):
                                     '不得为尝试或补传规则对同一批 SHA 重复分析'):
                     self.assertIn(requirement,document)
 
+    def test_nonsemantic_script_boundary_is_documented(self):
+        self.assertIn('脚本不做业务语义判断',self.readme)
+        self.assertIn('不通过类名、方法名、路径或自然语言',self.readme)
+        self.assertIn('reading_order_heuristic',self.readme)
+        self.assertIn('脚本非语义原则',self.contract)
+
+    def test_receipt_workflow_is_documented(self):
+        for doc in (self.guide,self.contract,self.skill,self.readme):
+            self.assertIn('review-receipts.json',doc)
+        self.assertIn('audit_scope_tiers',self.guide)
+        self.assertIn('audit_scope_tiers',self.contract)
+
     def test_navigation_and_coverage_are_not_business_scope_filters(self):
         self.assertIn('不得据此裁剪复核范围',self.contract)
         self.assertIn('不证明业务覆盖或分支覆盖',self.contract)
@@ -51,7 +63,7 @@ class DocsContractTest(unittest.TestCase):
         self.assertIn('schema_version=2',self.contract)
         self.assertIn('review_schema_version='+str(case_contract.REVIEW_SCHEMA_VERSION),self.contract)
         self.assertIn('schema_version='+str(case_contract.SCHEMA_VERSION),self.contract)
-        self.assertIn('coverage_schema_version=3',self.contract)
+        self.assertIn('coverage_schema_version=4',self.contract)
         self.assertEqual(query_metrics.RUN_SCHEMA_VERSION,run_delivery.RUN_SCHEMA_VERSION)
         self.assertIn('run_schema_version='+str(run_delivery.RUN_SCHEMA_VERSION),self.contract)
 
@@ -71,7 +83,7 @@ class DocsContractTest(unittest.TestCase):
                 self.assertIn(chr(96)+heading+chr(96),self.contract)
         for required in ('禁止 '+chr(96)+'graph TD'+chr(96),
                          'surface', 'target', 'assertion',
-                         '待确认', '待核实', '代码依据', '证据编号', '源码行号',
+                         '自动生成的 Agent 填写占位符', '脚本只校验非空与结构',
                          'Unix', 'UNC', 'Excel'):
             self.assertIn(required,self.guide)
 

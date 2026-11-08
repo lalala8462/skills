@@ -3,7 +3,7 @@
 ## analysis.json
 
 - schema_version=2
-- analyzer_version=2.3.1
+- analyzer_version=2.4.0
 
 analysis_id 由分析器版本、生效规则（含 limits 参数）和项目固定快照计算；显式调整 limits 会改变分析身份。
 
@@ -36,13 +36,17 @@ relations 记录直接变化相关的解析关系及需要人工复核的未解�
 
 change_summary 只压缩直接事实。
 
-navigation_facets **只用于阅读排序，不得据此裁剪复核范围**；完整复核范围来自 review_units、review_facets 与底账事实。facet 表示精确结构关联，业务需求归属由 Agent 判断。
+navigation_facets **只用于阅读排序，不得据此裁剪复核范围**；`navigation_priority` 不是业务风险评分，`priority_kind=reading_order_heuristic`；完整复核范围来自 review_units、review_facets 与底账事实。facet 表示精确结构关联，业务需求归属由 Agent 判断。
+
+## 脚本非语义原则
+
+脚本只做 Git、AST、XML 的确定性结构取证、证据身份、引用和状态校验。不得根据名称、路径、业务关键词或自由文本推断业务用途、风险大小、测试质量与提交意图。直接变化触及的未解析关系保留为 `unresolved`；基于明确框架约定的候选关系只能标记为 `convention_inferred`，不证明运行时绑定。对于断言与既有功能影响，脚本仅做结构校验，不判断语义。
 
 ## review_query.py
 
 Agent 可以直接调用此脚本，不需要 MCP 服务或持久化查询缓存：
 
-- `--overview`：全部 review unit 的分页索引和全局异常计数；
+- `--overview`：全部 review unit 的分页索引和全局异常计数，复用 audit 的 `audit_scope_tiers`（包括 `change_touched_unresolved` 与 `supporting_unresolved`），如有回执还输出 `receipt_status`（待回执数），不打业务风险分；
 - `--unit / --query`：按变化单元或关键词获取索引，unit 直接给出 `direct_fact_ids/direct_evidence_ids`；
 - `--query --view facts --matched-only`：只返回直接匹配事实，不扩大到 unit 所有事实；默认查询行为不变；
 - `--view facts/relations/evidence/db/conditions`：仅显式展开所选类别，分类不代表全部业务影响；
@@ -59,9 +63,14 @@ Audit 将未归属的真实直接变化与背景事实分开；`configuration` �
 
 ## test-cases.json
 
-当前 schema_version=4。
+当前 schema_version=5。
 
-每条用例只引用 review_unit_ids，不接受用例级 fact_ids/evidence_ids。导出和最终校验阶段根据 review unit 自动展开 analysis fact 和 evidence。
+每条用例保留 `review_unit_ids`，并**必须**提供与其逐项一一对应的 `unit_assertions`：
+- `unit_id`：明确指向该复核单元；
+- `direct_fact_ids`：人工选择该单元 `direct_fact_ids` 中直接相关的主事实，非空；
+- `observation_indexes`：指向本条用例 `observable_evidence` 数组的 0 起始位置，非空且不得越界。
+
+导出与最终校验仅按显式声明的主事实展开 evidence；不能再由 `review_unit_ids` 自动把全部事实算作测试依据。此机制只证明**关联可追溯**，不证明断言在业务上真正覆盖变化。一条用例允许关联多个 unit，但每个 unit 必须有自己的事实—断言映射。
 
 ## report.md
 
@@ -83,19 +92,29 @@ Audit 将未归属的真实直接变化与背景事实分开；`configuration` �
 
 机器草稿状态标记可以缺失；报告刷新负责重建，正式化仍拒绝重复或不配对的标记。脚本刷新时原样保留 Agent 业务章节。
 
+## review-receipts.json
+
+`run_delivery.py` 在 `.work/review-receipts.json` 生成回执骨架；当前 `schema_version=1`，`analysis_id` 必须与本次分析一致。Agent 填写：
+
+- `sections`：以 `generate_report.AGENT_HEADINGS` 六个标题和 `existing_impact` 为键，每项包含 `status`、`unit_ids`、`fact_ids`、`evidence_ids`。业务章节整体为“无”时填 `not_applicable` 并保持引用为空；其余应为 `assessed` 且绑定真实属于该 unit 的事实和证据。即使写“既有功能影响：无”，只要特殊逻辑章节非“无”，也应记录核查依据。初始 `pending` 不可通过预检。
+- `audit_unresolved_by_unit`：按 unit 汇总其已索引的 `unresolved` 关系，含 `relation_ids`、`status`、`fact_ids`、`evidence_ids`。Agent 记录 `assessed`（必须绑定真实 fact/evidence）或 `deferred`（仅关系 ID 与状态，fact/evidence 必须为空，代表明确未核实）；概览单独统计 deferred 数量，不将其视为已核实。
+- 其它审计视图仍由 `--audit` 完整展示，硬错误继续按既有校验阻断。回执不代替 `coverage.pending_review`，也不证明业务判断或测试覆盖。
+
+`review_query.py --overview` 将已有的 `audit_scope_tiers` 与 `receipt_status` 合并展示，所有数量都是状态统计，不是风险分值。
+
 ## coverage.json
 
-当前 coverage_schema_version=3。
+当前 coverage_schema_version=4。
 
-pending_review 表示尚未被测试用例引用的 review unit，并提供 high_value_facets、candidate_case_ids、related_referenced_unit_ids 和完整 facet 引用。
+pending_review 表示尚无符合 `unit_assertions` 契约的显式主事实—可观察断言关联的 review unit，并提供 high_value_facets、candidate_case_ids、related_referenced_unit_ids 和完整 facet 引用。`unit_case_references[].primary_assertion_links` 逐条列出 `case_id`、`direct_fact_ids`、`observation_indexes`，可人工定位到具体断言；`has_explicit_primary_assertion_link` 仅表示建立了结构化链接。
 
-`referenced_unit_count` 为测试用例引用的单元数；`referenced_facet_count` 为至少一个成员单元被用例引用的 facet 数，`all_units_referenced_facet_count` 才表示成员单元全部被引用。
+`referenced_unit_count` 为拥有显式主事实—断言关联的单元数；`referenced_facet_count` 为至少一个成员单元已建立关联的 facet 数，`all_units_referenced_facet_count` 才表示成员单元全部建立了此类关联。
 
-**`coverage.pending_review` 只衡量复核单元的用例引用情况，不证明业务覆盖或分支覆盖**；即使某个 review unit 已被引用，也必须由 Agent 核对具体业务场景及可观察断言。
+**`coverage.pending_review` 只衡量复核单元是否存在显式用例—主事实—断言关联，不证明业务覆盖或分支覆盖**；即使某个 review unit 已被关联，也必须由 Agent 核对具体业务场景及可观察断言。
 
 ## run-state.json 与查询计量
 
-当前 `run_schema_version=4`，只支持本版状态结构。CLI 的 `AGENT_PHASES` 是 `source_review`、`analysis_authoring`、`rework`；在 `run-state.json.stages` 中存储键名增加 `agent_` 前缀：
+当前 `run_schema_version=6`，只支持本版状态结构；回执文件与测试用例 `schema_version=5` 均为必需，旧 run 不可直接混用。CLI 的 `AGENT_PHASES` 是 `source_review`、`analysis_authoring`、`rework`；在 `run-state.json.stages` 中存储键名增加 `agent_` 前缀：
 
 - `agent_source_review`：源码查证；
 - `agent_analysis_authoring`：综合业务分析、用例设计、报告编写；

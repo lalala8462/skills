@@ -7,6 +7,7 @@ from pathlib import Path
 
 from analysis_engine import VERSION
 from source_index import stable
+from case_contract import PRIMARY_CHANGE_KINDS
 
 
 def fact_symbols(fact):
@@ -181,30 +182,6 @@ def build_facets(project,units,facts_by_id,relations_by_id):
     return facets
 
 
-LOW_VALUE_CALL_OWNER_MARKERS=('.util.','.utils.','.common.','.base.','.support.','.framework.')
-LOW_VALUE_CALL_OWNER_SUFFIXES=('Util','Utils','Helper','Base','Abstract','Support','Builder','Converter')
-LOW_VALUE_CALL_METHODS={
-    'get','set','of','valueOf','toString','hashCode','equals','size','isEmpty','stream',
-    'iterator','add','put','remove','contains','containsKey','copy','clone','format','parse',
-    'trim','substring','split','join','requireNonNull'
-}
-
-
-def _is_low_value_shared_call(anchor):
-    """识别不适合作为首轮导航入口的通用共享调用；完整 facet 仍保留。"""
-    if not isinstance(anchor,str) or '#' not in anchor:
-        return False
-    owner,method=anchor.split('#',1)
-    lowered=owner.casefold()
-    simple_owner=owner.rsplit('.',1)[-1]
-    method_name=method.split('(',1)[0]
-    if any(marker in lowered for marker in LOW_VALUE_CALL_OWNER_MARKERS):
-        return True
-    if simple_owner.endswith(LOW_VALUE_CALL_OWNER_SUFFIXES):
-        return True
-    return method_name in LOW_VALUE_CALL_METHODS
-
-
 def _navigation_rank(facet,changed_symbols):
     """返回 (priority, reason)；None 表示只保留在完整 review_facets 中。"""
     facet_type=facet.get('type')
@@ -218,9 +195,7 @@ def _navigation_rank(facet,changed_symbols):
     if facet_type=='direct_call':
         if anchor in changed_symbols:
             return 16,'直接关联其它变化方法'
-        if _is_low_value_shared_call(anchor):
-            return None
-        return 30,'变化方法直接关联的业务调用'
+        return 30,'变化方法直接关联的调用'
     if facet_type=='owner':
         return 20,'同一变化类'
     return None
@@ -236,7 +211,8 @@ def build_navigation_facets(facets,units):
         if ranked is None:
             continue
         priority,reason=ranked
-        row=dict(facet,navigation_priority=priority,navigation_reason=reason)
+        row=dict(facet,navigation_priority=priority,navigation_reason=reason,
+                 priority_kind='reading_order_heuristic')
         selected.append(row)
         for unit_id in facet['unit_ids']:
             membership[unit_id].append(facet['id'])
@@ -252,13 +228,9 @@ def build_review(analysis):
         raise ValueError('unsupported analysis schema/analyzer version')
     projects=[]
     selected_relation_ids=set()
-    primary_kinds={
-        'method_change','field_change','class_binding_change','configuration',
-        'configuration_file_change','configuration_parse_boundary',
-        'argument_source_change','mapper_statement_change'
-    }
+    primary_kinds=PRIMARY_CHANGE_KINDS
     supporting_kinds={
-        'branch','switch_branch','membership_filter','return_sources','return_override',
+        'branch','switch_branch','membership_filter','return_sources','return_assignment_sites',
         'field_source','flow_boundary','mapper_statement','unresolved_relation',
         'annotation_binding_unconfigured','entrypoint','constant_or_collection',
         'object_copy','constructor_mapping'
@@ -386,12 +358,13 @@ def main(argv=None):
     parser.add_argument('--analysis',required=True)
     parser.add_argument('--output',required=True)
     parser.add_argument('--cases-template',help='同时生成合法的空 test-cases.json 骨架')
+    parser.add_argument('--receipts-template',help='生成待 Agent 填写的结构化复核回执')
     args=parser.parse_args(argv)
     try:
         analysis=json.loads(Path(args.analysis).read_text(encoding='utf-8-sig'))
         value=build_review(analysis)
         paths=[Path(args.output)]
-        paths.extend(Path(value) for value in (args.cases_template,) if value)
+        paths.extend(Path(value) for value in (args.cases_template,args.receipts_template) if value)
         resolved=[path.resolve() for path in paths]
         if len(set(resolved))!=len(resolved):
             raise ValueError('review/cases outputs must use different files')
@@ -405,6 +378,9 @@ def main(argv=None):
         if args.cases_template:
             from case_contract import empty_cases
             write_json_template(args.cases_template,empty_cases(analysis['analysis_id']))
+        if args.receipts_template:
+            from review_receipts import empty_receipts
+            write_json_template(args.receipts_template,empty_receipts(analysis,value))
         print('已生成聚合复核材料及测试用例输入骨架。')
         return 0
     except (ValueError,OSError,KeyError,TypeError) as exc:

@@ -10,7 +10,7 @@ from unittest import mock
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
 import analyze
-from analysis_engine import COMMON_RULES,Graph,ProjectAnalysis,relation_affects_review_scope
+from analysis_engine import COMMON_RULES,Graph,ProjectAnalysis
 from source_index import JavaParser,DEFAULT_LIMITS,build_index,git_bytes,stable
 from validate_analysis import validate
 
@@ -133,9 +133,9 @@ class AnalysisTest(unittest.TestCase):
         self.assertEqual(change['data']['after'],'original.getOrderNo()')
         self.assertTrue(any('size()' in f['data']['condition'] for f in self.facts('branch')))
         self.assertTrue(any(f['data']['name']=='VALUES' for f in self.facts('constant_or_collection')))
-        self.assertTrue(any('finalQuery' in f['data']['symbol'] for f in self.facts('return_override')))
-        fields=self.facts('field_source')
-        self.assertTrue(any('findOrigin' in str(f['data']['origins']) for f in fields if 'notifyResult' in f['data']['symbol']))
+        self.assertTrue(any('finalQuery' in f['data']['symbol'] for f in self.facts('return_sources')))
+        self.assertTrue(any(r['site']['name']=='put' and 'notifyResult' in r['source']
+                            for r in self.analysis['projects'][0]['relations']))
         self.assertTrue(any(r['site']['name']=='update' and r['site']['arguments']==['record.getTradeNo()']
                             for r in self.analysis['projects'][0]['relations']))
 
@@ -210,7 +210,7 @@ class Handler {
     def test_default_rules_do_not_assume_project_specific_configuration(self):
         rules,limits=analyze.load_rules()
         self.assertEqual(rules['config_scopes'],{})
-        self.assertEqual(rules['relation_review_tokens'],[])
+        self.assertNotIn('relation_review_tokens',rules)
         self.assertNotIn('ParamKey',rules['config_annotations'])
         self.assertEqual(rules['config_annotations'],
                          ['Value','ConfigurationProperties'])
@@ -899,59 +899,33 @@ class Task implements Runnable{@Override public void run(){System.out.println("p
         self.assertEqual(len(callbacks),2)
         self.assertTrue(all(e['status']=='convention_inferred' for e in callbacks))
 
-    def test_generic_custom_token_only_applies_when_explicitly_supplied(self):
-        graph=self.graph({'scope':'''package demo;
-class ExampleAdapter {String getValue(){return "a";}}
-class Consumer {ExampleAdapter adapter;
- void run(){String value=adapter.getValue();}
-}'''})
-        edge=next(e for e in graph.edges if e['site']['name']=='getValue')
-        self.assertFalse(relation_affects_review_scope(edge,graph))
-        self.assertTrue(relation_affects_review_scope(edge,graph,('ExampleAdapter',)))
+    def test_return_assignment_sites_record_structure_without_risk_verdict(self):
+        before='package p; class Flow { int run(boolean flag){int value=1; return value;} }'
+        after=before.replace('return value;', 'if(flag)value=2;return value;')
+        old=self.graph({'before':before}).index
+        new=self.graph({'after':after}).index
+        engine=ProjectAnalysis('p','unused',old,new,COMMON_RULES,DEFAULT_LIMITS)
+        result,_=engine.run()
+        facts=[f for f in result['facts'] if f['kind']=='return_assignment_sites']
+        self.assertTrue(facts)
+        self.assertEqual(facts[0]['data']['variable'],'value')
+        self.assertEqual(len(facts[0]['data']['assignments']),2)
+        self.assertEqual(facts[0]['classification'],'source_fact')
+        self.assertFalse(any(f['kind']=='return_override' for f in result['facts']))
 
-    def test_inventory_and_access_checks_without_payment_names(self):
-        graph=self.graph({'inventory':'''package sample;
-class StockStore {String findById(String key){return key;} void save(String key){}}
-class StockService {StockStore store;String apply(String key){
- String prior=store.findById(key);store.save(key);return prior;}}
-class AccessHelper {String getLabel(){return "ok";}}
-class AccessService {AccessHelper helper;String view(){return helper.getLabel();}}
-'''})
-        by_name={edge['site']['name']:edge for edge in graph.edges}
-        self.assertTrue(relation_affects_review_scope(
-            dict(by_name['save'],status='unresolved',requires_review=True),graph))
-        self.assertTrue(relation_affects_review_scope(
-            dict(by_name['findById'],status='unresolved',requires_review=True),graph))
-        self.assertFalse(relation_affects_review_scope(
-            dict(by_name['getLabel'],status='unresolved',requires_review=True),graph))
-
-    def test_unresolved_relation_scope_keeps_database_effects_and_drops_plain_accessors(self):
-        graph=self.graph({'scope':'''package p;
-class Helper {String getValue(){return "value";}String convert(String value){return value;}}
-interface Reply {void setPayload(String value);}
-class StoreDao {void update(String value){} String getById(String id){return id;}}
-class Flow {Helper helper;StoreDao store;Reply reply;void run(String value){String ignored=helper.getValue();store.getById(value);helper.convert("NoticeReq refund ExampleSpecialAdapter");store.update(value);}String response(){return helper.getValue();}String helperResult(){return helper.convert("value");}void setResponse(){reply.setPayload("value");}}
-class RefundService {Helper helper;String refundStatus(){return helper.getValue();}}
-@RestController class RefundController {Helper helper;@PostMapping String handle(){return helper.convert("value");}}
-'''})
-        accessor=dict(next(e for e in graph.edges if e['source'].startswith('p.Flow#run(') and e['site']['name']=='getValue'),status='unresolved',requires_review=True)
-        update=dict(next(e for e in graph.edges if e['site']['name']=='update'),status='unresolved',requires_review=True)
-        convert=dict(next(e for e in graph.edges if e['site']['name']=='convert'),status='unresolved',requires_review=True)
-        database_read=dict(next(e for e in graph.edges if e['site']['name']=='getById'),status='unresolved',requires_review=True)
-        response_setter=dict(next(e for e in graph.edges if e['site']['name']=='setPayload'),status='unresolved',requires_review=True)
-        returned=dict(next(e for e in graph.edges if e['source'].startswith('p.Flow#response(') and e['site']['name']=='getValue'),status='unresolved',requires_review=True)
-        plain_return=dict(next(e for e in graph.edges if e['source'].startswith('p.Flow#helperResult(')),status='unresolved',requires_review=True)
-        endpoint_return=dict(next(e for e in graph.edges if e['source'].startswith('p.RefundController#handle(')),status='unresolved',requires_review=True)
-        refund_getter=dict(next(e for e in graph.edges if e['source'].startswith('p.RefundService#refundStatus(')),status='unresolved',requires_review=True)
-        self.assertFalse(relation_affects_review_scope(accessor,graph))
-        self.assertTrue(relation_affects_review_scope(update,graph))
-        self.assertTrue(relation_affects_review_scope(database_read,graph))
-        self.assertFalse(relation_affects_review_scope(response_setter,graph))
-        self.assertFalse(relation_affects_review_scope(convert,graph,('ExampleSpecialAdapter','NoticeReq')))
-        self.assertFalse(relation_affects_review_scope(returned,graph))
-        self.assertFalse(relation_affects_review_scope(plain_return,graph))
-        self.assertTrue(relation_affects_review_scope(endpoint_return,graph))
-        self.assertTrue(relation_affects_review_scope(refund_getter,graph))
+    def test_unresolved_relations_from_changed_method_are_not_filtered_by_names(self):
+        before='''package p;
+interface External { void getLabel(); void save(); }
+class Flow { External external; void run(){external.getLabel();} }
+'''
+        after=before.replace('external.getLabel();','external.getLabel();external.save();')
+        old=self.graph({'external':before}).index
+        new=self.graph({'external':after}).index
+        engine=ProjectAnalysis('p','unused',old,new,COMMON_RULES,DEFAULT_LIMITS)
+        result,_=engine.run()
+        calls={row['data']['call']['name'] for row in result['facts']
+               if row['kind']=='unresolved_relation'}
+        self.assertTrue({'getLabel','save'}<=calls)
 
     def test_ambiguous_mapper_call_does_not_claim_sql_statement(self):
         from source_index import mapper_events
@@ -998,13 +972,6 @@ class First {Second s;void first(){s.second();}}
                                dict(DEFAULT_LIMITS,depth=3,methods=500))
         self.assertEqual(engine.limits['depth'],3)
         self.assertEqual(engine.limits['methods'],500)
-
-    def test_builder_field_binding_is_covered_as_field_source_not_relation_review(self):
-        graph=mock.Mock();graph.events={};graph.origins.return_value=[]
-        edge=dict(source='p.Flow#buildRecord()',receiver_type=None,status='unresolved',
-                  site=dict(name='fgTradeNo',receiver='TransRecordPo.builder().fgTradeNo(value)',
-                            expression='TransRecordPo.builder().fgTradeNo(value)',arguments=['value'],order=1))
-        self.assertFalse(relation_affects_review_scope(edge,graph,('NoticeReq',)))
 
     def test_anonymous_classes_in_distinct_methods_keep_distinct_owners(self):
         graph=self.graph({'anon':'''class A {

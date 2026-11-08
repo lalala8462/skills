@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""校验当前分析身份，以及用例 review_unit_ids 自动展开后的源码事实和证据。"""
+"""校验当前分析身份，以及用例显式 unit_assertions 对应的源码事实和证据。"""
 import argparse
 import json
 import re
@@ -136,7 +136,7 @@ def validate(analysis,context,review,cases,verify_sources=True):
 
     coverage=coverage_matrix(cases,analysis,review)
     summary=coverage['summary']
-    warnings.append('复核单元已被测试用例引用: {}/{}；待复核={}'.format(
+    warnings.append('复核单元已建立显式主事实—断言关联: {}/{}；待复核={}'.format(
         summary['referenced_unit_count'],summary['unit_count'],summary['pending_review_count']))
     if coverage.get('pending_review'):
         warnings.append('Pending review units: '+','.join(
@@ -145,7 +145,7 @@ def validate(analysis,context,review,cases,verify_sources=True):
         summary['referenced_facet_count'],summary['facet_count'],
         summary['all_units_referenced_facet_count'],summary['partially_referenced_facet_count'],
         summary['unreferenced_facet_count']))
-    warnings.append('这些仅是单元引用统计，不证明分支和业务规则的测试覆盖。')
+    warnings.append('这些仅是显式 ID—断言位置关联统计，不证明分支和业务规则的测试覆盖。')
     warnings.append('Static evidence does not prove test execution, runtime binding or business correctness.')
     return errors,warnings
 

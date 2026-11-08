@@ -12,12 +12,9 @@ from analysis_engine import VERSION, redact
 from source_index import git_bytes, source_lines
 from validate_analysis import verify_evidence
 from query_metrics import RUN_SCHEMA_VERSION, metrics_path, record_query
+from case_contract import PRIMARY_CHANGE_KINDS, is_direct_primary_change_fact
 
-PRIMARY_KINDS={
-    'method_change','field_change','class_binding_change','configuration',
-    'configuration_file_change','configuration_parse_boundary','argument_source_change',
-    'mapper_statement_change'
-}
+PRIMARY_KINDS=PRIMARY_CHANGE_KINDS
 CONDITION_KINDS={'branch','switch_branch','membership_filter'}
 DB_KINDS={'mapper_statement','mapper_statement_change','field_source'}
 VIEW_CHOICES=('index','facts','relations','evidence','db','conditions','all')
@@ -32,10 +29,7 @@ NOTE=('结果基于确定性索引或显式匹配；分类视图不代表完整�
 
 
 def _is_direct_change_fact(row):
-    if row.get('kind')=='configuration':
-        # 配置读取被纳入分析，并不代表配置值发生变化。
-        return (row.get('data') or {}).get('change') in ('added','removed')
-    return row.get('kind') in PRIMARY_KINDS
+    return is_direct_primary_change_fact(row)
 
 
 def _relation_tier(row,seeds,project):
@@ -399,7 +393,7 @@ def _evidence_source(analysis,indexes,identifier,context_lines):
         note='内容从固定 Git blob 读取并脱敏；需要更大范围可提高 --source-lines。')
 
 
-def _render_request(args,analysis,review,context):
+def _render_request(args,analysis,review,context,receipts=None):
     indexes=_indexes(analysis,review,context)
     if args.fact:
         fact=indexes['facts'].get(args.fact)
@@ -432,9 +426,13 @@ def _render_request(args,analysis,review,context):
         items=[_unit_index(row,indexes) for _,row in sorted(indexes['units'].items())]
         selected,page=_paginate(items,analysis['analysis_id'],'overview',args.limit,args.cursor)
         audit=audit_material(analysis,review,context)
+        from review_receipts import receipt_counts
         return dict(mode='overview',analysis_id=analysis['analysis_id'],
                     projects=sorted(indexes['projects']),items=selected,page=page,
-                    totals=audit['scope'],audit_counts=audit['counts'],note=NOTE)
+                    totals=audit['scope'],audit_counts=audit['counts'],
+                     audit_scope_tiers=audit['scope_tiers'],audit_requires_attention=audit['requires_attention'],
+                     receipt_status=receipt_counts(receipts,analysis,review) if receipts is not None else None,
+                     note='scope_tiers 仅区分变化触及与背景索引，不代表业务风险级别；回执计数不证明业务正确。'+NOTE)
 
     matched,expanded,cross=_lookup_selection(indexes,analysis,args.query,args.unit)
     matched_only=getattr(args,'matched_only',False)
@@ -512,6 +510,7 @@ def main(argv=None):
     parser.add_argument('--cursor',help='上一页返回的 next_cursor')
     parser.add_argument('--matched-only',action='store_true',
                         help='只返回关键词真正命中的 fact，不展开关联 unit；需搭配 --query --view facts')
+    parser.add_argument('--receipts',help='可选回执路径；overview 默认读取 review.json 同目录中的 review-receipts.json')
     parser.add_argument('--source-lines',type=int,default=8,
                         help='evidence 前后各补充的源码行数（0-100）')
     parser.add_argument('--output',help='写入新的 JSON 文件，否则打印 stdout')
@@ -523,6 +522,8 @@ def main(argv=None):
     except (OSError,ValueError,TypeError,UnicodeError) as exc:
         print('WARNING: 无法定位查询统计目录: '+str(exc),file=sys.stderr)
     try:
+        if args.receipts and not args.overview:
+            raise ValueError('--receipts 仅用于 --overview')
         if args.matched_only and (not args.query or args.view!='facts'):
             raise ValueError('--matched-only 只能与 --query 和 --view facts 一起使用')
         if not 1<=args.limit<=100 or not 0<=args.source_lines<=100:
@@ -547,7 +548,18 @@ def main(argv=None):
             raise ValueError('context.jsonl 必须与 analysis.json 位于同一目录')
         context=_load_context(context_path)
         analysis_id=analysis.get('analysis_id') or ''
-        result=_render_request(args,analysis,review,context)
+        receipts=None
+        if args.overview:
+            receipts_path=(Path(args.receipts).resolve() if args.receipts else
+                           Path(args.review).resolve().parent/'review-receipts.json')
+            if receipts_path.is_file():
+                receipts=_load_json(receipts_path)
+                from review_receipts import SCHEMA_VERSION
+                if receipts.get('analysis_id')!=analysis_id or receipts.get('schema_version')!=SCHEMA_VERSION:
+                    raise ValueError('review-receipts schema_version 或 analysis_id 不一致')
+            elif args.receipts:
+                raise ValueError('review-receipts 文件不存在: '+str(receipts_path))
+        result=_render_request(args,analysis,review,context,receipts)
         rendered=json.dumps(result,ensure_ascii=False,indent=2,allow_nan=False)+'\n'
         output_bytes=len(rendered.encode('utf-8'))
         if args.output:

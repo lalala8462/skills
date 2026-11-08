@@ -6,13 +6,14 @@ import re
 import sys
 from pathlib import Path
 
-from case_contract import PURPOSES, validate_cases
+from case_contract import PURPOSES, SCHEMA_VERSION, validate_cases
+from review_receipts import validate_receipts
 from generate_report import AGENT_HEADINGS, AGENT_PLACEHOLDER
 from scope_validation import validate_scope_files
 from validate_report import existing_impact_error, fenced_blocks, unclosed_fences, heading_positions, sections
 
 
-CASE_FIELDS=('case_id','title','preconditions','steps','expected','observable_evidence','review_unit_ids')
+CASE_FIELDS=('case_id','title','preconditions','steps','expected','observable_evidence','review_unit_ids','unit_assertions')
 OBSERVATION_FIELDS=('surface','target','assertion')
 
 
@@ -71,8 +72,8 @@ def case_shape_errors(data):
         errors.append('test-cases 缺少根字段: '+', '.join(missing_root))
     if extra_root:
         errors.append('test-cases 包含不支持根字段: '+', '.join(extra_root))
-    if data.get('schema_version')!=4:
-        errors.append('test-cases.schema_version 必须为 4')
+    if data.get('schema_version')!=SCHEMA_VERSION:
+        errors.append('test-cases.schema_version 必须为 {}'.format(SCHEMA_VERSION))
     if not _nonempty_text(data.get('analysis_id')):
         errors.append('test-cases.analysis_id 必须是非空字符串')
     groups=data.get('purpose_cases')
@@ -121,6 +122,22 @@ def case_shape_errors(data):
                     errors.append(prefix+'.{} 必须是非空数组'.format(key))
                 elif any(not _nonempty_text(value) for value in values):
                     errors.append(prefix+'.{} 只能包含非空字符串'.format(key))
+            links=case.get('unit_assertions')
+            if links is not None:
+                if not isinstance(links,list) or not links:
+                    errors.append(prefix+'.unit_assertions 必须是非空数组')
+                else:
+                    for link_index,link in enumerate(links):
+                        link_prefix=prefix+'.unit_assertions[{}]'.format(link_index)
+                        if not isinstance(link,dict) or set(link)!={'unit_id','direct_fact_ids','observation_indexes'}:
+                            errors.append(link_prefix+' 字段必须固定为 unit_id/direct_fact_ids/observation_indexes')
+                            continue
+                        if not _nonempty_text(link['unit_id']):
+                            errors.append(link_prefix+'.unit_id 必须非空')
+                        if not isinstance(link['direct_fact_ids'],list) or not link['direct_fact_ids']:
+                            errors.append(link_prefix+'.direct_fact_ids 必须非空')
+                        if not isinstance(link['observation_indexes'],list) or not link['observation_indexes']:
+                            errors.append(link_prefix+'.observation_indexes 必须非空')
             observations=case.get('observable_evidence')
             if observations is not None:
                 if not isinstance(observations,list) or not observations:
@@ -140,7 +157,7 @@ def case_shape_errors(data):
     return errors
 
 
-def validate_inputs(analysis_path,review_path,cases_path,report_path,template_path):
+def validate_inputs(analysis_path,review_path,cases_path,report_path,template_path,receipts_path):
     errors=[]
     try:
         analysis=json.loads(Path(analysis_path).read_text(encoding='utf-8-sig'))
@@ -161,7 +178,8 @@ def validate_inputs(analysis_path,review_path,cases_path,report_path,template_pa
         return ['无法读取 report.md/template: '+str(exc)]
 
     errors.extend(case_shape_errors(cases))
-    errors.extend(report_errors(report,template))
+    report_issues=report_errors(report,template)
+    errors.extend(report_issues)
     try:
         validate_scope_files(analysis_path,review_path,cases_path)
     except (ValueError,KeyError,TypeError,OSError) as exc:
@@ -170,6 +188,17 @@ def validate_inputs(analysis_path,review_path,cases_path,report_path,template_pa
         validate_cases(cases,analysis,review)
     except (ValueError,KeyError,TypeError) as exc:
         errors.append('测试用例严格契约失败: '+str(exc))
+    if not report_issues:
+        try:
+            receipts=json.loads(Path(receipts_path).read_text(encoding='utf-8-sig'))
+            context_path=Path(analysis_path).resolve().parent/(analysis.get('context_file') or 'context.jsonl')
+            if context_path.resolve().parent!=Path(analysis_path).resolve().parent:
+                raise ValueError('context.jsonl 必须与 analysis.json 同目录')
+            context=[json.loads(line) for line in context_path.read_text(encoding='utf-8').splitlines()
+                     if line.strip()]
+            validate_receipts(receipts,analysis,review,context,report)
+        except (OSError,ValueError,KeyError,TypeError) as exc:
+            errors.append('复核回执校验失败: '+str(exc))
     return list(dict.fromkeys(errors))
 
 
@@ -178,10 +207,11 @@ def main(argv=None):
     parser.add_argument('--analysis',required=True)
     parser.add_argument('--review',required=True)
     parser.add_argument('--cases',required=True)
+    parser.add_argument('--receipts',required=True,help='必需的 Agent 复核回执 JSON；run_delivery 自动生成')
     parser.add_argument('--report',required=True)
     parser.add_argument('--template',default=str(Path(__file__).resolve().parents[1]/'assets'/'diff-list-template.md'))
     args=parser.parse_args(argv)
-    errors=validate_inputs(args.analysis,args.review,args.cases,args.report,args.template)
+    errors=validate_inputs(args.analysis,args.review,args.cases,args.report,args.template,args.receipts)
     for error in errors:
         print('ERROR: '+error)
     print('PREFLIGHT: '+('FAIL' if errors else 'PASS'))

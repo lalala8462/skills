@@ -30,7 +30,7 @@
 
 ## 2. 规则与资源预算
 
-**默认使用通用规则**。不要主动搜索、猜测或补传项目专用 `rules` 文件；只有用户明确提供规则文件时才传入 `--rules`，不得为尝试或补传规则对同一批 SHA 重复分析。用户明确提供的 `--rules rules.json` 可扩展 `config_annotations`、`config_scopes`、`aliases`、`relation_review_tokens`、`limits`。例：
+**默认使用通用规则**。不要主动搜索、猜测或补传项目专用 `rules` 文件；只有用户明确提供规则文件时才传入 `--rules`，不得为尝试或补传规则对同一批 SHA 重复分析。用户明确提供的 `--rules rules.json` 可扩展 `config_annotations`、`config_scopes`、`aliases`、`limits`。例：
 
 ~~~json
 {"version":1,"limits":{"depth":3,"methods":500}}
@@ -77,7 +77,9 @@ Agent 完成复核并填写 `.work/test-cases.json`、`.work/report.md` 后：
 py -3 .\scripts\run_delivery.py --resume "<run>"
 ~~~
 
-交付链：`preflight → coverage`，若 `pending_review > 0` 则进入 `waiting_coverage_review`；核对 `.work/coverage.json` 中的 `candidate_case_ids`、相关事实，补充真实引用或测试后再次 resume。没有待复核单元则依次 `excel → report → finalize`。成功时清理本次建立的分析 clone。
+交付链：`preflight → coverage`，preflight **强制要求** `--receipts`；若 `pending_review > 0` 则进入 `waiting_coverage_review`；核对 `.work/coverage.json` 中的 `candidate_case_ids`、相关主事实与可观察断言，补充真实的 `unit_assertions` 或测试后再次 resume。没有待复核单元则依次 `excel → report → finalize`。成功时清理本次建立的分析 clone。
+
+**设计约束**：脚本不猜业务用途或风险，直接相关的 `unresolved` 关系不按名称过滤；YAML 解析失败保留解析边界，不根据路径猜测是否运行配置。普通关键词搜索只用于定位材料，不用于判断结论。
 
 ## 4. 复核查询
 
@@ -97,7 +99,7 @@ py -3 .\scripts\review_query.py --analysis $a --review $r --evidence E-xxxx --so
 
 | 参数 | 精确约束 |
 | --- | --- |
-| `--overview`、`--audit`、`--query`、`--unit`、`--fact`、`--evidence` | 六种互斥入口，必须指定一种 |
+| `--overview`、`--audit`、`--query`、`--unit`、`--fact`、`--evidence` | 六种互斥入口，必须指定一种；overview 同时展示 `audit_scope_tiers` 和可选的 `receipt_status` |
 | `--view` | `index`、`facts`、`relations`、`evidence`、`db`、`conditions`、`all` |
 | `--limit` | 默认 10；有效范围 **1–100** |
 | `--source-lines` | 默认 8；取证行数 **0–100** |
@@ -116,18 +118,25 @@ py -3 .\scripts\review_query.py --analysis $a --review $r --evidence E-xxxx --so
 
 ## 5. 用例与报告硬约束
 
-`.work/test-cases.json` 的四类固定为 `acceptance`、`core_regression`、`related_regression`、`boundary`。每条用例具有 `case_id`、`title`、`preconditions`、`steps`、`expected`、`observable_evidence`、`review_unit_ids`。`observable_evidence` 必须为非空数组；每一项**恰好**有三个非空字符串字段：`surface`（观察渠道）、`target`（观察对象）、`assertion`（可判定结果）。
+`.work/test-cases.json` 的四类固定为 `acceptance`、`core_regression`、`related_regression`、`boundary`。每条用例具有 `case_id`、`title`、`preconditions`、`steps`、`expected`、`observable_evidence`、`review_unit_ids`、`unit_assertions`（每个 unit 显式绑定所属直接主事实 `direct_fact_ids` 与 `observable_evidence` 的 0 起始 `observation_indexes`）。`observable_evidence` 必须为非空数组；每一项**恰好**有三个非空字符串字段：`surface`（观察渠道）、`target`（观察对象）、`assertion`（可判定结果）。
 
 Agent 负责报告的需求、DDL、DML、流程、Mermaid、特殊逻辑与既有功能影响。机器章节与精确标题统一见[分析契约](../references/analysis-contract.md)。
+
+**Agent 回执**：首次运行自动生成 `.work/review-receipts.json`。六个 Agent 章节加 `existing_impact` 分别填写 `status` 和对应 `unit_ids/fact_ids/evidence_ids`；无相关变更的章节填 `not_applicable` 且不强造引用，其他章节填 `assessed` 并关联实际复核过的来源。`audit_unresolved_by_unit` 逐 unit 列出未解析关系，记录 `assessed`（必须关联 fact/evidence）或 `deferred`（明确未核实，只记录状态及自动列出的关系 ID，fact/evidence 为空）；概览单独统计 deferred 数量。初始 `pending` 阻止交付。脚本只检查 ID 存在、与对应 unit/关系一致，不判业务解释是否真实。查看 `--overview` 的 `receipt_status` 可了解仍未处理或延期的数量。
 
 **报告的强制校验规则：**
 
 - 整体流程不是“无”时，Mermaid 章节必须且只能有一个 Mermaid 代码块，起始语句须为 `flowchart TD` 或 `sequenceDiagram`；**禁止 `graph TD`**。
-- 正式报告禁止出现“待确认”“待核实”“代码依据”“证据编号”“源码行号”等占位或代码证据描述。
+- 正式报告不得保留自动生成的 Agent 填写占位符；不能核实的业务结论应说明静态验证边界。脚本不根据自然语言词语判定是否已充分核实。
 - 禁止包含 Windows 盘符路径、UNC 共享路径或特定 Unix 本机绝对路径；使用相对路径及 Git 固定证据身份。
 - Excel 测试用例保留在四个 sheet；Markdown 禁止重复逐条列出测试点、前提、步骤及预期。
-- 当请求、响应、DTO 或数据库等字段/接口契约有变更时，特殊逻辑必须明确既有功能影响，不能填 `既有功能影响：无`。
-- `observable_evidence.assertion` 应能从页面、接口、日志、数据库、文件或下游行为判断；空泛“处理成功/符合预期”及英文 `OK/success` 不构成可判定证据。
+- `observable_evidence.assertion` 应能从页面、接口、日志、数据库、文件或下游行为判断；Agent 应避免“处理成功/符合预期”一类空泛表述，脚本只校验非空与结构，不用关键词判定质量。
+
+**Agent 业务约定（脚本不做语义校验）：**
+- 请求、响应、DTO 或数据库字段/接口契约变化时，Agent 应说明既有功能影响；不能未经核实直接写 `既有功能影响：无`。脚本仅检查既有功能影响字段存在且非空，不检查这一业务判断是否合理。
+- 断言应包含可观察、可判定的结果，不能仅凭格式校验通过就认为用例充分。
+
+当前 `test-cases.json schema_version=5`，`coverage.json coverage_schema_version=4`。回执校验不替代测试质量判断：一条用例可以关联多个 unit，但必须逐 unit 建立明确的主事实—断言位置引用。**即使全部关联也不证明业务覆盖**。`coverage.json` 的 `primary_assertion_links` 列出每个 unit 对应的用例 ID、主事实 ID 和可观察断言下标，供 Agent 逐项复核。手工运行 `delivery_preflight.py` 必须传入 `--receipts .work/review-receipts.json`，无有效回执不能通过预检。报告 Markdown 结构错误优先归入报告结构检查，不归为回执错误。
 
 静态证据、实际测试执行、数据库验证和外部联调结果应区分；静态分析不足以证明的行为在业务结论中明确验证范围。
 

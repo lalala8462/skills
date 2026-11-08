@@ -5,18 +5,10 @@ import json
 import re
 from source_index import stable, source_lines
 
-VERSION = '2.3.1'
+VERSION = '2.4.0'
 COMMON_RULES = dict(version=1, config_annotations=['Value', 'ConfigurationProperties'],
                     config_scopes={}, aliases=['JSONField', 'JsonProperty'],
-                    relation_review_tokens=[], limits={})
-DB_RECEIVER_TOKENS=('mapper','dao','repository','jdbc','database','store')
-EXTERNAL_SINK_TOKENS=('proxy','notification','notify','callback')
-
-STANDARD_TYPES = set('String Object Boolean Integer Long Double Float Short Byte Character Math System '
-                     'List ArrayList LinkedList Map HashMap Set HashSet Collection Collections Arrays '
-                     'Objects Optional Comparator BigDecimal StringUtils CollectionUtils Assert Date '
-                     'JSON JSONObject JSONArray Logger Slf4j ThreadLocal Stream Function Pair'.split())
-
+                    limits={})
 
 def compact(text):
     return re.sub(r'"(?:\\.|[^"\\])*"|\s+', lambda m: m[0] if m[0].startswith('"') else '', text or '')
@@ -24,141 +16,6 @@ def compact(text):
 
 def test_source(path):
     return '/src/test/' in '/'+(path or '').replace('\\','/')
-
-
-def standalone_diagnostic_log(site):
-    if site.get('usage')!='EXPRESSION_STATEMENT' or site.get('name','').casefold() not in (
-            'trace','debug','info','warn','error'):
-        return False
-    receiver=(site.get('receiver') or '').strip().rsplit('.',1)[-1].casefold()
-    return receiver in ('log','logger')
-
-
-def relation_receiver_hint(site):
-    """只保留简单接收者，避免把复杂链式调用的参数文本当成接收者名称。"""
-    receiver=(site.get('receiver') or '').strip()
-    created=re.match(r'^new\s+([\w.$]+)',receiver)
-    if created:return created[1].casefold()
-    builder=re.match(r'^([\w.$]+)\.builder\s*\(',receiver,re.I)
-    if builder:return builder[1].casefold()
-    if re.fullmatch(r'(?:this|super|[\w$]+(?:\.[\w$]+)*)',receiver):
-        return receiver.casefold()
-    return ''
-
-
-def relation_affects_review_scope(edge, graph, custom_tokens=(), siblings=None):
-    """只把可能触及关键业务结果的未解析调用放入人工复核。"""
-    site=edge.get('site') or {}
-    name=(site.get('name') or '').casefold()
-    receiver=' '.join((edge.get('receiver_type') or '',relation_receiver_hint(site))).casefold()
-    source=edge.get('source') or ''
-    target_surface=' '.join((receiver,name)).casefold()
-    caller_method=source.split('#')[-1].split('(',1)[0].casefold()
-    method_rows=getattr(graph,'methods',{})
-    method_meta=method_rows.get(source,{}) if isinstance(method_rows,dict) else {}
-    class_rows=getattr(graph,'classes',{})
-    owner_meta=class_rows.get(method_meta.get('owner'),{}) if isinstance(class_rows,dict) else {}
-    annotation_rows=(method_meta.get('annotations',[]) or [])+(owner_meta.get('annotations',[]) or [])
-    annotations=[a.get('name','').rsplit('.',1)[-1].casefold() for a in annotation_rows]
-    endpoint_annotation=any(a in ('restcontroller','controller','requestmapping','getmapping',
-        'postmapping','putmapping','patchmapping','deletemapping') for a in annotations)
-    return_type=(method_meta.get('return_type') or '').rsplit('.',1)[-1].casefold()
-    response_return=any(token in return_type for token in ('response','reply','result'))
-    critical_return_context=(endpoint_annotation or 'controller' in method_meta.get('owner','').casefold()
-                             or response_return)
-    scopes=DB_RECEIVER_TOKENS+EXTERNAL_SINK_TOKENS
-    sink_context=any(token in target_surface for token in scopes)
-    custom_target=any(token.casefold() in target_surface for token in custom_tokens)
-    raw_receiver=site.get('receiver') or ''
-    builder_chain=(name in ('builder','newbuilder','tobuilder') or
-                   'builder' in (edge.get('receiver_type') or '').casefold() or
-                   bool(re.search(r'\.(?:new)?builder\s*\(',raw_receiver,re.I)))
-    # Builder 属性写入由 field_source 事实表达。
-    if builder_chain and name not in ('build',):
-        return False
-    def critical_sink(candidate):
-        candidate_site=candidate.get('site') or {}
-        candidate_name=(candidate_site.get('name') or '').casefold()
-        candidate_target=' '.join((candidate.get('receiver_type') or '',
-                                   relation_receiver_hint(candidate_site),candidate_name)).casefold()
-        candidate_builder=(candidate_name in ('builder','newbuilder','tobuilder') or
-            'builder' in (candidate.get('receiver_type') or '').casefold() or
-            bool(re.search(r'\.(?:new)?builder\s*\(',candidate_site.get('receiver') or '',re.I)))
-        candidate_db=any(token in candidate_target for token in DB_RECEIVER_TOKENS)
-        if candidate_builder and candidate_name!='build':return False
-        if candidate_name.startswith('set'):
-            return candidate_db and any(token in candidate_name[3:] for token in ('status','state'))
-        if candidate_name=='<init>':
-            return any(token in candidate_target for token in ('exception','response','resp','reply','result','errorcode'))
-        if candidate_name.startswith(('get','is','has','equals','hashcode','tostring','contains')):
-            return (candidate_db and candidate_name.startswith(('getby','find','query','select','count','exists','list','load','read')) or
-                    any(token.casefold() in candidate_target for token in custom_tokens) or
-                    any(token in candidate_name for token in ('status','state')))
-        return (any(token in candidate_target for token in scopes) or
-                any(token.casefold() in candidate_target for token in custom_tokens) or
-                any(token in candidate_name for token in ('status','state')) or
-                candidate_name.startswith(('insert','update','delete','save','persist','execute','batch',
-                    'commit','rollback','register','send','publish','close','cancel',
-                    'notice','notify','write','remove','mark')))
-    if name.startswith('log') or 'logger' in receiver:
-        return False
-    access_method=(name.startswith(('get','is','has','equals','hashcode','tostring','contains')) or
-                   name in ('getvalue','getcode','getdata','getinfo','getmessage','getmsg'))
-    direct_return=site.get('usage')=='RETURN'
-    if direct_return and not access_method and name!='<init>' and not builder_chain:
-        return sink_context or custom_target or critical_return_context
-    # 未解析调用的返回值若沿局部赋值进入方法返回，属于最终响应来源。
-    call_origins=set(graph.origins(site.get('expression',''),edge['source'],site.get('order',0)))
-    returned_flow=False
-    state_branch=False
-    sink_flow=False
-    if call_origins:
-        for row in graph.events.get(source,[]):
-            if row.get('kind')=='return':
-                if call_origins & set(graph.origins(row.get('expression',''),source,row.get('order',0))):
-                    returned_flow=True
-            if row.get('kind')=='branch':
-                condition=(row.get('condition') or '').casefold()
-                has_state=any(token in condition for token in ('status','state'))
-                if has_state and call_origins & set(graph.origins(
-                        row.get('condition',''),source,row.get('order',0))):
-                    state_branch=True
-        for sibling in (siblings if siblings is not None else graph.edges):
-            if sibling['source']!=source or sibling is edge or not critical_sink(sibling):
-                continue
-            for argument in sibling['site'].get('arguments',[]):
-                if call_origins & set(graph.origins(argument,source,sibling['site'].get('order',0))):
-                    sink_flow=True
-    state_context=(any(token in name for token in ('status','state')) or
-                   any(token in caller_method for token in ('status','state')))
-    if name=='<init>':
-        response_type=any(token in target_surface for token in (
-            'exception','response','resp','reply','result','errorcode'))
-        return response_type or sink_flow
-    if access_method:
-        if name.startswith(('equals','hashcode','tostring')):
-            return state_branch or sink_flow
-        # DTO/枚举访问器由字段来源与分支事实覆盖；这里只保留关键状态或副作用数据流。
-        database_query=any(token in receiver for token in DB_RECEIVER_TOKENS) and name.startswith(
-            ('getby','find','query','select','count','exists','list','load','read'))
-        return state_context or state_branch or sink_flow or database_query or custom_target
-    # DTO 字段填充由字段来源事实表达。
-    if name.startswith('set'):
-        database_target=any(token in receiver for token in DB_RECEIVER_TOKENS)
-        return database_target and any(token in name[3:] for token in ('status','state'))
-    if builder_chain:
-        return sink_flow
-    if (returned_flow and critical_return_context) or sink_flow or state_branch:
-        return True
-    if sink_context:
-        return True
-    # 只检查调用者、接收者和方法名；参数中的关键词不应把普通工具方法误判成关键调用。
-    if custom_target:
-        return True
-    if name.startswith(('insert','update','delete','save','persist','execute','batch','commit','rollback',
-                        'register','send','publish','close','cancel','notice','notify','write','remove','mark')):
-        return True
-    return False
 
 
 def short(type_name):
@@ -247,10 +104,8 @@ class Graph:
                 elif row['kind']=='construct':
                     self.edges.append(self.resolve(dict(row,name='<init>',receiver='new '+row['type'],usage='CONSTRUCTOR')))
         callbacks=[];bindings=collections.defaultdict(dict)
-        callback_owners={m['owner'] for m in self.methods.values() if m['name'] not in
-                         ('equals','hashCode','toString','clone','finalize','<init>')
-                         and not re.match(r'^(?:get|set|is)[A-Z]',m['name'])
-                         and any(a['name'].rsplit('.',1)[-1]=='Override' for a in m['annotations'])}
+        callback_owners={m['owner'] for m in self.methods.values()
+                         if any(a['name'].rsplit('.',1)[-1]=='Override' for a in m['annotations'])}
         def callback_types(argument,symbol,order):
             result=dict(bindings.get((symbol,argument),{}))
             constructed=argument.strip().startswith('new ') or any(r['kind']=='variable' and r['name']==argument
@@ -281,10 +136,8 @@ class Graph:
             for argument in site['arguments']:
                 for _,origin in sorted(callback_types(argument,symbol,site['order']).items()):
                     owner=origin['type']
-                    targets=[s for s in self.methods_by_owner.get(owner,[]) if self.methods[s]['name'] not in
-                         ('equals','hashCode','toString','clone','finalize','<init>') and
-                         not re.match(r'^(?:get|set|is)[A-Z]',self.methods[s]['name']) and
-                         any(a['name'].rsplit('.',1)[-1]=='Override' for a in self.methods[s]['annotations'])]
+                    targets=[s for s in self.methods_by_owner.get(owner,[])
+                             if any(a['name'].rsplit('.',1)[-1]=='Override' for a in self.methods[s]['annotations'])]
                     if targets:
                         callbacks.append(dict(source=symbol,targets=sorted(targets),receiver_type=owner,
                             status='convention_inferred',reason='constructed_object_passed_to_call_not_runtime_dispatch',
@@ -294,17 +147,14 @@ class Graph:
         self.origin_edges = collections.defaultdict(list)
         self.source_edges = collections.defaultdict(list)
         self.field_edges = collections.defaultdict(list)
-        self.receiver_edges = collections.defaultdict(list)
         for position, edge in enumerate(self.edges):
             self.source_edges[edge['source']].append(edge)
             self.origin_edges[(edge['source'], compact(edge['site']['expression']))].append(edge)
             if edge['field'] is not None:
                 self.field_edges[edge['field']].append(position)
-            self.receiver_edges[(edge['receiver_type'], edge['site']['name'].casefold())].append(position)
 
-    def configuration_edges(self, owner, field, getter):
+    def configuration_edges(self, owner, field):
         positions = set(self.field_edges.get(owner+'#'+field, ()))
-        positions.update(self.receiver_edges.get((owner, getter), ()))
         return (self.edges[position] for position in sorted(positions))
 
     def type_owner(self, name, current):
@@ -604,9 +454,8 @@ class Graph:
                 status, reason = 'convention_inferred', 'annotated_generated_accessor'
             elif row['name']=='<init>' and receiver in self.classes and not row['arguments']:
                 status,reason='convention_inferred','implicit_no_argument_constructor'
-        library = short(receiver) in STANDARD_TYPES or row['receiver'] in STANDARD_TYPES
         return dict(source=symbol, targets=targets, receiver_type=receiver, status=status, reason=reason,
-                    requires_review=status == 'unresolved' and not library,
+                    requires_review=status == 'unresolved',
                     field=(field['owner']+'#'+field['name']) if field else None,
                     site=row)
 
@@ -740,12 +589,10 @@ class ProjectAnalysis:
             if signature(a)!=signature(b):
                 self.critical_classes.add(owner)
                 self.fact('class_binding_change',dict(owner=owner,before=signature(a),after=signature(b)),[('baseline',a),('result',b)])
-                imports=set((a or {}).get('imports',[]))^set((b or {}).get('imports',[]))
-                names={v.rsplit('.',1)[-1] for v in imports}
                 structural=any((a or {}).get(k)!=(b or {}).get(k) for k in ('annotations','extends','implements'))
                 for graph in (old,new):
                     for symbol in graph.methods_by_owner.get(owner,[]):
-                        if symbol not in ignored and (structural or any(re.search(r'\b'+re.escape(n)+r'\b',graph.methods[symbol]['source']) for n in names)):
+                        if symbol not in ignored and structural:
                             methods.add(symbol)
                             side='baseline' if graph is old else 'result'
                             self.critical_symbols[side].add(symbol)
@@ -898,36 +745,37 @@ class ProjectAnalysis:
                         if placeholder:value,default=placeholder[1],placeholder[2] or default
                     scope = self.rules['config_scopes'].get(field['owner'], 'unconfigured')
                     consumers = []
-                    getter = 'get'+field['name'].casefold()
-                    for edge in graph.configuration_edges(field['owner'], field['name'], getter):
+                    for edge in graph.configuration_edges(field['owner'], field['name']):
                         if edge['source'] not in self.graphs['baseline'].methods and test_source(graph.methods[edge['source']]['path']):
                             continue
                         site = edge['site']
                         matches = edge['field'] == field['owner']+'#'+field['name']
-                        matches |= edge['receiver_type'] == field['owner'] and site['name'].casefold() == getter
                         if matches:
-                            conditions=[r['condition'] for r in graph.events[edge['source']] if r['kind']=='branch'
-                                        and compact(site['expression']) in compact(r['condition'])]
-                            use_kinds=('branch','switch','assignment','return','throw','call','construct')
-                            usage_sites=[]
-                            for event in graph.events[edge['source']]:
-                                if event['kind'] not in use_kinds:continue
-                                evidence_text=' '.join(str(event.get(name,'')) for name in
-                                    ('condition','expression','target','then','else','arguments','guards'))
-                                if compact(site['expression']) not in compact(evidence_text):continue
-                                usage_sites.append(dict(kind=event['kind'],line=event.get('line'),
-                                    expression=event.get('condition') or event.get('expression') or event.get('target',''),
-                                    guards=event.get('guards',[])))
+                            # 仅收集已绑定的 AST 字段关系与调用位置，不做文本包含匹配。
                             consumers.append(dict(symbol=edge['source'],
                                 read_location=dict(path=graph.methods[edge['source']]['path'],line=site.get('line'),
                                                    expression=site['expression']),
                                 entrypoints=find_entrypoints(edge['source']),
                                 entrypoint_status='found_within_depth' if find_entrypoints(edge['source']) else 'not_found_within_depth',
-                                guards=site['guards'],conditions=conditions,usage_sites=usage_sites,
-                                usage_status='indexed' if usage_sites else 'no_direct_use_event_found',
-                                condition_constants=[dict(reference=ref,value=graph.constant_value(ref,field['owner']))
-                                    for condition in conditions for ref in re.findall(r'[\w.]+\.get\w+\(\)',condition)
-                                    if graph.constant_value(ref,field['owner']) is not None]))
+                                guards=site['guards'],conditions=[],usage_sites=[],
+                                usage_status='not_inferred',condition_constants=[]))
+                    # 直接字段读取来自已绑定的 AST field_read，不以 getter 名称推测。
+                    for read in graph.field_reads:
+                        if read['field']!=field['owner']+'#'+field['name']:
+                            continue
+                        symbol=read['source']
+                        if symbol not in graph.methods:
+                            continue
+                        if symbol not in self.graphs['baseline'].methods and test_source(graph.methods[symbol]['path']):
+                            continue
+                        site=read['site']
+                        consumers.append(dict(symbol=symbol,
+                            read_location=dict(path=graph.methods[symbol]['path'],
+                                               line=site.get('line'),expression=site['expression']),
+                            entrypoints=find_entrypoints(symbol),
+                            entrypoint_status='found_within_depth' if find_entrypoints(symbol) else 'not_found_within_depth',
+                            guards=site.get('guards',[]),conditions=[],usage_sites=[],
+                            usage_status='not_inferred',condition_constants=[]))
                     current[(field['owner'], field['name'], json.dumps(value, sort_keys=True))] = dict(
                         key=value, owner=field['owner'], field=field['name'], scope=scope,
                         binding_kind=binding_kind,default=default,
@@ -990,51 +838,33 @@ class ProjectAnalysis:
                                       set(f['name'] for f in graph.fields_by_owner.get(target_type,[])))
                         self.fact('object_copy',dict(side=side,symbol=symbol,source=args[0],target=args[1],source_type=source_type,
                             target_type=target_type,common_declared_fields=common,status='convention_inferred',
-                            limitation='Bean property convention; external fields and runtime accessors are not verified'),[(side,method)],'risk_candidate')
+                            limitation='Bean property convention; external fields and runtime accessors are not verified'),[(side,method)],'review_boundary')
                     if side=='result' and symbol in required_symbols and name=='contains' and len(args)==1:
                         self.fact('membership_filter',dict(symbol=symbol,collection=row['receiver'],
                                   member=args[0],usage=row['usage']),[(side,method)])
-                    field = None
-                    if name.startswith('set') and len(args) == 1:
-                        field = name[3:4].lower()+name[4:]
-                    elif name in ('put','putIfAbsent') and len(args) >= 2 and isinstance(literal(args[0]), str):
-                        field = literal(args[0])
-                    elif '.builder(' in row['receiver'] and len(args) == 1:
-                        field = name
-                    if field:
-                        expression = args[-1]
-                        origins = graph.origins(expression, symbol, row['order'])
-                        aliases = []
-                        receiver = graph.variable_type(row['receiver'], symbol, row['order'])
-                        for declaration in graph.fields_by_owner.get(receiver,[]):
-                            if declaration['name'].casefold() == field.casefold():
-                                aliases += [graph.constant_value(a['arguments'].get('name', a['arguments'].get('value', '')),declaration['owner'])
-                                            for a in declaration['annotations']
-                                            if a['name'].rsplit('.',1)[-1] in self.rules['aliases']]
-                        fact = self.fact('field_source', dict(side=side, symbol=symbol, receiver=row['receiver'], receiver_type=receiver,
-                                        field=next((a for a in aliases if a), field), expression=expression,
-                                        origins=origins, guards=row['guards']), [(side, method)])
-                        if fact:
-                            output.append(fact)
                 if row['kind'] == 'boundary' and side == 'result' and symbol in required_symbols:
                     self.fact('flow_boundary', dict(symbol=symbol, reason=row['reason'], expression=row['expression']),
-                              [(side, method)], 'risk_candidate')
+                              [(side, method)], 'review_boundary')
             returns = [r for r in rows if r['kind'] == 'return']
             if side == 'result' and returns:
                 sources = [dict(expression=r['expression'], guards=r['guards'],
                                 origins=graph.origins(r['expression'], symbol, r['order'])) for r in returns]
                 fact = self.fact('return_sources', dict(symbol=symbol, returns=sources), [(side, method)])
-                expressions = {compact(r['expression']) for r in returns if r['expression'] not in ('null','')}
-                assignments = [r for r in rows if r['kind'] in ('assignment','variable')]
-                returned_variables={r['expression'] for r in returns if re.fullmatch(r'\w+',r['expression']) and r['expression']!='null'}
-                overwritten=[]
-                for variable in sorted(returned_variables):
-                    writes=[a for a in assignments if (a.get('target')==variable or a.get('name')==variable)
-                            and a.get('initializer',a.get('expression','')) not in ('','null')]
-                    if len(writes)>1 and any(not a.get('guards') for a in writes[1:]):overwritten.append(variable)
-                if overwritten or (returned_variables and len(expressions)>1 and any('(' in x for x in expressions)):
-                    self.fact('return_override', dict(symbol=symbol, returns=sources,
-                              reassigned_return_variables=overwritten), [(side, method)], 'risk_candidate')
+                # 仅记录 AST 已确定的返回变量及其赋值位置，不推断哪次赋值必然覆盖另一次。
+                returned_names={r['expression'] for r in returns
+                                if re.fullmatch(r'[A-Za-z_$][\w$]*',r['expression'] or '')}
+                for name in sorted(returned_names):
+                    writes=[r for r in rows if
+                            (r['kind']=='variable' and r.get('name')==name) or
+                            (r['kind']=='assignment' and r.get('target')==name)]
+                    if len(writes)>1:
+                        self.fact('return_assignment_sites',dict(
+                            symbol=symbol,variable=name,
+                            assignments=[dict(kind=r['kind'],order=r['order'],
+                                expression=r.get('expression',r.get('initializer','')),
+                                guards=r.get('guards',[])) for r in writes],
+                            return_expressions=[r['expression'] for r in returns]),
+                            [(side,method)])
         return output
 
     def argument_changes(self, changed):
@@ -1077,19 +907,14 @@ class ProjectAnalysis:
                 if not row:continue
                 unknown=[a['name'] for a in row['annotations'] if a['name'].rsplit('.',1)[-1] not in configured]
                 if unknown:
-                    self.fact('annotation_binding_unconfigured',dict(owner=row['owner'],field=row['name'],annotations=unknown),[(side,row)],'risk_candidate')
+                    self.fact('annotation_binding_unconfigured',dict(owner=row['owner'],field=row['name'],annotations=unknown),[(side,row)],'review_boundary')
         self.configurations(selected)
         for side, graph in self.graphs.items():
-            referenced_names = set()
+            referenced_fields = {read['field'] for read in graph.field_reads
+                                 if read['source'] in selected[side]}
             # 只补充已选中方法直接调用、且已唯一绑定到 MyBatis XML 的声明。
             # 不扩大普通 Java 方法遍历范围，也不将约定绑定当作运行时调用。
             mapper_links=collections.defaultdict(set)
-            sibling_edges=collections.defaultdict(list)
-            for edge in graph.edges:
-                sibling_edges[edge['source']].append(edge)
-            for symbol in selected[side]:
-                for event in graph.events[symbol]:
-                    referenced_names.update(re.findall(r'\b\w+\b',event.get('condition','')+' '+event.get('expression','')))
             for edge in graph.edges:
                 if edge['source'] not in selected[side]:
                     continue
@@ -1111,18 +936,16 @@ class ProjectAnalysis:
                         origins=graph.origins(arg,edge['source'],edge['site']['order']))
                         for param,arg in zip(target['parameters'],site['arguments'])]
                 direct_relation=edge['source'] in changed or any(target in changed for target in edge['targets'])
-                relation_in_scope=direct_relation and (edge['status']!='unresolved' or relation_affects_review_scope(
-                    edge,graph,self.rules.get('relation_review_tokens',()),
-                    sibling_edges[edge['source']]))
+                relation_in_scope=direct_relation
                 if relation_in_scope:
                     self.relations.append(dict(id=stable(self.name, side, edge['source'], site), side=side,
                         source=edge['source'], targets=edge['targets'], status=edge['status'], reason=edge['reason'],
                         receiver_type=edge['receiver_type'], field=edge['field'], evidence_ids=[evidence], site=clean(site)))
                 if (side == 'result' and edge['source'] in changed and edge['requires_review'] and
-                        relation_in_scope and not standalone_diagnostic_log(site)):
+                        relation_in_scope):
                     self.fact('unresolved_relation', dict(symbol=edge['source'], call=site,
                               receiver_type=edge['receiver_type'],reason=edge['reason'],
-                              candidates=edge['targets']), [('result',method)], 'risk_candidate')
+                              candidates=edge['targets']), [('result',method)], 'review_boundary')
             for row in graph.index['events']:
                 if row['kind'] == 'mapper':
                     # Mapper XML 按 namespace + id 定义语句，不能用重载的 Java
@@ -1140,7 +963,7 @@ class ProjectAnalysis:
                         self.fact('mapper_statement', dict(side=side, namespace=row['owner'], name=row['name'],
                                   statement=row['statement'], source=row['source'], dynamic=row['dynamic'],
                                   mappings=row['mappings'], linked_symbols=linked), [(side,row)])
-                if row['kind'] == 'field' and row.get('initializer') and row['name'] in referenced_names:
+                if row['kind'] == 'field' and row.get('initializer') and row['owner']+'#'+row['name'] in referenced_fields:
                     if test_source(row['path']) and (row['owner'],row['name']) not in self.graphs['baseline'].fields:
                         continue
                     self.fact('constant_or_collection', dict(side=side, owner=row['owner'], name=row['name'],

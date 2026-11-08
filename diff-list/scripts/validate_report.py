@@ -151,8 +151,8 @@ def validate(text,template,expected):
             errors.append('四类改动结论缺失: '+h)
     if '是否必须新增数据' in text:
         errors.append('禁止使用“是否必须新增数据”列')
-    if re.search(r'待确认|待核实|代码依据|证据编号|源码行号',text):
-        errors.append('包含禁止的占位或代码证据描述')
+    if '【Agent填写' in text:
+        errors.append('报告仍含未填写的模板标记')
     if re.search(r'[A-Za-z]:\\[^\s\x60|)]+',text):
         errors.append('文档包含 Windows 本机绝对路径')
     if (re.search(r'(?<![\w:/])/(?:home|Users|mnt|tmp|var|opt|root)/[^\s\x60|)]+',text)
@@ -191,11 +191,6 @@ def validate(text,template,expected):
     impact_error=existing_impact_error(special)
     if impact_error:
         errors.append(impact_error)
-    field_change = (body.get('### 2.1 需求改动','') + '\n' +
-                    body.get('### 2.2 表字段 DDL 修改',''))
-    impact_none = special.strip()=='无' or '无' in existing_impact_values(special)
-    if re.search(r'(?:新增|增加|修改|调整|删除|废弃).{0,20}(?:对外报文|请求字段|响应字段|数据库字段|表字段|DTO字段|接口字段|消息字段)',field_change) and impact_none:
-        errors.append('字段/接口契约变化时须在特殊逻辑章节说明既有功能影响')
     cfg=body.get('### 2.4 配置文件调整','')
     if cfg and cfg!='无' and not fenced_blocks(cfg):
         errors.append('配置文件有调整但缺少配置片段代码块')

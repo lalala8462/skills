@@ -33,7 +33,7 @@ def _lines(value, label):
 
 
 def _observable_evidence(value, identifier):
-    """Require observable source, target and result without pretending to verify semantics."""
+    """只检查观察对象和断言的结构及非空，不用关键词评价业务质量。"""
     if not isinstance(value, list) or not value:
         raise ValueError('case {} requires observable_evidence (nonempty array)'.format(identifier))
     assertions = []
@@ -46,15 +46,6 @@ def _observable_evidence(value, identifier):
         assertion = _string(item.get('assertion'), label + '.assertion')
         if any('\n' in value or '\r' in value for value in (surface, target, assertion)):
             raise ValueError(label + ' must be single-line')
-        simple = re.sub(r'[\s,，。.!！:：;；、]+', '', assertion)
-        # 只识别没有具体值或可判定条件的空泛结论，不依赖支付领域的词表。
-        generic = re.fullmatch(
-            r'[\u4e00-\u9fff]{0,12}(?:成功|正常|正确|无异常|符合预期|与预期一致|通过)', simple)
-        vague_english = re.fullmatch(
-            r'(?i)(?:ok|success|successful|passed|pass|works|asexpected|allgood|done|operationsuccessful|operationcompleted)',
-            re.sub(r'\s+', '', simple))
-        if generic or vague_english or simple in ('符合预期', '处理成功', '结果正确', '功能正常', '正常处理', '无异常'):
-            raise ValueError(label + '.assertion is not an observable, verifiable result')
         assertions.append('{}. {}｜{}：{}'.format(index, surface, target, assertion))
     return assertions
 

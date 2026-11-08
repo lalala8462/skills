@@ -12,7 +12,7 @@ from unittest import mock
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
 
-from delivery_preflight import case_shape_errors, report_errors
+from delivery_preflight import case_shape_errors, report_errors, validate_inputs, main as preflight_main
 from generate_report import AGENT_PLACEHOLDER, AGENT_HEADINGS, DRAFT_MARKER, DRAFT_STATUS, initial_report, refresh_report
 import review_query as query_tool
 from review_query import query_material
@@ -24,7 +24,7 @@ from run_delivery import _close_current_agent_phase, _record_stage_attempt
 
 
 class DeliveryFlowTest(unittest.TestCase):
-    def test_navigation_facets_keep_high_value_and_hide_common_calls(self):
+    def test_navigation_facets_keep_all_calls_regardless_of_names(self):
         units=[
             dict(id='RU-1',symbol='sample.InventoryService#add()'),
             dict(id='RU-2',symbol='sample.InventoryService#remove()')
@@ -41,9 +41,10 @@ class DeliveryFlowTest(unittest.TestCase):
         ]
         selected=build_navigation_facets(facets,units)
         ids=[row['id'] for row in selected]
-        self.assertEqual(ids,['RF-config','RF-owner','RF-business'])
-        self.assertNotIn('RF-common',units[0]['navigation_facet_ids'])
-        self.assertEqual(units[0]['navigation_facet_ids'],['RF-business','RF-config','RF-owner'])
+        self.assertEqual(ids,['RF-config','RF-owner','RF-business','RF-common'])
+        self.assertIn('RF-common',units[0]['navigation_facet_ids'])
+        self.assertEqual(units[0]['navigation_facet_ids'],['RF-business','RF-common','RF-config','RF-owner'])
+        self.assertTrue(all(f['priority_kind']=='reading_order_heuristic' for f in selected))
 
     def test_preflight_rejects_graph_td_before_report_generation(self):
         template=(ROOT/'assets'/'diff-list-template.md').read_text(encoding='utf-8')
@@ -150,6 +151,30 @@ class DeliveryFlowTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'coverage'):
                 delivery._switch_agent_phase(str(run),'source_review')
             self.assertEqual(delivery._switch_agent_phase(str(run),'analysis_authoring'),0)
+
+    def test_manual_preflight_requires_receipts_and_report_errors_stay_report_errors(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as cm:
+                preflight_main(['--analysis','analysis.json','--review','review.json',
+                                '--cases','cases.json','--report','report.md'])
+        self.assertEqual(cm.exception.code,2)
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td)
+            files=dict(analysis=root/'analysis.json',review=root/'review.json',
+                       cases=root/'cases.json',report=root/'report.md',template=root/'template.md',
+                       receipts=root/'review-receipts.json')
+            files['analysis'].write_text(json.dumps(dict(analysis_id='a',projects=[])),encoding='utf-8')
+            files['review'].write_text(json.dumps(dict(analysis_id='a',review_schema_version=4,
+                                                       projects=[])),encoding='utf-8')
+            files['cases'].write_text(json.dumps(dict(schema_version=5,analysis_id='a',
+                purpose_cases=dict(acceptance=[],core_regression=[],related_regression=[],boundary=[]))),
+                encoding='utf-8')
+            files['report'].write_text('## 1. 章节\n```mermaid\n unclosed',encoding='utf-8')
+            files['template'].write_text('## 1. 章节',encoding='utf-8')
+            errors=validate_inputs(files['analysis'],files['review'],files['cases'],
+                                   files['report'],files['template'],files['receipts'])
+            self.assertTrue(any('报告代码围栏未闭合' in error for error in errors),errors)
+            self.assertFalse(any('复核回执校验失败' in error for error in errors),errors)
 
     def test_preflight_collects_multiple_case_shape_errors(self):
         data=dict(purpose_cases=dict(
@@ -281,6 +306,14 @@ class DeliveryFlowTest(unittest.TestCase):
         self.assertEqual(result['counts']['evidence_project_mismatch'],1)
         self.assertTrue(result['requires_attention'])
         self.assertIn('不证明业务场景完整',result['note'])
+        from review_receipts import empty_receipts
+        receipts=empty_receipts(analysis,review)
+        overview=query_tool._render_request(SimpleNamespace(
+            fact=None,evidence=None,audit=False,overview=True,view='index',
+            limit=10,cursor=None),analysis,review,context,receipts)
+        self.assertEqual(overview['receipt_status']['section_pending'],7)
+        self.assertEqual(overview['receipt_status']['audit_unresolved_unit_total'],1)
+        self.assertEqual(overview['audit_scope_tiers']['change_touched_unresolved'],1)
 
     def test_audit_distinguishes_retained_configuration_from_direct_change(self):
         analysis=dict(schema_version=2,analyzer_version=VERSION,analysis_id='a1',
@@ -309,6 +342,12 @@ class DeliveryFlowTest(unittest.TestCase):
         self.assertEqual(audit['scope_tiers']['supporting_unindexed'],1)
         self.assertEqual(audit['scope_tiers']['change_touched_unresolved'],1)
         self.assertEqual(audit['scope_tiers']['supporting_unresolved'],1)
+        overview=query_tool._render_request(SimpleNamespace(
+            fact=None,evidence=None,audit=False,overview=True,view='index',
+            limit=10,cursor=None),analysis,review,context)
+        self.assertEqual(overview['audit_scope_tiers']['change_touched_unresolved'],1)
+        self.assertEqual(overview['audit_scope_tiers']['supporting_unresolved'],1)
+        self.assertIn('不代表业务风险',overview['note'])
         indexes=query_tool._indexes(analysis,review,context)
         rows=query_tool._audit_rows(analysis,indexes)['unresolved_relations']
         self.assertEqual([row['id'] for row in rows],['R-direct','R-context'])

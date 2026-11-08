@@ -7,11 +7,13 @@ description: "基于 Git 最终净变化生成 Markdown 变更与测试报告、
 
 ## 执行步骤
 
+**硬约束**：脚本只做确定性结构化工作，不通过名称或关键词推断业务含义、风险或测试覆盖；直接关联本次变化的未解析关系不得按名称过滤。业务判断由 Agent 完成。
+
 1. 运行 `scripts/run_delivery.py`，指定 Git 仓库与修订。**默认使用通用规则**；不要主动搜索、猜测或补传项目专用 `rules` 文件，只有用户明确提供规则文件时才使用 `--rules`；不得为尝试或补传规则对同一批 SHA 重复分析。
 2. 在运行目录执行 `review_query.py --overview` 和 `--audit`，确认变化范围、未解析关系及硬错误。用 `--unit`、`--query`、`--fact`、`--evidence` 回查具体源码；逐页读取 `next_cursor`。
 3. 基于最终差异、提交说明、before/after 源码和接口契约复核业务语义、既有功能影响及异常边界；分析器关系是静态证据。
 4. 集中编写前运行 `run_delivery.py --run-dir <run> --mark-agent-phase analysis_authoring`，记录 Agent 工作阶段。
-5. 填写 `.work/test-cases.json` 与 `.work/report.md` 的 Agent 业务章节。每条测试用例引用真实支撑场景的 `review_unit_ids`，包含至少一个可观察且可判定的验证结果。
+5. 填写 `.work/test-cases.json`、`.work/report.md` 和 `.work/review-receipts.json`：六个业务章节、既有功能影响、直接关联的 unresolved 关系必须记录处理状态和真实 unit/fact/evidence 来源。回执只证明引用有效，不证明业务结论正确。每条测试用例必须通过 `unit_assertions` 为每个 `review_unit_id` 显式绑定本 unit 的直接主事实 ID 与具体 `observable_evidence` 下标；这些引用只证明可追溯，不证明业务覆盖。
 6. 执行 `run_delivery.py --resume <run>`。状态为 `waiting_coverage_review` 时逐项核实 `pending_review`，补充已有用例引用或有价值的新测试，随后再次 resume。
 7. 最终执行 `review_query.py --audit`，检查证据、范围及验证边界；读取成功交付的 Markdown、Excel 和 coverage.json。
 
