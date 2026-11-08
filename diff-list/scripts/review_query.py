@@ -17,7 +17,7 @@ from case_contract import PRIMARY_CHANGE_KINDS, is_direct_primary_change_fact
 PRIMARY_KINDS=PRIMARY_CHANGE_KINDS
 CONDITION_KINDS={'branch','switch_branch','membership_filter'}
 DB_KINDS={'mapper_statement','mapper_statement_change','field_source'}
-VIEW_CHOICES=('index','facts','relations','evidence','db','conditions','all')
+VIEW_CHOICES=('index','facts','relations','evidence','db','conditions','all','commits')
 AUDIT_VIEWS=(
     'missing_seeds','unassigned_primary_facts','unindexed_facts','unindexed_relations',
     'unresolved_relations','missing_evidence','unreferenced_evidence',
@@ -393,6 +393,41 @@ def _evidence_source(analysis,indexes,identifier,context_lines):
         note='内容从固定 Git blob 读取并脱敏；需要更大范围可提高 --source-lines。')
 
 
+def _commit_review_material(analysis):
+    """原样整理每个项目已采集的 Git 提交说明，不重新分析或推断提交意图。"""
+    items=[]
+    summaries=[]
+    for project in sorted(analysis.get('projects',[]),key=lambda row:row['name']):
+        name=project['name']
+        material=(project.get('git') or {}).get('commit_review')
+        if material is None:
+            # 不把缺少提交取证材料误表示成该项目没有提交。
+            summaries.append(dict(project=name,available=False))
+            continue
+        if not isinstance(material,dict) or not isinstance(material.get('commits'),list):
+            raise ValueError('git.commit_review 结构不正确: '+name)
+        commits=material['commits']
+        repeated=material.get('repeated_files') or []
+        if not isinstance(repeated,list):
+            raise ValueError('git.commit_review.repeated_files 必须为数组: '+name)
+        summaries.append(dict(
+            project=name,available=True,scope=material.get('scope'),
+            net_status=material.get('net_status'),
+            recorded_commit_count=len(commits),
+            omitted_commits=material.get('omitted_commits',0),
+            repeated_file_count=len(repeated),
+            textual_reverse_candidate_count=material.get('textual_reverse_candidate_count',0),
+            review_required=material.get('review_required',False),
+            review_reasons=material.get('review_reasons') or [],
+            note=material.get('note')))
+        for position,commit in enumerate(commits,1):
+            if not isinstance(commit,dict) or not isinstance(commit.get('sha'),str):
+                raise ValueError('git.commit_review.commits 包含无效提交: '+name)
+            # 保持项目内采集顺序；项目之间按名称排序，不按消息内容重排。
+            items.append(dict(commit,project=name,position=position))
+    return items,summaries
+
+
 def _render_request(args,analysis,review,context,receipts=None):
     indexes=_indexes(analysis,review,context)
     if args.fact:
@@ -421,8 +456,17 @@ def _render_request(args,analysis,review,context,receipts=None):
         return dict(mode='audit',view=args.view,analysis_id=analysis['analysis_id'],
                     items=selected,page=page,note=summary['note'])
     if args.overview:
+        if args.view=='commits':
+            items,summaries=_commit_review_material(analysis)
+            selected,page=_paginate(items,analysis['analysis_id'],'overview:commits',
+                                    args.limit,args.cursor)
+            return dict(mode='overview',view='commits',analysis_id=analysis['analysis_id'],
+                        projects=sorted(indexes['projects']),commit_review_summaries=summaries,
+                        items=selected,page=page,
+                        note='提交信息按 Git 取证结果原样分页；范围或记录不完整由 commit_review_summaries 标识。'
+                             '提交说明、反向文本候选和重复修改不证明最终业务实现。')
         if args.view!='index':
-            raise ValueError('--overview 只支持 --view index')
+            raise ValueError('--overview 只支持 --view index/commits')
         items=[_unit_index(row,indexes) for _,row in sorted(indexes['units'].items())]
         selected,page=_paginate(items,analysis['analysis_id'],'overview',args.limit,args.cursor)
         audit=audit_material(analysis,review,context)
@@ -505,7 +549,7 @@ def main(argv=None):
     group.add_argument('--unit',help='精确 review_unit_id')
     group.add_argument('--fact',help='完整 fact 及其证据引用')
     group.add_argument('--evidence',help='校验并读取固定 Git 快照中的源码证据')
-    parser.add_argument('--view',default='index',help='查询层级：index/facts/relations/evidence/db/conditions/all；audit 可查看异常分类')
+    parser.add_argument('--view',default='index',help='查询层级：index/facts/relations/evidence/db/conditions/all；--overview 可使用 commits 分页查看提交记录；audit 查看异常分类')
     parser.add_argument('--limit',type=int,default=10,help='每页最多 10 项，可按需提高至 100')
     parser.add_argument('--cursor',help='上一页返回的 next_cursor')
     parser.add_argument('--matched-only',action='store_true',
@@ -533,6 +577,8 @@ def main(argv=None):
                 raise ValueError('--audit --view 支持: '+','.join(AUDIT_VIEWS))
             if args.view=='index' and args.cursor:
                 raise ValueError('--audit 概览不支持 cursor，请在 --view 分类中分页')
+        elif args.view=='commits' and not args.overview:
+            raise ValueError('--view commits 仅用于 --overview')
         elif args.view not in VIEW_CHOICES:
             raise ValueError('未知 --view: '+args.view)
         if (args.fact or args.evidence) and (args.view!='index' or args.cursor):
