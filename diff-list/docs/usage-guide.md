@@ -132,6 +132,8 @@ py -3 .\scripts\review_query.py --analysis $a --review $r --evidence E-xxxx --so
 
 Agent 负责报告的需求、DDL、DML、流程、Mermaid、特殊逻辑与既有功能影响。**Markdown 正文不附加 `fact_id`/`evidence_id` 编号串**；用类名、方法名、字段名或相对路径说明来源，追溯 ID 保存在 JSON/回执/Coverage。机器章节与精确标题统一见[分析契约](../references/analysis-contract.md)。
 
+**表配置 DML 准备清单**：Agent 根据变更方法和直接关联流程的读取、条件及使用位置，列出功能依赖的新增和既有数据库配置；提交没有 DML 脚本时仍须列出有源码依据的配置前提。回查基线与结果快照判断配置键状态，并从 Mapper、实体映射或明确 SQL 核实表和列；缺少依据的表、列或状态标为待确认，不推断目标企业、实际配置记录或可执行 SQL。没有相关数据库配置时整节填“无”。表格列、示例及回执要求以[报告契约](../references/analysis-contract.md#表配置-dml-准备清单)为准。
+
 **Agent 回执**：首次运行自动生成 `.work/review-receipts.json`。六个 Agent 章节加 `existing_impact` 分别填写 `status` 和对应 `unit_ids/fact_ids/evidence_ids`；无相关变更的章节填 `not_applicable` 且不强造引用，其他章节填 `assessed` 并关联实际复核过的来源。`audit_unresolved_by_unit` 逐 unit 列出未解析关系，记录 `assessed`（必须关联 fact/evidence）或 `deferred`（明确未核实，只记录状态及自动列出的关系 ID，fact/evidence 为空）；概览单独统计 deferred 数量。初始 `pending` 阻止交付。脚本只检查 ID 存在、与对应 unit/关系一致，不判业务解释是否真实。查看 `--overview` 的 `receipt_status` 可了解仍未处理或延期的数量。
 
 **报告的强制校验规则：**

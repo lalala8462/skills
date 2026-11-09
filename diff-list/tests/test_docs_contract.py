@@ -88,6 +88,17 @@ class DocsContractTest(unittest.TestCase):
         self.assertIn('不展示 fact/evidence ID',self.skill)
         self.assertIn('DELIVERY_STATUS: COMPLETED',self.guide)
 
+    def test_database_configuration_prerequisites_are_documented(self):
+        checklist=(ROOT/'references'/'analysis-checklist.md').read_text(encoding='utf-8')
+        for document in (self.skill,self.guide,checklist,self.contract):
+            self.assertIn('配置前提',document)
+        for phrase in ('系统 / 表', '字段（配置键）', '字段状态', '配置含义及测试前提',
+                       '新增', '已存在', '待确认', '基线', '结果快照',
+                       '没有 DML 脚本', 'Mapper', '可执行 SQL', 'not_applicable',
+                       'FEATURE_FLAG', 'EXISTING_FLAG', 'SERVICE_BASE_URL', 'CHANNEL_SETTING'):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase,self.contract)
+
     def test_report_headings_and_hard_rules_are_grounded(self):
         for heading in generate_report.AGENT_HEADINGS+generate_report.MACHINE_HEADINGS:
             with self.subTest(heading=heading):
